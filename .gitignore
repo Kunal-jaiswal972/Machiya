@@ -1,0 +1,42 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# builds
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+
+# env
+.env
+.env.*
+!.env.example
+
+# osm / geo artifacts
+.osm-cache/
+osm-data/
+osrm-data/
+photon-data/
+*.osm.pbf
+*.osrm*
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+logs/
+
+# editor / os
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# test / coverage
+coverage/
+.nyc_output/
+
+# prisma
+packages/db/prisma/*.db
