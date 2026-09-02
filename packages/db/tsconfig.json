@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": ".",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    "types": ["node"],
+    // The generated client ships no .ts sources into dist, so emitting maps for
+    // it only produces "sourcemap points to missing source files" noise.
+    "sourceMap": false,
+    "declarationMap": false,
+    // The prisma-client generator emits TypeScript, so the generated client is
+    // part of this package's compilation unit rather than a prebuilt dependency.
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": ["src/**/*.ts", "generated/prisma/**/*.ts"]
+}

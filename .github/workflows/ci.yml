@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Matches the service container below. Tests that need real PostGIS talk to it.
+  DATABASE_URL: postgresql://machiya:machiya@localhost:5432/machiya_test?schema=public
+  REDIS_URL: redis://localhost:6379
+  BETTER_AUTH_SECRET: ci-only-secret-not-used-for-anything-real
+  NODE_ENV: test
+
+jobs:
+  verify:
+    name: typecheck, lint, test, build
+    runs-on: ubuntu-latest
+
+    services:
+      postgis:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: machiya
+          POSTGRES_PASSWORD: machiya
+          POSTGRES_DB: machiya_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U machiya -d machiya_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7.4-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate Prisma schema
+        run: pnpm db:validate
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      # Migrations arrive in step 2. Until then there is nothing to deploy, and a
+      # hard failure here would be noise rather than signal.
+      - name: Apply migrations
+        run: |
+          if [ -d packages/db/prisma/migrations ]; then
+            pnpm db:deploy
+          else
+            echo "No migrations yet — skipping migrate deploy."
+          fi
+
+      - name: Build workspace packages
+        run: pnpm -r --sequential build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Test
+        run: pnpm test

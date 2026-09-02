@@ -1,0 +1,89 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* Dark mode is a class on <html>, toggled by the theme store — not a media
+   query — so the user's choice can override the OS. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: 'Inter var', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* Price-band ramp used by map markers and result cards. */
+  --color-band-1: oklch(0.72 0.16 150);
+  --color-band-2: oklch(0.78 0.15 95);
+  --color-band-3: oklch(0.74 0.16 55);
+  --color-band-4: oklch(0.65 0.19 25);
+
+  /* Distance rings, 1 km / 2 km / 3 km. */
+  --color-ring-1: oklch(0.7 0.14 200);
+  --color-ring-2: oklch(0.66 0.12 230);
+  --color-ring-3: oklch(0.6 0.1 260);
+}
+
+:root {
+  --background: oklch(0.99 0.002 250);
+  --foreground: oklch(0.21 0.02 260);
+  --muted: oklch(0.96 0.005 250);
+  --muted-foreground: oklch(0.5 0.02 260);
+  --card: oklch(1 0 0);
+  --border: oklch(0.91 0.01 260);
+  --primary: oklch(0.58 0.16 245);
+  --primary-foreground: oklch(0.99 0 0);
+}
+
+.dark {
+  --background: oklch(0.19 0.02 260);
+  --foreground: oklch(0.95 0.01 250);
+  --muted: oklch(0.25 0.02 260);
+  --muted-foreground: oklch(0.68 0.02 260);
+  --card: oklch(0.23 0.02 260);
+  --border: oklch(0.32 0.02 260);
+  --primary: oklch(0.72 0.14 235);
+  --primary-foreground: oklch(0.18 0.02 260);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-card: var(--card);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Every interactive control must show where focus is, map controls included. */
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}
+
+/* MapLibre paints its own controls; align them with the app surface. */
+.maplibregl-ctrl-group {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+}
+
+.maplibregl-ctrl-group button + button {
+  border-top: 1px solid var(--color-border);
+}

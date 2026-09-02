@@ -1,0 +1,27 @@
+// Machiya / RentNear data model.
+//
+// Two rules govern every geo model in this file and they are easy to get wrong:
+//
+//  1. Prisma cannot SELECT an `Unsupported(...)` field, so each geo model stores
+//     `lat`/`lng` as plain Floats alongside the `location geography(Point, 4326)`
+//     column. The Float pair is what the API reads and returns; the geography
+//     column exists purely so PostGIS can index and query it.
+//  2. The two representations are kept in sync by a Postgres trigger, not by
+//     application code — see DECISIONS.md and the hand-written migration.
+//
+// Spatial indexes (GiST) and the trigger cannot be expressed in this schema and
+// live in hand-authored migrations.
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis, pg_trgm]
+}
+
+// Models land in step 2 (packages/db: schema, PostGIS migration, geo-queries).

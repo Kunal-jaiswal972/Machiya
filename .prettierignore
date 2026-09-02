@@ -1,0 +1,9 @@
+node_modules
+dist
+build
+coverage
+pnpm-lock.yaml
+.osm-cache
+osm-data
+packages/db/prisma/migrations
+*.osm.pbf

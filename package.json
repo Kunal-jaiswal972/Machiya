@@ -1,0 +1,72 @@
+{
+  "name": "machiya",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Office-centric rental discovery and listing platform",
+  "packageManager": "pnpm@10.12.4",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=10"
+  },
+  "scripts": {
+    "build:packages": "pnpm -F @machiya/shared build && pnpm -F @machiya/db build",
+    "predev": "pnpm build:packages",
+    "dev": "concurrently -n api,worker,web -c cyan,magenta,green \"pnpm -F @machiya/api dev\" \"pnpm -F @machiya/worker dev\" \"pnpm -F @machiya/web dev\"",
+    "dev:api": "pnpm -F @machiya/api dev",
+    "dev:web": "pnpm -F @machiya/web dev",
+    "dev:worker": "pnpm -F @machiya/worker dev",
+    "build": "pnpm -r --sequential build",
+    "typecheck": "pnpm -r --sequential typecheck",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "pnpm -r --sequential test",
+    "clean": "pnpm -r exec rimraf dist node_modules/.cache && rimraf node_modules",
+    "db:generate": "prisma generate --schema=packages/db/prisma/schema.prisma",
+    "db:validate": "prisma validate --schema=packages/db/prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema=packages/db/prisma/schema.prisma",
+    "db:deploy": "prisma migrate deploy --schema=packages/db/prisma/schema.prisma",
+    "db:reset": "prisma migrate reset --force --schema=packages/db/prisma/schema.prisma",
+    "db:studio": "prisma studio --schema=packages/db/prisma/schema.prisma",
+    "compose:up": "docker compose up -d",
+    "compose:up:geo": "docker compose --profile geo up -d",
+    "compose:down": "docker compose down",
+    "compose:nuke": "docker compose down -v",
+    "compose:logs": "docker compose logs -f",
+    "prepare": "husky"
+  },
+  "prisma": {
+    "seed": "tsx packages/db/prisma/seed.ts"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml,css}": [
+      "prettier --write"
+    ],
+    "*.prisma": [
+      "prisma format --schema"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^22.20.1",
+    "concurrently": "^10.0.5",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.5",
+    "globals": "^17.12.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.4.1",
+    "prettier": "^3.9.6",
+    "prisma": "^6.19.3",
+    "rimraf": "^6.1.3",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.69.0"
+  }
+}

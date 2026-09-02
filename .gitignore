@@ -40,3 +40,12 @@ coverage/
 
 # prisma
 packages/db/prisma/*.db
+
+# prisma generated client
+packages/db/generated/
+
+# copied out of node_modules by apps/web/scripts/sync-maplibre-worker.mjs
+apps/web/public/maplibre/
+
+# playwright mcp scratch output
+.playwright-mcp/

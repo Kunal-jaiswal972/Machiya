@@ -1,0 +1,263 @@
+# Machiya / RentNear local environment.
+#
+#   docker compose up -d                  core stack: db, cache, storage, mail, apps
+#   docker compose --profile geo up -d    adds Photon and OSRM
+#
+# The geo services sit behind a profile on purpose: they cannot start until
+# scripts/bootstrap.sh has produced the merged OSM extract and built their
+# indexes, and the core stack has to be usable before that happens.
+
+name: machiya
+
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-machiya}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-machiya}
+      POSTGRES_DB: ${POSTGRES_DB:-machiya}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgis-data:/var/lib/postgresql/data
+      - ./scripts/postgis-healthcheck.sh:/opt/postgis-healthcheck.sh:ro
+    healthcheck:
+      test: ['CMD', 'sh', '/opt/postgis-healthcheck.sh']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes', '--save', '60', '1']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    command: ['server', '/data', '--console-address', ':9001']
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - '${MINIO_API_PORT:-9000}:9000'
+      - '${MINIO_CONSOLE_PORT:-9001}:9001'
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MC_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MC_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      BUCKET: ${S3_BUCKET:-machiya-listings}
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - >
+        set -e;
+        mc alias set local http://minio:9000 "$$MC_USER" "$$MC_PASSWORD";
+        mc mb --ignore-existing "local/$$BUCKET";
+        mc anonymous set download "local/$$BUCKET";
+        echo "bucket $$BUCKET ready"
+    restart: 'no'
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    restart: unless-stopped
+    ports:
+      - '${MAILHOG_SMTP_PORT:-1025}:1025'
+      - '${MAILHOG_UI_PORT:-8025}:8025'
+    healthcheck:
+      test: ['CMD', 'nc', '-z', '127.0.0.1', '1025']
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgis:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      API_PORT: 4000
+      API_HOST: 0.0.0.0
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-machiya}:${POSTGRES_PASSWORD:-machiya}@postgis:5432/${POSTGRES_DB:-machiya}?schema=public
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-machiya-listings}
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_FORCE_PATH_STYLE: 'true'
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_SECURE: 'false'
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:4000}
+      AUTH_TRUSTED_ORIGINS: ${AUTH_TRUSTED_ORIGINS:-http://localhost:5173}
+      PHOTON_URL: http://photon:2322
+      OSRM_CAR_URL: http://osrm-car:5000
+      OSRM_BIKE_URL: http://osrm-bike:5000
+      OVERPASS_URL: ${OVERPASS_URL:-https://overpass-api.de/api/interpreter}
+    ports:
+      - '${API_PORT:-4000}:4000'
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgis:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      WORKER_PORT: 4100
+      DATABASE_URL: postgresql://${POSTGRES_USER:-machiya}:${POSTGRES_PASSWORD:-machiya}@postgis:5432/${POSTGRES_DB:-machiya}?schema=public
+      REDIS_URL: redis://redis:6379
+      FUEL_SCRAPE_CRON: ${FUEL_SCRAPE_CRON:-0 * * * *}
+    ports:
+      - '${WORKER_PORT:-4100}:4100'
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:4000}
+        VITE_MAP_STYLE_URL: ${VITE_MAP_STYLE_URL:-https://tiles.openfreemap.org/styles/liberty}
+        VITE_DEFAULT_CITY: ${VITE_DEFAULT_CITY:-patna}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - '${WEB_PORT:-8080}:80'
+
+  # --- geo profile: needs scripts/bootstrap.sh to have run once --------------
+
+  photon:
+    image: ghcr.io/komoot/photon:latest
+    profiles: ['geo']
+    restart: unless-stopped
+    volumes:
+      - photon-data:/photon/photon_data
+    ports:
+      - '${PHOTON_PORT:-2322}:2322'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q --spider http://127.0.0.1:2322/status || exit 1']
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  osrm-init:
+    image: osrm/osrm-backend:v5.25.0
+    profiles: ['geo']
+    volumes:
+      - ./osm-data:/data:ro
+      - osrm-data:/graph
+    entrypoint: ['/bin/bash', '-c']
+    command:
+      - >
+        set -e;
+        for profile in car bicycle; do
+        if [ -f "/graph/$$profile/merged.osrm.mldgr" ]; then
+        echo "$$profile graph already built, skipping";
+        continue;
+        fi;
+        mkdir -p "/graph/$$profile";
+        cp /data/merged.osm.pbf "/graph/$$profile/merged.osm.pbf";
+        osrm-extract -p "/opt/$$profile.lua" "/graph/$$profile/merged.osm.pbf";
+        osrm-partition "/graph/$$profile/merged.osrm";
+        osrm-customize "/graph/$$profile/merged.osrm";
+        rm -f "/graph/$$profile/merged.osm.pbf";
+        done;
+        echo "osrm graphs ready"
+    restart: 'no'
+
+  osrm-car:
+    image: osrm/osrm-backend:v5.25.0
+    profiles: ['geo']
+    restart: unless-stopped
+    depends_on:
+      osrm-init:
+        condition: service_completed_successfully
+    volumes:
+      - osrm-data:/graph
+    command: ['osrm-routed', '--algorithm', 'mld', '/graph/car/merged.osrm']
+    ports:
+      - '${OSRM_CAR_PORT:-5000}:5000'
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'curl -fsS "http://127.0.0.1:5000/route/v1/driving/85.13,25.59;85.14,25.60?overview=false" >/dev/null',
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  osrm-bike:
+    image: osrm/osrm-backend:v5.25.0
+    profiles: ['geo']
+    restart: unless-stopped
+    depends_on:
+      osrm-init:
+        condition: service_completed_successfully
+    volumes:
+      - osrm-data:/graph
+    command: ['osrm-routed', '--algorithm', 'mld', '/graph/bicycle/merged.osrm']
+    ports:
+      - '${OSRM_BIKE_PORT:-5001}:5000'
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'curl -fsS "http://127.0.0.1:5000/route/v1/bike/85.13,25.59;85.14,25.60?overview=false" >/dev/null',
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  postgis-data:
+  redis-data:
+  minio-data:
+  osrm-data:
+  photon-data:

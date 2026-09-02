@@ -27,17 +27,17 @@ no hosted auth SaaS, no paid email SDK.
 
 ## Stack
 
-| Layer | Choice |
-| --- | --- |
-| Monorepo | pnpm workspaces — `apps/web`, `apps/api`, `apps/worker`, `packages/shared`, `packages/db` |
-| Web | Vite + React 19 + TS, react-router v7, TanStack Query, Zustand (map/filter/UI only), Tailwind v4 + shadcn/ui, react-hook-form + Zod, maplibre-gl via react-map-gl, @turf/turf |
-| API | Node 22 + Express 5 + TS, Zod at every boundary, pino, helmet, express-rate-limit |
-| Worker | Separate Node process, BullMQ repeatable jobs |
-| DB | PostgreSQL 16 + PostGIS, Prisma 6 isolated in `packages/db` |
-| Cache/queue | Redis 7 + ioredis |
-| Storage | MinIO in dev via `@aws-sdk/client-s3`, Cloudflare R2 in prod by env swap |
-| Auth | better-auth, self-hosted, Prisma adapter, DB-backed sessions |
-| Email | Nodemailer over SMTP, MailHog in dev |
+| Layer       | Choice                                                                                                                                                                        |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Monorepo    | pnpm workspaces — `apps/web`, `apps/api`, `apps/worker`, `packages/shared`, `packages/db`                                                                                     |
+| Web         | Vite + React 19 + TS, react-router v7, TanStack Query, Zustand (map/filter/UI only), Tailwind v4 + shadcn/ui, react-hook-form + Zod, maplibre-gl via react-map-gl, @turf/turf |
+| API         | Node 22 + Express 5 + TS, Zod at every boundary, pino, helmet, express-rate-limit                                                                                             |
+| Worker      | Separate Node process, BullMQ repeatable jobs                                                                                                                                 |
+| DB          | PostgreSQL 16 + PostGIS, Prisma 6 isolated in `packages/db`                                                                                                                   |
+| Cache/queue | Redis 7 + ioredis                                                                                                                                                             |
+| Storage     | MinIO in dev via `@aws-sdk/client-s3`, Cloudflare R2 in prod by env swap                                                                                                      |
+| Auth        | better-auth, self-hosted, Prisma adapter, DB-backed sessions                                                                                                                  |
+| Email       | Nodemailer over SMTP, MailHog in dev                                                                                                                                          |
 
 ## Geo stack (all free)
 
@@ -56,17 +56,63 @@ Adding a fourth city is a single-entry change to that file.
 
 ## Getting started
 
+Requires Node 22, pnpm 10, and Docker.
+
 ```bash
 pnpm install
 cp .env.example .env
-./scripts/bootstrap.sh   # downloads + cuts + merges OSM extracts, builds OSRM graph and Photon index
-docker compose up
-pnpm db:reset            # drop, migrate, reseed
+pnpm build:packages      # builds @machiya/shared and generates the Prisma client
+docker compose up -d     # postgis, redis, minio, mailhog, api, worker, web
 ```
 
-Dev credentials after seeding: `seeker@dev.local`, `lister@dev.local`, `admin@dev.local`,
-all with password `devpass123`.
+Then open http://localhost:8080 — the map should render Patna from OpenFreeMap and
+the status card should show `api`, `postgis` and `redis` all green.
+
+For day-to-day work, run the apps on the host against the containerised
+infrastructure instead:
+
+```bash
+docker compose up -d postgis redis minio minio-init mailhog
+pnpm dev                 # api :4000, worker :4100, web :5173
+```
+
+### Ports
+
+| Service     | URL                   | Notes                                         |
+| ----------- | --------------------- | --------------------------------------------- |
+| web (nginx) | http://localhost:8080 | production build inside compose               |
+| web (vite)  | http://localhost:5173 | `pnpm dev:web` on the host                    |
+| api         | http://localhost:4000 | `/health`, `/health/live`, `/api/hello`       |
+| worker      | http://localhost:4100 | `/health`                                     |
+| postgis     | localhost:5432        | user/password/db all `machiya`                |
+| redis       | localhost:6379        |                                               |
+| minio       | http://localhost:9000 | console on :9001, `minioadmin` / `minioadmin` |
+| mailhog     | http://localhost:8025 | catches every outbound mail                   |
+
+The geo services (Photon, OSRM car and bike) sit behind a compose profile because
+they need a prebuilt OSM index: `docker compose --profile geo up -d`, once
+`scripts/bootstrap.sh` exists and has run.
+
+### Verify
+
+```bash
+pnpm typecheck && pnpm lint && pnpm format:check && pnpm test
+curl -s localhost:4000/health | jq
+curl -s localhost:4000/api/hello | jq
+curl -s localhost:4100/health | jq
+docker compose ps      # every service should read (healthy)
+```
 
 ## Status
 
-Greenfield. Scaffolding in progress — see `DECISIONS.md` for logged trade-offs.
+Step 1 of 9 done: monorepo, docker compose, CI, env files, health endpoints, and a
+verified end-to-end `docker compose up` rendering an OpenFreeMap tile.
+
+Next: `packages/db` — Prisma schema, the PostGIS extension and GiST index
+migrations, the lat/lng sync trigger, and `geo-queries.ts` tested against a real
+PostGIS container.
+
+Every non-obvious choice is logged in [DECISIONS.md](DECISIONS.md). Two worth
+reading before touching the map or the database: D2 (how `lat`/`lng` stays in sync
+with the `geography` column) and D12 (why maplibre's worker is copied into
+`public/`, and the silent blank-map failure if it is not).

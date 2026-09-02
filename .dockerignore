@@ -1,0 +1,17 @@
+**/node_modules
+**/dist
+**/build
+**/coverage
+**/.turbo
+**/*.tsbuildinfo
+.git
+.github
+.husky
+.osm-cache
+osm-data
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+README.md
+DECISIONS.md
