@@ -120,3 +120,96 @@ browser refuses to start a module worker.
 `build.rollupOptions.output.manualChunks` must NOT be used to isolate maplibre —
 that reintroduces the same break. The 1 MB chunk-size warning is suppressed with
 `chunkSizeWarningLimit` instead.
+
+## Step 2 — packages/db
+
+### D13. The GiST indexes live in `schema.prisma`, not in a hand-written migration
+
+The brief says Prisma will not generate spatial indexes. That is no longer true:
+Prisma 6.19 accepts `@@index([location], type: Gist)` on an `Unsupported()`
+field, and emits `CREATE INDEX ... USING GIST` in the generated migration.
+
+Leaving them hand-written was actively worse. Prisma introspects these indexes,
+so every subsequent `prisma migrate dev` produced a migration that DROPPED them
+— a trap that would eventually be applied by someone not reading the diff. They
+are declared in the schema with `map:` pinning the brief's names
+(`listing_location_gix`, `office_location_gix`), which keeps the names and
+removes the drift.
+
+Only what Prisma genuinely cannot express is hand-written: the trigger, the CHECK
+constraint, and the partial index.
+
+### D14. `@machiya/shared` owns the Zod enums; `packages/db` proves they match
+
+The brief asks for shared Zod schemas "derived from Prisma types". Deriving them
+in `shared` would mean `shared` importing `@machiya/db`, which already imports
+`shared` — a cycle.
+
+So the values are written once in `packages/shared/src/enums.ts`, and
+`packages/db/src/enum-guard.ts` holds a type-level `Exact<A, B>` assertion per
+enum against the generated Prisma types. Add a variant to one side only and
+`pnpm typecheck` fails on that file, naming the enum. One source of truth for
+validation, no cycle, and the duplication cannot rot in silence.
+
+### D15. `location` is optional in the schema; NOT NULL is a CHECK constraint
+
+Declaring `location Unsupported("geography(Point, 4326)")` as REQUIRED makes
+Prisma drop the model's `create` operation entirely — `prisma.listing.create()`
+fails at runtime with "Operation 'createOne' for model 'Listing' does not match
+any query". That leaves no way to write a listing through the client at all.
+
+The column is therefore optional in `schema.prisma` and the real invariant is a
+CHECK constraint (`listing_location_present`, `office_location_present`) added in
+the hand-written migration. Prisma has no CHECK support, so it ignores them and
+reports no drift. Between the BEFORE trigger and the CHECK, a listing with a null
+location cannot exist — and a test proves the constraint fires when the column is
+nulled behind the trigger's back.
+
+### D16. An initdb script hands the extension set to Prisma
+
+`postgis/postgis:16-3.4` installs `postgis`, `postgis_topology`,
+`fuzzystrmatch` and `postgis_tiger_geocoder` into the application database
+automatically. Prisma then compares the database against its migration history,
+finds four extensions it never created, calls it drift, and demands a full
+`migrate reset` before the first migration can be written — on a completely
+fresh clone.
+
+`scripts/postgres-init/zz-prisma-owns-extensions.sql`, mounted into
+`/docker-entrypoint-initdb.d`, drops them at the end of initdb. The schema then
+declares exactly the two the app needs and creates them in the init migration.
+The binaries remain in the image, so the healthcheck — which asserts
+availability, not installation — is unaffected.
+
+Note the mount is the file, not the directory: the Postgres entrypoint only
+executes scripts sitting directly in `/docker-entrypoint-initdb.d`.
+
+### D17. Money is `Int` rupees, except fuel prices
+
+`rentAmount`, `salePrice`, `securityDeposit` and `maintenanceMonthly` are `Int`
+holding whole rupees. No sub-rupee rent exists in this market, and Int keeps the
+money out of `Decimal` serialisation — which otherwise leaks a Decimal instance
+into every JSON response and every arithmetic expression in the commute-cost
+engine.
+
+`FuelPrice.price` is the exception: `Decimal(8, 2)`, because petrol is quoted to
+the paisa and a rounded fuel price would visibly skew a monthly commute cost.
+
+### D18. Similar-listing KNN is bounded by `ST_DWithin`
+
+`ORDER BY location <-> subject` alone has no notion of "too far": once local
+matches run out, a listing in another city 1,500 km away is a perfectly good
+nearest neighbour, and a test caught exactly that. `findSimilarListings` takes a
+`maxDistanceMeters` bound (default 10 km) applied with `ST_DWithin` before the
+KNN ordering, so the operator still drives an index-assisted scan.
+
+### D19. Search sorting uses row-constructor keyset pagination, not OFFSET
+
+Cursors carry `(sortKey, id)` base64url-encoded. The secondary sort column always
+runs in the same direction as the primary so the row-constructor comparison
+`("sortKey", "id") < (v, id)` stays correct for descending sorts. `OFFSET` would
+skip or repeat rows while listings are being published underneath a paging user,
+and gets slower with every page.
+
+Sort direction and comparison operator are the only things reaching SQL through
+`Prisma.raw`, and both come from a closed `switch` in `sortPlan()`. Every value —
+coordinates included — is a bound parameter.

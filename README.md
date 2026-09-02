@@ -61,9 +61,14 @@ Requires Node 22, pnpm 10, and Docker.
 ```bash
 pnpm install
 cp .env.example .env
+docker compose up -d postgis redis minio minio-init mailhog
+pnpm db:deploy           # applies migrations
 pnpm build:packages      # builds @machiya/shared and generates the Prisma client
-docker compose up -d     # postgis, redis, minio, mailhog, api, worker, web
+docker compose up -d     # adds api, worker and web
 ```
+
+Use `pnpm db:deploy` rather than `db:migrate` for first-time setup: `deploy`
+applies migrations without a drift check, which is what a fresh database wants.
 
 Then open http://localhost:8080 — the map should render Patna from OpenFreeMap and
 the status card should show `api`, `postgis` and `redis` all green.
@@ -105,14 +110,42 @@ docker compose ps      # every service should read (healthy)
 
 ## Status
 
-Step 1 of 9 done: monorepo, docker compose, CI, env files, health endpoints, and a
+Steps 1-2 of 9 done.
+
+**1. Scaffold** — monorepo, docker compose, CI, env files, health endpoints, and a
 verified end-to-end `docker compose up` rendering an OpenFreeMap tile.
 
-Next: `packages/db` — Prisma schema, the PostGIS extension and GiST index
-migrations, the lat/lng sync trigger, and `geo-queries.ts` tested against a real
-PostGIS container.
+**2. Database** — the full Prisma schema (13 models, 7 native enums), the PostGIS
+and pg_trgm extensions, GiST and trigram indexes, the `lat`/`lng`-to-`geography`
+sync trigger with a CHECK constraint behind it, and `packages/db/src/geo-queries.ts`
+— the only module in the repo containing raw SQL. 39 tests run against a real
+PostGIS container (testcontainers locally, a service container in CI).
 
-Every non-obvious choice is logged in [DECISIONS.md](DECISIONS.md). Two worth
-reading before touching the map or the database: D2 (how `lat`/`lng` stays in sync
-with the `geography` column) and D12 (why maplibre's worker is copied into
-`public/`, and the silent blank-map failure if it is not).
+Next: Better Auth — schema generation, email/password and social providers,
+session middleware, role guards with tests, the web auth screens, and email
+verification through MailHog.
+
+### Database notes
+
+```bash
+pnpm db:deploy      # apply migrations (no drift check — use this for setup)
+pnpm db:migrate     # create a new migration from a schema change
+pnpm db:studio      # browse the data
+pnpm -F @machiya/db test    # geo query suite against real PostGIS
+```
+
+`prisma migrate reset` refuses to run non-interactively in Prisma 6.19 without an
+explicit consent variable, so `pnpm db:reset` will prompt. To rebuild a local
+database from scratch without it, drop and recreate the schema:
+
+```bash
+docker compose exec postgis psql -U machiya -d machiya   -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+docker compose exec -T postgis psql -U machiya -d machiya   < scripts/postgres-init/zz-prisma-owns-extensions.sql
+pnpm db:deploy
+```
+
+Every non-obvious choice is logged in [DECISIONS.md](DECISIONS.md). The ones worth
+reading before touching this code: D2 and D15 (how `lat`/`lng` stays in sync with
+the `geography` column, and why that column is nullable), D13 (why the GiST
+indexes are in the schema rather than a hand-written migration), and D12 (why
+maplibre's worker is copied into `public/`, and the silent blank map if it is not).

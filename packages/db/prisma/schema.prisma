@@ -1,16 +1,24 @@
 // Machiya / RentNear data model.
 //
-// Two rules govern every geo model in this file and they are easy to get wrong:
+// Three rules govern every geo model in this file, and each of them is easy to
+// get wrong:
 //
 //  1. Prisma cannot SELECT an `Unsupported(...)` field, so each geo model stores
 //     `lat`/`lng` as plain Floats alongside the `location geography(Point, 4326)`
 //     column. The Float pair is what the API reads and returns; the geography
 //     column exists purely so PostGIS can index and query it.
-//  2. The two representations are kept in sync by a Postgres trigger, not by
-//     application code — see DECISIONS.md and the hand-written migration.
+//  2. The two are kept in sync by a Postgres trigger, never by application code.
+//     See DECISIONS.md D2 and the hand-written migration
+//     `..._location_sync_trigger/migration.sql`.
+//  3. `location` is declared OPTIONAL even though it is never null in practice.
+//     A REQUIRED Unsupported() field makes Prisma drop the model's `create`
+//     operation entirely, which would leave no way to write a listing at all.
+//     The NOT NULL guarantee is therefore a CHECK constraint in that same
+//     migration. See DECISIONS.md D15.
 //
-// Spatial indexes (GiST) and the trigger cannot be expressed in this schema and
-// live in hand-authored migrations.
+// The GiST indexes, by contrast, ARE expressible in this schema
+// (`@@index([location], type: Gist)`) and live here rather than in the
+// hand-written migration. See DECISIONS.md D13.
 
 generator client {
   provider        = "prisma-client"
@@ -24,4 +32,352 @@ datasource db {
   extensions = [postgis, pg_trgm]
 }
 
-// Models land in step 2 (packages/db: schema, PostGIS migration, geo-queries).
+enum UserRole {
+  SEEKER
+  LISTER
+  ADMIN
+}
+
+enum ListingType {
+  RENT
+  SALE
+}
+
+enum ListingStatus {
+  DRAFT
+  PUBLISHED
+  PAUSED
+  RENTED
+}
+
+enum FurnishingType {
+  UNFURNISHED
+  SEMI_FURNISHED
+  FULLY_FURNISHED
+}
+
+enum PropertyType {
+  APARTMENT
+  INDEPENDENT_HOUSE
+  BUILDER_FLOOR
+  VILLA
+  STUDIO
+  PENTHOUSE
+  PG
+}
+
+enum EnquiryStatus {
+  OPEN
+  RESPONDED
+  CLOSED
+  SPAM
+}
+
+enum FuelType {
+  PETROL
+  DIESEL
+  CNG
+}
+
+model City {
+  id          String @id @default(cuid())
+  slug        String @unique
+  name        String
+  state       String
+  centroidLat Float
+  centroidLng Float
+
+  /// [CityBbox] — { minLng, minLat, maxLng, maxLat }, the extract bounds.
+  bbox Json
+
+  defaultFuelType FuelType @default(PETROL)
+
+  /// [TransitFareConfig] — per-city fares; they change rarely and no free API
+  /// exposes them reliably, so they are configuration rather than scraped data.
+  transitFareConfig Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  listings   Listing[]
+  fuelPrices FuelPrice[]
+}
+
+/// Application user. Better Auth owns the identity columns (id, email,
+/// emailVerified, name, avatarUrl, the ban trio) and its session/account tables
+/// are generated alongside this model in step 3; `avatarUrl` is mapped from
+/// Better Auth's `image` field in the auth config rather than duplicated here.
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  name          String
+  avatarUrl     String?
+  role          UserRole @default(SEEKER)
+
+  phone           String?
+  isPhoneVerified Boolean @default(false)
+
+  // Better Auth admin plugin.
+  banned     Boolean?
+  banReason  String?
+  banExpires DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  offices           OfficeLocation[]
+  listings          Listing[]
+  favorites         Favorite[]
+  savedSearches     SavedSearch[]
+  enquiriesAsSeeker Enquiry[]        @relation("EnquirySeeker")
+  enquiriesAsLister Enquiry[]        @relation("EnquiryLister")
+  messages          EnquiryMessage[]
+  listingViews      ListingView[]
+
+  @@index([role])
+}
+
+/// A saved office. `location` is derived from lat/lng by trigger.
+model OfficeLocation {
+  id      String @id @default(cuid())
+  userId  String
+  label   String
+  address String
+  lat     Float
+  lng     Float
+
+  location Unsupported("geography(Point, 4326)")?
+
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, isDefault])
+  @@index([location], map: "office_location_gix", type: Gist)
+}
+
+model Listing {
+  id      String @id @default(cuid())
+  slug    String @unique
+  ownerId String
+  cityId  String
+
+  title       String
+  description String
+
+  listingType  ListingType
+  propertyType PropertyType
+  status       ListingStatus @default(DRAFT)
+
+  address  String
+  locality String
+  lat      Float
+  lng      Float
+
+  location Unsupported("geography(Point, 4326)")?
+
+  bedrooms    Int
+  bathrooms   Int
+  floor       Int?
+  totalFloors Int?
+  areaSqft    Int
+
+  furnishing FurnishingType
+
+  /// Whole rupees, not paise: no sub-rupee rent exists in this market and Int
+  /// keeps the money out of Decimal serialisation entirely.
+  rentAmount         Int?
+  salePrice          Int?
+  securityDeposit    Int?
+  maintenanceMonthly Int?
+
+  availableFrom DateTime?
+
+  isVerified Boolean  @default(false)
+  viewCount  Int      @default(0)
+  rules      String[] @default([])
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  city  City @relation(fields: [cityId], references: [id], onDelete: Restrict)
+
+  amenities ListingAmenity[]
+  images    ListingImage[]
+  enquiries Enquiry[]
+  favorites Favorite[]
+  views     ListingView[]
+
+  @@index([cityId])
+  @@index([ownerId])
+  @@index([cityId, status, listingType])
+  @@index([status, rentAmount])
+  @@index([ownerId, status])
+  @@index([status, publishedAt])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([address(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([location], map: "listing_location_gix", type: Gist)
+}
+
+model ListingImage {
+  id        String @id @default(cuid())
+  listingId String
+
+  /// S3/MinIO object key of the original upload. Derived sizes (thumb, card,
+  /// full, webp) are keyed off this by the sharp pipeline.
+  objectKey String
+
+  width     Int
+  height    Int
+  sortOrder Int     @default(0)
+  isCover   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId])
+  @@index([listingId, sortOrder])
+}
+
+model Amenity {
+  id       String  @id @default(cuid())
+  slug     String  @unique
+  name     String
+  icon     String?
+  category String
+
+  listings ListingAmenity[]
+
+  @@index([category])
+}
+
+model ListingAmenity {
+  listingId String
+  amenityId String
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  amenity Amenity @relation(fields: [amenityId], references: [id], onDelete: Cascade)
+
+  @@id([listingId, amenityId])
+  @@index([amenityId])
+}
+
+model Enquiry {
+  id        String        @id @default(cuid())
+  listingId String
+  seekerId  String
+  listerId  String
+  status    EnquiryStatus @default(OPEN)
+
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  listing  Listing          @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  seeker   User             @relation("EnquirySeeker", fields: [seekerId], references: [id], onDelete: Cascade)
+  lister   User             @relation("EnquiryLister", fields: [listerId], references: [id], onDelete: Cascade)
+  messages EnquiryMessage[]
+
+  /// One thread per seeker per listing; further contact appends messages.
+  @@unique([listingId, seekerId])
+  @@index([listingId])
+  @@index([seekerId])
+  @@index([listerId])
+  @@index([listerId, status, lastMessageAt])
+}
+
+model EnquiryMessage {
+  id        String    @id @default(cuid())
+  enquiryId String
+  senderId  String
+  body      String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  enquiry Enquiry @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+  sender  User    @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([enquiryId])
+  @@index([senderId])
+  @@index([enquiryId, createdAt])
+}
+
+model Favorite {
+  id        String   @id @default(cuid())
+  userId    String
+  listingId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, listingId])
+  @@index([userId])
+  @@index([listingId])
+}
+
+model SavedSearch {
+  id     String @id @default(cuid())
+  userId String
+  name   String
+
+  /// [ListingFilters] — the same filter object the search endpoint accepts, so a
+  /// saved search is re-run by handing it straight back.
+  filters Json
+
+  officeLat     Float
+  officeLng     Float
+  radiusMeters  Int     @default(3000)
+  notifyEnabled Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([notifyEnabled])
+}
+
+model FuelPrice {
+  id       String   @id @default(cuid())
+  cityId   String
+  fuelType FuelType
+
+  /// Rupees per litre (per kg for CNG), two decimals.
+  price     Decimal @db.Decimal(8, 2)
+  currency  String  @default("INR")
+  source    String
+  sourceUrl String
+
+  fetchedAt DateTime
+  createdAt DateTime @default(now())
+
+  city City @relation(fields: [cityId], references: [id], onDelete: Cascade)
+
+  @@unique([cityId, fuelType, fetchedAt])
+  @@index([cityId])
+  /// Latest-per-city lookup: the API reads Redis, but falls back to this.
+  @@index([cityId, fuelType, fetchedAt(sort: Desc)])
+}
+
+model ListingView {
+  id        String   @id @default(cuid())
+  listingId String
+  userId    String?
+  viewedAt  DateTime @default(now())
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([listingId])
+  @@index([userId])
+  @@index([listingId, viewedAt])
+}

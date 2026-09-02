@@ -7,3 +7,5 @@ pnpm-lock.yaml
 osm-data
 packages/db/prisma/migrations
 *.osm.pbf
+packages/db/generated
+apps/web/public/maplibre

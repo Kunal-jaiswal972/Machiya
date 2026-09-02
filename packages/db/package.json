@@ -20,18 +20,22 @@
     "build": "pnpm generate && tsc -p tsconfig.json && node scripts/copy-runtime.mjs",
     "generate": "prisma generate --schema=prisma/schema.prisma",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests",
-    "clean": "rimraf dist generated"
+    "test": "vitest run",
+    "clean": "rimraf dist generated",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
-    "zod": "^4.5.4"
+    "zod": "^4.5.4",
+    "@machiya/shared": "workspace:*"
   },
   "devDependencies": {
-    "@machiya/shared": "workspace:*",
     "prisma": "^6.19.3",
     "rimraf": "^6.1.3",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@testcontainers/postgresql": "^12.1.0",
+    "testcontainers": "^12.1.0",
+    "tsx": "^4.23.13"
   }
 }
