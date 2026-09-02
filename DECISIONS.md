@@ -288,3 +288,98 @@ status codes — and swapping the auth provider touches
 `resolveSession` re-parses the role through the shared Zod enum rather than
 casting it. An unrecognised role fails closed, with a log line naming the user,
 instead of sliding through a `requireRole` check.
+
+## Step 4 — bootstrap and seed
+
+### D26. Geocoding is self-hosted Nominatim, not Photon
+
+The brief specifies "self-hosted Photon (komoot/photon Docker image) indexed
+from the merged three-city OSM extract". Two things make that impossible as
+written, both verified rather than assumed:
+
+1. **Photon cannot read an `.osm.pbf`.** Its only import paths are
+   `-nominatim-host` (a live Nominatim database) or `-import-file` (a Photon JSON
+   dump). Indexing "from the merged extract" therefore requires standing up
+   Nominatim first regardless.
+2. **There is no `ghcr.io/komoot/photon` image.** komoot publishes the jar only;
+   `docker manifest inspect` on that reference fails. The compose file had been
+   written against it and would have failed on first `--profile geo up`.
+
+The prebuilt-index escape hatch is also gone: the per-country downloads
+(`.../by-country-code/in/photon-db-in-latest.tar.bz2`) 404, and only the full
+planet index remains — 101 GB.
+
+So: **self-hosted Nominatim (`mediagis/nominatim:5.3`) is the primary geocoder.**
+It imports the merged extract directly, serves `/search` and `/reverse`, is free
+and self-hostable, and it is the provider the brief already nominated as the
+fallback — so the `GeocodeProvider` adapter shape does not change, only which URL
+is primary. Photon remains available as a type-ahead layer on top of that same
+database, behind its own `--profile photon` (unofficial `rtuszik/photon-docker`
+image), for when autocomplete latency actually matters.
+
+### D27. Geofabrik publishes India by zone, not by state
+
+The brief says "Geofabrik only publishes India per-state". It does not — the
+sub-regions are six zones (central, eastern, north-eastern, northern, southern,
+western), and the per-state URLs the brief implies return an HTML error page
+rather than a `.pbf`, which is the kind of thing that fails as a corrupt download
+much later.
+
+`scripts/cities.ts` therefore maps each city to its zone: Patna to
+`eastern-zone` (236 MB), Bengaluru to `southern-zone` (533 MB), Pune to
+`western-zone` (210 MB). Roughly 1 GB downloaded once and cached; the bbox cuts
+that follow are a few MB each.
+
+### D28. Every bootstrap tool runs in a container
+
+`osmium` (`iboates/osmium:1.19.0`), OSRM and Nominatim all run through Docker, so
+`scripts/bootstrap.sh` needs nothing on the host but `docker`, `curl` and `pnpm`.
+On Windows the mount paths go through `cygpath -m` and `MSYS_NO_PATHCONV=1`,
+because Docker Desktop wants `C:/...` and Git Bash would otherwise rewrite
+`/cache` into a host path.
+
+The OSRM graph build is not duplicated in the script: it delegates to the
+`osrm-init` compose service, so the pipeline is defined once and
+`docker compose --profile geo up` rebuilds it the same way.
+
+### D29. The seed prunes listings it no longer plans
+
+Upsert-on-slug alone is not idempotent across a change to the _plan_. Re-seeding
+after adjusting how listings are laid out changed their slugs, so the new rows
+were inserted while the old ones stayed behind: 51 listings silently became 90.
+
+Everything the seed creates is owned by `lister@dev.local`, so `seedListings`
+finishes by deleting any listing of theirs whose slug is not in the current plan.
+Cascades take the images, amenities, enquiries and favourites with it. Verified:
+two consecutive runs both end at exactly 51 listings.
+
+Determinism comes from a fixed-seed mulberry32 PRNG, so the same listings land at
+the same coordinates with the same prices on every machine — which is what makes
+screenshots and bug reports comparable.
+
+### D30. Listings cluster on the office localities, two thirds to one third
+
+Spreading 17 listings evenly across six localities 5-20 km apart left only three
+to seven inside a 3 km office radius — the one view the entire product is built
+around. So ~65% cluster on the first two localities (where `seedUsers` places
+each dev office) and the rest spread across the others: dense enough that the
+ring view, the filters and the sort orders all have something to work on, while
+the wider city still has listings for a different office.
+
+### D31. Fixture images are uploaded once and shared
+
+`scripts/generate-fixtures.ts` renders eight gradient JPEGs (~11 KB each, 89 KB
+total) which are committed. The seed uploads them to `fixtures/<name>.jpg` in
+MinIO and every listing's `ListingImage` rows reference those shared keys.
+
+Uploading a private copy per listing would mean ~200 objects of identical bytes:
+the object key is what the gallery code exercises, not the pixels. Real uploads
+get their own keys in step 5. The images are deliberately plain — labelled
+"Machiya seed data" — so a placeholder is never mistaken for a real photo.
+
+### D32. Dev account passwords are hashed by Better Auth's own hasher
+
+`prisma/seed.ts` imports `hashPassword` from `better-auth/crypto` rather than
+hand-rolling scrypt. If the library changes its hash format, the seeded accounts
+change with it instead of silently failing to sign in. Verified: all three dev
+accounts sign in and `/api/me` reports the right role and verified state.

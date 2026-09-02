@@ -2,6 +2,7 @@
   "name": "machiya",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Office-centric rental discovery and listing platform",
   "packageManager": "pnpm@10.12.4",
   "engines": {
@@ -28,6 +29,7 @@
     "db:migrate": "prisma migrate dev --schema=packages/db/prisma/schema.prisma",
     "db:deploy": "prisma migrate deploy --schema=packages/db/prisma/schema.prisma",
     "db:reset": "prisma migrate reset --force --schema=packages/db/prisma/schema.prisma",
+    "db:seed": "tsx --env-file-if-exists=.env packages/db/prisma/seed.ts",
     "db:studio": "prisma studio --schema=packages/db/prisma/schema.prisma",
     "auth:generate": "better-auth generate --config apps/api/src/auth/index.ts --output packages/db/prisma/schema.prisma -y",
     "auth:check": "tsx --env-file-if-exists=.env apps/api/scripts/check-auth-schema.ts",
@@ -37,6 +39,8 @@
     "compose:down": "docker compose down",
     "compose:nuke": "docker compose down -v",
     "compose:logs": "docker compose logs -f",
+    "bootstrap": "bash scripts/bootstrap.sh",
+    "fixtures:generate": "tsx scripts/generate-fixtures.ts",
     "prepare": "husky"
   },
   "prisma": {
@@ -71,6 +75,7 @@
     "tsx": "^4.23.13",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.69.0",
-    "@better-auth/cli": "^1.4.21"
+    "@better-auth/cli": "^1.4.21",
+    "sharp": "^0.35.4"
   }
 }

@@ -49,3 +49,6 @@ apps/web/public/maplibre/
 
 # playwright mcp scratch output
 .playwright-mcp/
+
+# merged three-city extract produced by scripts/bootstrap.sh
+osm-data/

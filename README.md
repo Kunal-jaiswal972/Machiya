@@ -62,16 +62,17 @@ Requires Node 22, pnpm 10, and Docker.
 pnpm install
 cp .env.example .env
 docker compose up -d postgis redis minio minio-init mailhog
-pnpm db:deploy           # applies migrations
+pnpm db:deploy           # apply migrations
+pnpm db:seed             # three cities, 51 listings, dev accounts
 pnpm build:packages      # builds @machiya/shared and generates the Prisma client
 docker compose up -d     # adds api, worker and web
 ```
 
-Use `pnpm db:deploy` rather than `db:migrate` for first-time setup: `deploy`
-applies migrations without a drift check, which is what a fresh database wants.
-
 Then open http://localhost:8080 — the map should render Patna from OpenFreeMap and
 the status card should show `api`, `postgis` and `redis` all green.
+
+Use `pnpm db:deploy` rather than `db:migrate` for first-time setup: `deploy`
+applies migrations without a drift check, which is what a fresh database wants.
 
 For day-to-day work, run the apps on the host against the containerised
 infrastructure instead:
@@ -80,6 +81,37 @@ infrastructure instead:
 docker compose up -d postgis redis minio minio-init mailhog
 pnpm dev                 # api :4000, worker :4100, web :5173
 ```
+
+Dev accounts after seeding — all pre-verified, password `devpass123`:
+
+| Account            | Role   | Default office         |
+| ------------------ | ------ | ---------------------- |
+| `seeker@dev.local` | seeker | Boring Road, Patna     |
+| `lister@dev.local` | lister | Koramangala, Bengaluru |
+| `admin@dev.local`  | admin  | Kothrud, Pune          |
+
+### Routing and geocoding
+
+The geo services need a prebuilt OSM index, so they sit behind a compose profile
+and a one-time bootstrap:
+
+```bash
+pnpm bootstrap                          # ~1 GB of downloads, cached in .osm-cache/
+docker compose --profile geo up -d      # osrm-car, osrm-bike, nominatim
+```
+
+`scripts/bootstrap.sh` downloads the three Geofabrik India zone extracts that
+contain the seed cities, cuts each city out by bounding box with osmium, merges
+them into one small `.osm.pbf`, builds the OSRM car and bicycle graphs, and
+imports the result into a self-hosted Nominatim. Every step is idempotent —
+anything whose output already exists is skipped, so an interrupted run resumes
+cheaply. Nothing needs osmium, osrm or postgres on the host; every tool runs in a
+container.
+
+Geocoding is self-hosted **Nominatim**, not Photon: Photon cannot read an
+`.osm.pbf` (it imports from a Nominatim database), and no official Photon image
+exists. Photon is still available as a type-ahead layer on top of the same
+database behind `--profile photon`. Reasoning in [DECISIONS.md](DECISIONS.md) D26.
 
 ### Ports
 
@@ -147,7 +179,7 @@ is a runtime 500, and this check turns it into a build failure.
 
 ## Status
 
-Steps 1-3 of 9 done.
+Steps 1-4 of 9 done.
 
 **1. Scaffold** — monorepo, docker compose, CI, env files, health endpoints, and a
 verified end-to-end `docker compose up` rendering an OpenFreeMap tile.
@@ -158,21 +190,25 @@ behind it, and `packages/db/src/geo-queries.ts` — the only module in the repo
 containing raw SQL. 39 tests against a real PostGIS container.
 
 **3. Auth** — Better Auth with the Prisma adapter, DB-backed sessions, email
-verification and password reset through MailHog, env-driven social providers,
-the admin plugin, Redis-backed rate limiting, server-side guards with 20 tests,
-and the five web auth screens. Verified end to end in a browser: sign up →
-verification email → verify → auto sign-in → guarded page → sign out → guard
-redirect → sign in returns to the intended path.
+verification and password reset through MailHog, env-driven social providers, the
+admin plugin, Redis-backed rate limiting, server-side guards with 20 tests, and
+the five web auth screens.
 
-Next: `scripts/bootstrap.sh` (three-city OSM extract, merge, OSRM graph, Photon
-index) and `prisma/seed.ts`, so everything after that is built against realistic
-data.
+**4. Data** — `scripts/cities.ts` as the single city config, `scripts/bootstrap.sh`
+for the OSM/OSRM/Nominatim pipeline, and an idempotent, deterministic seed: 3
+cities, 16 amenities, 51 listings across every enum value, 3 dev accounts with
+working passwords and saved offices, enquiry threads, favourites, saved searches,
+fuel prices, and 8 placeholder photos uploaded to MinIO.
+
+Next: listing CRUD — presigned MinIO uploads, the sharp image pipeline, and
+ownership checks on every mutation.
 
 ### Database notes
 
 ```bash
 pnpm db:deploy      # apply migrations (no drift check — use this for setup)
 pnpm db:migrate     # create a new migration from a schema change
+pnpm db:seed        # re-seed; idempotent, prunes listings no longer planned
 pnpm db:studio      # browse the data
 pnpm -F @machiya/db test    # geo query suite against real PostGIS
 ```

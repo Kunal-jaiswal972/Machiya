@@ -126,6 +126,7 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:4000}
       AUTH_TRUSTED_ORIGINS: ${AUTH_TRUSTED_ORIGINS:-http://localhost:5173}
+      NOMINATIM_URL: http://nominatim:8080
       PHOTON_URL: http://photon:2322
       OSRM_CAR_URL: http://osrm-car:5000
       OSRM_BIKE_URL: http://osrm-bike:5000
@@ -170,20 +171,63 @@ services:
 
   # --- geo profile: needs scripts/bootstrap.sh to have run once --------------
 
-  photon:
-    image: ghcr.io/komoot/photon:latest
+  # Geocoding and reverse geocoding, imported from the merged three-city
+  # extract. This image imports PBF_PATH on FIRST BOOT into its own volume and
+  # then serves; there is no separate import command. See DECISIONS.md D26 for
+  # why this is Nominatim rather than Photon.
+  nominatim:
+    image: mediagis/nominatim:5.3
     profiles: ['geo']
     restart: unless-stopped
+    environment:
+      PBF_PATH: /osm/merged.osm.pbf
+      NOMINATIM_PASSWORD: ${NOMINATIM_PASSWORD:-nominatim}
+      IMPORT_WIKIPEDIA: 'false'
+      IMPORT_US_POSTCODES: 'false'
+      IMPORT_GB_POSTCODES: 'false'
+      # Three city extracts, so the import is minutes rather than days.
+      THREADS: ${NOMINATIM_THREADS:-4}
+    volumes:
+      - ./osm-data:/osm:ro
+      - nominatim-data:/var/lib/postgresql/16/main
+      - nominatim-flatnode:/nominatim/flatnode
+    shm_size: 1gb
+    ports:
+      - '${NOMINATIM_PORT:-7070}:8080'
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS http://127.0.0.1:8080/status || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      # A cold import must not be mistaken for a wedged container.
+      start_period: 45m
+
+  # Optional type-ahead layer on top of Nominatim. Photon cannot read an
+  # .osm.pbf: it imports from a Nominatim database, so it only makes sense once
+  # the service above has finished importing. Opt in with --profile photon after
+  # building an index. See DECISIONS.md D26.
+  photon:
+    image: rtuszik/photon-docker:2.4.0
+    profiles: ['photon']
+    restart: unless-stopped
+    depends_on:
+      nominatim:
+        condition: service_healthy
+    environment:
+      NOMINATIM_HOST: nominatim
+      NOMINATIM_USER: nominatim
+      NOMINATIM_PASSWORD: ${NOMINATIM_PASSWORD:-nominatim}
+      UPDATE_STRATEGY: DISABLED
     volumes:
       - photon-data:/photon/photon_data
     ports:
       - '${PHOTON_PORT:-2322}:2322'
     healthcheck:
       test: ['CMD-SHELL', 'wget -q --spider http://127.0.0.1:2322/status || exit 1']
-      interval: 20s
+      interval: 30s
       timeout: 5s
-      retries: 10
-      start_period: 60s
+      retries: 20
+      start_period: 30m
 
   osrm-init:
     image: osrm/osrm-backend:v5.25.0
@@ -261,4 +305,6 @@ volumes:
   redis-data:
   minio-data:
   osrm-data:
+  nominatim-data:
+  nominatim-flatnode:
   photon-data:

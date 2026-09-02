@@ -67,10 +67,10 @@ export default tseslint.config(
     },
   },
 
-  // Build and bootstrap scripts are Node programs whose whole job is to print
-  // what they did.
+  // Build, bootstrap and seed scripts are Node programs whose whole job is to
+  // print what they did.
   {
-    files: ['**/scripts/**/*.{ts,mjs,js}'],
+    files: ['**/scripts/**/*.{ts,mjs,js}', 'packages/db/prisma/seed.ts'],
     languageOptions: {
       globals: { ...globals.node },
     },
