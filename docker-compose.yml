@@ -72,14 +72,21 @@ services:
       MC_USER: ${MINIO_ROOT_USER:-minioadmin}
       MC_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
       BUCKET: ${S3_BUCKET:-machiya-listings}
+    # Only the variants/ prefix is publicly readable. Originals are uploaded
+    # straight from the browser and are NOT validated until the worker inspects
+    # their bytes, so a blanket anonymous download policy on the bucket would
+    # publish whatever anyone uploaded. `anonymous set none` first, so a bucket
+    # created by an earlier version of this file is narrowed rather than left
+    # open. See DECISIONS.md D35.
     entrypoint: ['/bin/sh', '-c']
     command:
       - >
         set -e;
         mc alias set local http://minio:9000 "$$MC_USER" "$$MC_PASSWORD";
         mc mb --ignore-existing "local/$$BUCKET";
-        mc anonymous set download "local/$$BUCKET";
-        echo "bucket $$BUCKET ready"
+        mc anonymous set none "local/$$BUCKET";
+        mc anonymous set download "local/$$BUCKET/variants";
+        echo "bucket $$BUCKET ready: variants public, originals private"
     restart: 'no'
 
   mailhog:
@@ -139,11 +146,6 @@ services:
       context: .
       dockerfile: apps/worker/Dockerfile
     restart: unless-stopped
-    depends_on:
-      postgis:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     environment:
       NODE_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -151,6 +153,24 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-machiya}:${POSTGRES_PASSWORD:-machiya}@postgis:5432/${POSTGRES_DB:-machiya}?schema=public
       REDIS_URL: redis://redis:6379
       FUEL_SCRAPE_CRON: ${FUEL_SCRAPE_CRON:-0 * * * *}
+      # The worker is the only process that reads image bytes, so it is the only
+      # one that needs access to the private originals prefix.
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-machiya-listings}
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_FORCE_PATH_STYLE: 'true'
+      IMAGE_CONCURRENCY: ${IMAGE_CONCURRENCY:-3}
+      KEEP_ORIGINALS: ${KEEP_ORIGINALS:-false}
+      IMAGE_CLEANUP_CRON: ${IMAGE_CLEANUP_CRON:-17 * * * *}
+    depends_on:
+      postgis:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     ports:
       - '${WORKER_PORT:-4100}:4100'
 

@@ -79,6 +79,16 @@ enum FuelType {
   CNG
 }
 
+/// Lifecycle of an uploaded photo. Uploads land in a private prefix and are not
+/// trusted until the worker has decoded their bytes, so PENDING is not merely
+/// "not resized yet" — it is "not yet known to be an image at all".
+enum ImageStatus {
+  PENDING
+  READY
+  REJECTED
+  FAILED
+}
+
 model City {
   id          String @id @default(cuid())
   slug        String @unique
@@ -234,14 +244,26 @@ model ListingImage {
   id        String @id @default(cuid())
   listingId String
 
-  /// S3/MinIO object key of the original upload. Derived sizes (thumb, card,
-  /// full, webp) are keyed off this by the sharp pipeline.
-  objectKey String
+  /// Object key of the ORIGINAL upload, under the private `originals/` prefix.
+  /// Derivatives live under `variants/{listingId}/{id}/{size}.{ext}` and are the
+  /// only publicly readable copies. Cleared when the original is discarded.
+  objectKey String?
 
+  status        ImageStatus @default(PENDING)
+  /// Why a REJECTED or FAILED image did not make it, shown in the wizard.
+  failureReason String?
+  processedAt   DateTime?
+
+  /// Zero until the worker has decoded the image.
   width     Int
   height    Int
   sortOrder Int     @default(0)
   isCover   Boolean @default(false)
+
+  /// Average colour, as #rrggbb, for the placeholder behind a loading photo.
+  dominantColor String?
+  /// Tiny inline preview (base64 data URI) so a gallery never flashes empty.
+  lqip          String?
 
   createdAt DateTime @default(now())
 
@@ -249,6 +271,8 @@ model ListingImage {
 
   @@index([listingId])
   @@index([listingId, sortOrder])
+  /// The cleanup job sweeps stale PENDING rows.
+  @@index([status, createdAt])
 }
 
 model Amenity {

@@ -11,7 +11,9 @@ export function createConnection(): Redis {
 }
 
 export const QUEUE_NAMES = {
+  images: 'images',
   fuelPrices: 'fuel-prices',
+  maintenance: 'maintenance',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -32,6 +34,7 @@ export function createWorker(
   name: QueueName,
   processor: (job: Job) => Promise<unknown>,
   connection: ConnectionOptions,
+  options: { concurrency?: number } = {},
 ): Worker {
-  return new Worker(name, processor, { connection, concurrency: 2 });
+  return new Worker(name, processor, { connection, concurrency: options.concurrency ?? 2 });
 }

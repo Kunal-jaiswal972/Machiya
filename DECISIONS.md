@@ -383,3 +383,117 @@ get their own keys in step 5. The images are deliberately plain — labelled
 hand-rolling scrypt. If the library changes its hash format, the seeded accounts
 change with it instead of silently failing to sign in. Verified: all three dev
 accounts sign in and `/api/me` reports the right role and verified state.
+
+## Step 5 — listing CRUD and the image pipeline
+
+### D33. The listing input schema is deliberately narrower than the model
+
+`listingDraftSchema` has no `ownerId`, `status`, `isVerified`, `viewCount` or
+`publishedAt`. Those are the server's to decide, so a client that sends them is
+ignored rather than trusted — and a test asserts exactly that by posting
+`ownerId`, `status: PUBLISHED` and `isVerified: true` and checking the stored row
+comes back owned by the session user, DRAFT and unverified.
+
+Drafts validate loosely and publishing validates strictly
+(`publishableListingSchema`): a half-filled draft is the point of a wizard, but a
+live listing must have the price that matches its type and a floor that fits
+inside its building.
+
+### D34. Image derivation runs in the worker, never in the request path
+
+The first cut of this step put sharp in `apps/api` and derived variants inside the
+`complete` request. That was wrong on four counts, and the design now reflects it:
+
+- uploads already go browser-to-storage through a presigned URL, so deriving in
+  the API meant downloading the object back just to resize it — a pointless hop.
+- libvips spikes CPU and RSS. A twelve-photo listing upload should not be able to
+  degrade request serving; that work belongs in a process that can be scaled,
+  memory-capped and restarted on its own.
+- it keeps sharp's platform-specific native binaries out of the API image, which
+  are a recurring source of multi-stage build pain.
+- BullMQ, retries and backoff were already wired for the fuel scraper. Image
+  derivation is the same shape of work.
+
+The API now only signs uploads, confirms via `headObject` that the object landed,
+and enqueues. It reads no image bytes at all.
+
+`sharp` appears in exactly two `package.json` files: `apps/worker` (runtime) and
+`packages/db` (dev-only, so the seed derives its fixtures through the same code
+the worker runs). It is a _peer_ dependency of `packages/shared` and the
+derivation module sits behind the `@machiya/shared/images` subpath, so importing
+`@machiya/shared` from the browser app can never pull libvips into the web bundle.
+
+### D35. Two prefixes, two access policies
+
+`originals/` is private; `variants/` is the only publicly readable path.
+
+The compose `minio-init` step previously ran `mc anonymous set download` on the
+**whole bucket**. Since uploads land straight from the browser and are not known
+to be images until the worker decodes them, that made every unvalidated upload
+publicly fetchable — anything anyone PUT with a valid ticket was served. It now
+runs `anonymous set none` on the bucket first (so a bucket created by the older
+file is narrowed rather than left open) and grants `download` on `variants/` only.
+
+Verified: a variant fetches anonymously with HTTP 200, an object under
+`originals/` returns 403.
+
+### D36. Presigned POST with a length condition, not a presigned PUT
+
+A presigned PUT cannot bound the request body — a client could stream a gigabyte
+through a ticket issued for a 12 MB photo, and the API would find out only when
+the disk filled. A presigned POST policy carries `content-length-range` and an
+`eq` condition on the content type, so the storage service rejects an oversized
+or wrong-typed upload before a byte reaches us.
+
+Verified: a 13 MB body against a fresh ticket is refused by MinIO with HTTP 400.
+
+That bounds abuse, not deceit — which is what the next entry is for.
+
+### D37. The declared content type is never trusted; magic bytes decide
+
+`validateAndDerive` sniffs the real format with `file-type` before sharp touches
+the bytes, then decodes to confirm. A file's extension and its declared
+`Content-Type` are both attacker-controlled and prove nothing.
+
+Verified end to end through the real API and worker:
+
+| Uploaded as `image/jpeg` | Outcome                                                                           |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| a real JPEG              | READY, 1200x800, six variants, dominant colour                                    |
+| a shell script           | REJECTED — "That file is not a recognisable image"                                |
+| a PDF                    | REJECTED — "Images must be JPEG, PNG, WebP or HEIC — that one is application/pdf" |
+
+Also rejected: anything over 12,000px on a side, and animated inputs — a
+multi-page WebP would otherwise be silently flattened to one frame.
+
+HEIC is accepted in the allowlist but sharp prebuilds usually cannot decode it,
+so the code checks `sharp.format.heif.input.buffer` at runtime and returns a
+clear "export as JPEG instead" rejection rather than an opaque decode crash.
+
+EXIF is stripped by rotating first (`.rotate()` applies the orientation tag then
+drops it) and writing no metadata — so GPS coordinates and camera serials in a
+phone photo never reach the bucket, which matters when the subject is somebody's
+home. A test asserts the derived output has no `exif` and no `orientation`.
+
+### D38. Rejection and failure are different, and are handled differently
+
+`ImageRejected` means the file is the problem: terminal, mark `REJECTED` with the
+reason, delete the original, do not retry. Three attempts at the same corrupt
+JPEG is three times the work for the same answer. Anything else — a storage blip,
+an OOM — is rethrown so BullMQ backs off and retries, and only once attempts are
+exhausted does the row become `FAILED`. Flipping it early would show the user a
+dead end while a retry was still pending.
+
+Idempotency is the image id: it is the BullMQ job id, so a double-tap or a
+redelivered request collapses onto one job, and a job for an already-`READY`
+image returns immediately. (BullMQ 6 rejects `:` in a custom job id, so it cannot
+be namespaced — the queue name already scopes it.)
+
+Publishing requires at least one image with status `READY`, not merely present: a
+`PENDING` row is an upload the worker has not decoded, so publishing on it would
+put a listing live with no servable photo. The 422 distinguishes "still being
+processed" from "add a photo", because those need different actions from the user.
+
+An hourly `cleanup-images` job sweeps `PENDING` rows older than 24h and orphaned
+originals with no matching row. Verified by backdating the pending rows and
+running it: 4 swept, the originals prefix emptied, READY and REJECTED untouched.

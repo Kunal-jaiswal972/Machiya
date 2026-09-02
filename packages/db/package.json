@@ -38,6 +38,7 @@
     "testcontainers": "^12.1.0",
     "tsx": "^4.23.13",
     "@aws-sdk/client-s3": "^3.1124.0",
-    "better-auth": "^1.7.2"
+    "better-auth": "^1.7.2",
+    "sharp": "^0.35.4"
   }
 }

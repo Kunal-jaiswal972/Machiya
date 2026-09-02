@@ -45,6 +45,20 @@ const envSchema = z.object({
   SMTP_USER: z.string().default(''),
   SMTP_PASSWORD: z.string().default(''),
   MAIL_FROM: z.string().min(1).default('Machiya <no-reply@machiya.local>'),
+
+  // --- Object storage (MinIO in dev, Cloudflare R2 in prod) ---------------
+  S3_ENDPOINT: z.string().url().default('http://localhost:9000'),
+  S3_REGION: z.string().min(1).default('us-east-1'),
+  S3_BUCKET: z.string().min(1).default('machiya-listings'),
+  S3_ACCESS_KEY_ID: z.string().min(1).default('minioadmin'),
+  S3_SECRET_ACCESS_KEY: z.string().min(1).default('minioadmin'),
+  /** MinIO needs path-style addressing; R2 and S3 do not. */
+  S3_FORCE_PATH_STYLE: z
+    .string()
+    .default('true')
+    .transform((value) => value === 'true'),
+  /** Public base URL objects are served from, for building image URLs. */
+  S3_PUBLIC_BASE_URL: z.string().url().default('http://localhost:9000/machiya-listings'),
 });
 
 export type Env = z.infer<typeof envSchema>;

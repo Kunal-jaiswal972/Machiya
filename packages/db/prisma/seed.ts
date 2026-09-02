@@ -15,8 +15,9 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { hashPassword } from 'better-auth/crypto';
+import { validateAndDerive, variantObjectKey } from '@machiya/shared/images';
 import { CITIES, type CityConfig, type Locality } from '../../../scripts/cities.js';
 import { prisma } from '../src/client.js';
 
@@ -161,39 +162,45 @@ const s3 = new S3Client({
 const BUCKET = process.env.S3_BUCKET ?? 'machiya-listings';
 
 /**
- * Uploads the eight fixtures once, under shared keys, and lets every listing
- * reference them.
+ * Derives the fixture photos through the SAME pipeline the worker runs, then
+ * uploads the variants under each image row's own keys.
  *
- * Uploading a private copy per listing would mean ~200 objects of identical
- * bytes for no gain — these are placeholders, and the object key is what the
- * gallery code exercises. Real uploads in step 5 get their own keys.
+ * Two reasons not to shortcut this. The variant key layout is what the gallery
+ * code exercises, so seeded data has to use it; and running the real
+ * `validateAndDerive` means the seed would break if that code broke, instead of
+ * quietly diverging from production behaviour.
  */
-async function uploadFixtures(): Promise<string[]> {
-  const keys: string[] = [];
+type DerivedFixture = Awaited<ReturnType<typeof validateAndDerive>>;
+
+async function deriveFixtures(): Promise<DerivedFixture[]> {
+  const derived: DerivedFixture[] = [];
 
   for (const name of FIXTURE_IMAGES) {
-    const key = `fixtures/${name}.jpg`;
-    keys.push(key);
-
-    try {
-      await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }));
-      continue;
-    } catch {
-      // Not there yet — fall through and upload it.
-    }
-
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: BUCKET,
-        Key: key,
-        Body: readFileSync(join(FIXTURE_DIR, `${name}.jpg`)),
-        ContentType: 'image/jpeg',
-        CacheControl: 'public, max-age=31536000, immutable',
-      }),
-    );
+    const bytes = readFileSync(join(FIXTURE_DIR, `${name}.jpg`));
+    derived.push(await validateAndDerive(bytes));
   }
 
-  return keys;
+  return derived;
+}
+
+async function uploadVariants(
+  listingId: string,
+  imageId: string,
+  fixture: DerivedFixture,
+): Promise<void> {
+  await Promise.all(
+    fixture.variants.map((variant) =>
+      s3.send(
+        new PutObjectCommand({
+          Bucket: BUCKET,
+          Key: variantObjectKey(listingId, imageId, variant.size, variant.extension),
+          Body: variant.body,
+          ContentType: variant.contentType,
+          CacheControl: 'public, max-age=31536000, immutable',
+        }),
+      ),
+    ),
+  );
 }
 
 // --- reference data --------------------------------------------------------
@@ -425,7 +432,7 @@ async function seedListings(
   cityIds: Map<string, string>,
   amenityIds: Map<string, string>,
   ownerId: string,
-  imageKeys: string[],
+  fixtures: DerivedFixture[],
 ): Promise<string[]> {
   const listingIds: string[] = [];
   const plannedSlugs: string[] = [];
@@ -488,17 +495,28 @@ async function seedListings(
       });
 
       await prisma.listingImage.deleteMany({ where: { listingId: listing.id } });
-      const chosen = pickSome(imageKeys, 4);
-      await prisma.listingImage.createMany({
-        data: chosen.map((objectKey, position) => ({
-          listingId: listing.id,
-          objectKey,
-          width: 1200,
-          height: 800,
-          sortOrder: position,
-          isCover: position === 0,
-        })),
-      });
+
+      const chosen = pickSome(fixtures, 4);
+      for (const [position, fixture] of chosen.entries()) {
+        const image = await prisma.listingImage.create({
+          data: {
+            listingId: listing.id,
+            // Seeded photos skip the upload path entirely, so there is no
+            // original to keep — they go straight in as READY.
+            objectKey: null,
+            status: 'READY',
+            width: fixture.width,
+            height: fixture.height,
+            dominantColor: fixture.dominantColor,
+            lqip: fixture.lqip,
+            sortOrder: position,
+            isCover: position === 0,
+            processedAt: new Date(),
+          },
+        });
+
+        await uploadVariants(listing.id, image.id, fixture);
+      }
     }
   }
 
@@ -684,8 +702,10 @@ async function main(): Promise<void> {
   const startedAt = Date.now();
   console.log('seeding three cities…');
 
-  const imageKeys = await uploadFixtures();
-  console.log(`  images     ${imageKeys.length} fixtures in s3://${BUCKET}/fixtures/`);
+  const fixtures = await deriveFixtures();
+  console.log(
+    `  images     ${fixtures.length} fixtures derived into ${fixtures[0]?.variants.length ?? 0} variants each`,
+  );
 
   const amenityIds = await seedAmenities();
   console.log(`  amenities  ${amenityIds.size}`);
@@ -699,7 +719,7 @@ async function main(): Promise<void> {
   const lister = users.get('lister@dev.local');
   if (!lister) throw new Error('lister@dev.local was not created');
 
-  const listingIds = await seedListings(cityIds, amenityIds, lister.id, imageKeys);
+  const listingIds = await seedListings(cityIds, amenityIds, lister.id, fixtures);
   console.log(`  listings   ${listingIds.length} across ${cityIds.size} cities`);
 
   const engagement = await seedEngagement(users, listingIds, lister.id);

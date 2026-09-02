@@ -1,6 +1,7 @@
 import type {
   EnquiryStatus as SharedEnquiryStatus,
   FuelType as SharedFuelType,
+  ImageStatus as SharedImageStatus,
   FurnishingType as SharedFurnishingType,
   ListingStatus as SharedListingStatus,
   ListingType as SharedListingType,
@@ -11,6 +12,7 @@ import type {
   EnquiryStatus,
   FuelType,
   FurnishingType,
+  ImageStatus,
   ListingStatus,
   ListingType,
   PropertyType,
@@ -36,6 +38,7 @@ const _furnishing: Exact<FurnishingType, SharedFurnishingType> = true;
 const _propertyType: Exact<PropertyType, SharedPropertyType> = true;
 const _enquiryStatus: Exact<EnquiryStatus, SharedEnquiryStatus> = true;
 const _fuelType: Exact<FuelType, SharedFuelType> = true;
+const _imageStatus: Exact<ImageStatus, SharedImageStatus> = true;
 
 void _userRole;
 void _listingType;
@@ -44,3 +47,4 @@ void _furnishing;
 void _propertyType;
 void _enquiryStatus;
 void _fuelType;
+void _imageStatus;

@@ -177,9 +177,44 @@ Run `pnpm auth:check` after every Better Auth upgrade. The published CLI lags th
 library, so its generated schema can be missing columns the runtime writes — that
 is a runtime 500, and this check turns it into a build failure.
 
+## Listings and photos
+
+Listing CRUD lives in `apps/api/src/services`, with ownership re-checked against
+the stored row on every mutation. A seeker may create a draft; publishing
+upgrades them to lister in the same transaction.
+
+Photo uploads never pass through the API:
+
+```
+browser --presigned POST--> MinIO (originals/, private)
+browser --POST .../uploaded--> API   (headObject + ownership, then enqueue)
+                                 |
+                             BullMQ images queue
+                                 |
+   worker: file-type sniff -> sharp decode -> 3 sizes x webp+jpeg
+                                 |
+                        MinIO (variants/, public) + status READY
+```
+
+The API reads no image bytes and has no `sharp` dependency. Derivation logic is
+in `packages/shared/src/images` (pure, unit-tested against real sharp) and is
+imported only by `apps/worker`.
+
+What the storage layer enforces, before anything reaches us: a
+`content-length-range` condition caps the body at 12 MB, and the content type is
+pinned by the policy. What the worker enforces, because a declared type proves
+nothing: real format by magic bytes (JPEG, PNG, WebP, HEIC), a 12,000px limit per
+axis, no animated inputs, and EXIF stripped after orientation is applied — so GPS
+data in a phone photo never reaches the bucket.
+
+`originals/` is private and `variants/` is the only publicly readable prefix. An
+image is only servable once its status is `READY`, and publishing is blocked until
+at least one photo reaches that state. Rejected uploads keep a reason for the UI
+to show; the wizard that shows it lands in step 9.
+
 ## Status
 
-Steps 1-4 of 9 done.
+Steps 1-5 of 9 done.
 
 **1. Scaffold** — monorepo, docker compose, CI, env files, health endpoints, and a
 verified end-to-end `docker compose up` rendering an OpenFreeMap tile.
@@ -187,21 +222,27 @@ verified end-to-end `docker compose up` rendering an OpenFreeMap tile.
 **2. Database** — the full Prisma schema, PostGIS and pg_trgm, GiST and trigram
 indexes, the `lat`/`lng`-to-`geography` sync trigger with a CHECK constraint
 behind it, and `packages/db/src/geo-queries.ts` — the only module in the repo
-containing raw SQL. 39 tests against a real PostGIS container.
+containing raw SQL.
 
 **3. Auth** — Better Auth with the Prisma adapter, DB-backed sessions, email
 verification and password reset through MailHog, env-driven social providers, the
-admin plugin, Redis-backed rate limiting, server-side guards with 20 tests, and
-the five web auth screens.
+admin plugin, Redis-backed rate limiting, server-side guards, and the five web
+auth screens.
 
 **4. Data** — `scripts/cities.ts` as the single city config, `scripts/bootstrap.sh`
-for the OSM/OSRM/Nominatim pipeline, and an idempotent, deterministic seed: 3
-cities, 16 amenities, 51 listings across every enum value, 3 dev accounts with
-working passwords and saved offices, enquiry threads, favourites, saved searches,
-fuel prices, and 8 placeholder photos uploaded to MinIO.
+for the OSM/OSRM/Nominatim pipeline, and an idempotent, deterministic seed of 3
+cities and 51 listings.
 
-Next: listing CRUD — presigned MinIO uploads, the sharp image pipeline, and
-ownership checks on every mutation.
+**5. Listings** — listing CRUD with ownership re-checks, the draft/publish split,
+the seeker-to-lister upgrade, presigned direct-to-storage uploads, and the
+worker-side sharp pipeline with magic-byte validation, EXIF stripping, private
+originals and public variants.
+
+107 tests: 39 geo queries against real PostGIS, 58 API service and guard tests
+against real PostGIS, 10 derivation tests against real sharp.
+
+Next: the map view — Photon/Nominatim geocoding, the 1/2/3 km rings, the
+`ST_DWithin` search wired to filters, and shareable URL state.
 
 ### Database notes
 

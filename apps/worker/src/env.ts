@@ -8,6 +8,33 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   /** Cron expression for the hourly fuel price scrape. */
   FUEL_SCRAPE_CRON: z.string().min(1).default('0 * * * *'),
+
+  // --- Object storage ------------------------------------------------------
+  S3_ENDPOINT: z.string().url().default('http://localhost:9000'),
+  S3_REGION: z.string().min(1).default('us-east-1'),
+  S3_BUCKET: z.string().min(1).default('machiya-listings'),
+  S3_ACCESS_KEY_ID: z.string().min(1).default('minioadmin'),
+  S3_SECRET_ACCESS_KEY: z.string().min(1).default('minioadmin'),
+  S3_FORCE_PATH_STYLE: z
+    .string()
+    .default('true')
+    .transform((value) => value === 'true'),
+
+  // --- Image pipeline ------------------------------------------------------
+  /** Parallel image jobs. libvips is threaded, so this is not the whole story. */
+  IMAGE_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(3),
+  /**
+   * Keep the uploaded original after derivatives are written. Off by default:
+   * the originals prefix is private and nothing serves from it, so retaining
+   * them only grows the bucket.
+   */
+  KEEP_ORIGINALS: z
+    .string()
+    .default('false')
+    .transform((value) => value === 'true'),
+  /** Sweep PENDING rows and orphaned originals older than this. */
+  IMAGE_CLEANUP_AFTER_HOURS: z.coerce.number().int().min(1).max(720).default(24),
+  IMAGE_CLEANUP_CRON: z.string().min(1).default('17 * * * *'),
 });
 
 export type Env = z.infer<typeof envSchema>;

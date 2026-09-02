@@ -6,6 +6,7 @@ import {
   type UserRole,
 } from '@machiya/shared';
 import type { Request, RequestHandler } from 'express';
+import { logger } from '../logger.js';
 import { HttpError } from './error-handler.js';
 
 export interface RequestSession {
@@ -57,6 +58,33 @@ export function requireAuth(resolve: SessionResolver): RequestHandler {
       } catch (error) {
         next(error);
       }
+    })();
+  };
+}
+
+/**
+ * Attaches a session when one is present and does nothing when it is not.
+ *
+ * For routes that are public but read differently when signed in — a listing
+ * detail page shows the owner their own draft, and 404s for everyone else.
+ */
+export function optionalAuth(resolve: SessionResolver): RequestHandler {
+  return (req, _res, next) => {
+    void (async () => {
+      try {
+        const session = await resolve(req);
+
+        // A banned account is treated as anonymous rather than rejected: these
+        // routes are readable without any session at all.
+        if (session && !session.user.banned) {
+          req.auth = session;
+        }
+      } catch (error) {
+        // A failure to read an optional session must not fail a public request.
+        logger.warn({ err: error }, 'optional session lookup failed');
+      }
+
+      next();
     })();
   };
 }

@@ -24,6 +24,7 @@ export const propertyTypeSchema = z.enum([
 ]);
 export const enquiryStatusSchema = z.enum(['OPEN', 'RESPONDED', 'CLOSED', 'SPAM']);
 export const fuelTypeSchema = z.enum(['PETROL', 'DIESEL', 'CNG']);
+export const imageStatusSchema = z.enum(['PENDING', 'READY', 'REJECTED', 'FAILED']);
 
 export type UserRole = z.infer<typeof userRoleSchema>;
 export type ListingType = z.infer<typeof listingTypeSchema>;
@@ -32,3 +33,4 @@ export type FurnishingType = z.infer<typeof furnishingTypeSchema>;
 export type PropertyType = z.infer<typeof propertyTypeSchema>;
 export type EnquiryStatus = z.infer<typeof enquiryStatusSchema>;
 export type FuelType = z.infer<typeof fuelTypeSchema>;
+export type ImageStatus = z.infer<typeof imageStatusSchema>;
