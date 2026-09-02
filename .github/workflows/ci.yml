@@ -18,6 +18,10 @@ env:
   TEST_DATABASE_URL: postgresql://machiya:machiya@localhost:5432/machiya_test?schema=public
   REDIS_URL: redis://localhost:6379
   BETTER_AUTH_SECRET: ci-only-secret-not-used-for-anything-real
+  BETTER_AUTH_URL: http://localhost:4000
+  WEB_APP_URL: http://localhost:5173
+  AUTH_TRUSTED_ORIGINS: http://localhost:5173
+  AUTH_ENABLED_PROVIDERS: email
   NODE_ENV: test
 
 jobs:
@@ -69,6 +73,12 @@ jobs:
 
       - name: Apply migrations
         run: pnpm db:deploy
+
+      # The published @better-auth/cli lags the library, so its generated schema
+      # can be missing columns the runtime writes. This compares the schema
+      # against what Better Auth actually requires. See DECISIONS.md D22.
+      - name: Check Better Auth schema
+        run: pnpm auth:check
 
       - name: Build workspace packages
         run: pnpm -r --sequential build

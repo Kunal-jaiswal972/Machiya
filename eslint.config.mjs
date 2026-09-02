@@ -79,6 +79,15 @@ export default tseslint.config(
     },
   },
 
+  // shadcn/ui primitives are vendored upstream code. They are ours to edit when
+  // a design needs it, but their export shape is not worth linting.
+  {
+    files: ['apps/web/src/components/ui/**/*.tsx'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
+
   // Config files run in Node even inside the web app.
   {
     files: ['**/*.config.{ts,mts,js,mjs}', '**/vitest.config.ts'],

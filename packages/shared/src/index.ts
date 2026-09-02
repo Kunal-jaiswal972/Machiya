@@ -1,3 +1,4 @@
+export * from './auth/index.js';
 export * from './constants.js';
 export * from './enums.js';
 export * from './geo.js';

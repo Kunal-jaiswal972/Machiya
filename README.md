@@ -108,22 +108,65 @@ curl -s localhost:4100/health | jq
 docker compose ps      # every service should read (healthy)
 ```
 
+## Auth
+
+Better Auth, self-hosted, mounted at `/api/auth/*` with database-backed sessions
+and Redis in front of them.
+
+- email + password with **mandatory** verification, plus password reset. Both
+  emails land in MailHog at http://localhost:8025 in development.
+- Google and GitHub are wired but only render when the deployment both lists them
+  in `AUTH_ENABLED_PROVIDERS` and supplies credentials — a button that dies at
+  the OAuth redirect is worse than no button.
+- roles are `SEEKER` (default), `LISTER`, `ADMIN`, on the user record and
+  re-checked server-side on every request.
+- credential endpoints are rate limited far harder than the rest of the API
+  (5 sign-ins/min, 3 sign-ups per 5 min), counted in Redis so the limits hold
+  across replicas.
+
+Screens live at `/auth/sign-in`, `/auth/sign-up`, `/auth/forgot-password`,
+`/auth/reset-password` and `/auth/verify-email`.
+
+### Authorization
+
+`requireAuth` and `requireRole(...)`/`requireMinRole(...)` guard the API;
+`assertOwnership` re-checks the owner of every mutable resource against the
+session. Nothing trusts a role, user id or owner id from a request body. The
+web-side `RequireAuth`/`RequireRole` components decide what to _render_ and are
+not a security boundary.
+
+```bash
+pnpm auth:check      # does schema.prisma satisfy what Better Auth writes?
+pnpm auth:generate   # regenerate auth models (a draft — see DECISIONS.md D22)
+BETTER_AUTH_URL=http://localhost:4000 pnpm auth:routes   # live route list
+```
+
+Run `pnpm auth:check` after every Better Auth upgrade. The published CLI lags the
+library, so its generated schema can be missing columns the runtime writes — that
+is a runtime 500, and this check turns it into a build failure.
+
 ## Status
 
-Steps 1-2 of 9 done.
+Steps 1-3 of 9 done.
 
 **1. Scaffold** — monorepo, docker compose, CI, env files, health endpoints, and a
 verified end-to-end `docker compose up` rendering an OpenFreeMap tile.
 
-**2. Database** — the full Prisma schema (13 models, 7 native enums), the PostGIS
-and pg_trgm extensions, GiST and trigram indexes, the `lat`/`lng`-to-`geography`
-sync trigger with a CHECK constraint behind it, and `packages/db/src/geo-queries.ts`
-— the only module in the repo containing raw SQL. 39 tests run against a real
-PostGIS container (testcontainers locally, a service container in CI).
+**2. Database** — the full Prisma schema, PostGIS and pg_trgm, GiST and trigram
+indexes, the `lat`/`lng`-to-`geography` sync trigger with a CHECK constraint
+behind it, and `packages/db/src/geo-queries.ts` — the only module in the repo
+containing raw SQL. 39 tests against a real PostGIS container.
 
-Next: Better Auth — schema generation, email/password and social providers,
-session middleware, role guards with tests, the web auth screens, and email
-verification through MailHog.
+**3. Auth** — Better Auth with the Prisma adapter, DB-backed sessions, email
+verification and password reset through MailHog, env-driven social providers,
+the admin plugin, Redis-backed rate limiting, server-side guards with 20 tests,
+and the five web auth screens. Verified end to end in a browser: sign up →
+verification email → verify → auto sign-in → guarded page → sign out → guard
+redirect → sign in returns to the intended path.
+
+Next: `scripts/bootstrap.sh` (three-city OSM extract, merge, OSRM graph, Photon
+index) and `prisma/seed.ts`, so everything after that is built against realistic
+data.
 
 ### Database notes
 
@@ -145,7 +188,7 @@ pnpm db:deploy
 ```
 
 Every non-obvious choice is logged in [DECISIONS.md](DECISIONS.md). The ones worth
-reading before touching this code: D2 and D15 (how `lat`/`lng` stays in sync with
-the `geography` column, and why that column is nullable), D13 (why the GiST
-indexes are in the schema rather than a hand-written migration), and D12 (why
-maplibre's worker is copied into `public/`, and the silent blank map if it is not).
+reading before touching this code: D2 and D15 (`lat`/`lng` versus the `geography`
+column, and why it is nullable), D13 (GiST indexes belong in the schema), D21
+(why there are two Redis connections), D22 (why the auth schema is checked
+against the runtime), and D12 (maplibre's worker, and the silent blank map).

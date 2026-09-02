@@ -4,7 +4,7 @@ import { env } from './env.js';
 import { logger } from './logger.js';
 import { closeRedis } from './lib/redis.js';
 
-const app = createApp();
+const app = await createApp();
 
 const server = app.listen(env.API_PORT, env.API_HOST, () => {
   logger.info({ port: env.API_PORT, host: env.API_HOST, env: env.NODE_ENV }, 'api listening');

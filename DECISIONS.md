@@ -213,3 +213,78 @@ and gets slower with every page.
 Sort direction and comparison operator are the only things reaching SQL through
 `Prisma.raw`, and both come from a closed `switch` in `sortPlan()`. Every value —
 coordinates included — is a bound parameter.
+
+## Step 3 — Better Auth
+
+### D20. `session.storeSessionInDatabase` is on, because secondaryStorage alone moves sessions out of Postgres
+
+Providing `secondaryStorage` (Redis) makes Better Auth store sessions in Redis
+**only** — and the Better Auth CLI then generates no `Session` model at all,
+which is how this was noticed. That would mean a Redis restart signs everybody
+out and no session is auditable or revocable from the database.
+
+`storeSessionInDatabase: true` keeps the row in Postgres while reads still come
+from Redis, which is what "database-backed sessions with cookie caching for read
+speed" actually requires. Verified: after a sign-in, `SELECT count(*) FROM
+"Session"` returns the row, and sign-out removes it.
+
+### D21. Two Redis connections, with opposite failure policies
+
+`apps/api/src/lib/redis.ts` exports two clients:
+
+- `redis` (cache: POIs, routes, geocodes, fuel prices) — `lazyConnect`, no
+  offline queue. A command issued while Redis is unreachable rejects
+  immediately, and every caller has a Postgres fallback or serves a degraded
+  result. Never block a request on a cache.
+- `authRedis` (sessions, rate-limit counters) — eager connect, offline queue on.
+  There is no fallback on the credential path.
+
+This was not theoretical: with the cache client's settings, the rate limiter's
+first `INCR` — issued before anything had triggered a connect — threw
+`Stream isn't writeable and enableOfflineQueue options is false` and turned every
+single sign-up into a 500.
+
+### D22. The Better Auth schema is checked against the runtime, not the CLI
+
+`@better-auth/cli`'s newest published release is 1.4.22 while `better-auth` is
+1.7.2. The CLI generated an `Account` model with no `issuer` column, which the
+1.7 adapter writes — so every sign-up failed at runtime with
+`Unknown argument 'issuer'`, with nothing at build time to catch it.
+
+`pnpm auth:check` (`apps/api/scripts/check-auth-schema.ts`) calls
+`getAuthTables(auth.options)` — the same definitions the adapter writes through —
+and diffs them against `schema.prisma`, listing any missing column. It runs in
+CI. Run it after every Better Auth upgrade or plugin change; `pnpm auth:generate`
+is still the starting point, but its output is a draft, not the truth.
+
+The CLI's `@@map` directives are also removed, so table names stay PascalCase
+like the rest of the schema. The Prisma adapter resolves models by Prisma model
+name, so this changes nothing at runtime.
+
+### D23. Route names are verified, not assumed
+
+Better Auth 1.7 renamed `/forget-password` to `/request-password-reset`. The old
+name in `rateLimit.customRules` matched nothing and silently left the endpoint on
+the default limit — a rate-limit rule that quietly does nothing is worse than no
+rule, because it reads as covered. `pnpm auth:routes` prints the live route list
+from the openAPI plugin; check custom rules against it after an upgrade.
+
+### D24. The verification email's callback is rebuilt to point at the web app
+
+`sendVerificationEmail` receives a `url` whose `callbackURL` defaults to the
+API's own `baseURL`, so a verified user landed on `http://localhost:4000/` — a
+bare JSON host — instead of the app. The handler must stay on the API because it
+consumes the token, so the URL is rebuilt with `callbackURL` set to
+`WEB_APP_URL`, keeping `url` as the fallback if the callback shape changes.
+
+### D25. Guards take an injected session resolver
+
+`requireAuth(resolve)` is a factory over a `SessionResolver`, not a module that
+imports the auth instance. Two reasons: the guard tests need no cookies,
+database, Redis or auth provider — they inject a fake resolver and assert on
+status codes — and swapping the auth provider touches
+`apps/api/src/auth/session.ts` alone.
+
+`resolveSession` re-parses the role through the shared Zod enum rather than
+casting it. An unrecognised role fails closed, with a log line naming the user,
+instead of sliding through a `requireRole` check.

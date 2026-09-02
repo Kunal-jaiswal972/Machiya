@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from 'react-router/dom';
 import { Toaster } from 'sonner';
+import { AuthProvider } from './lib/auth-context';
 import { queryClient } from './lib/query-client';
 import { router } from './routes';
 import './index.css';
@@ -16,8 +17,10 @@ if (!container) {
 createRoot(container).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-      <Toaster position="bottom-right" richColors closeButton />
+      <AuthProvider>
+        <RouterProvider router={router} />
+        <Toaster position="bottom-right" richColors closeButton />
+      </AuthProvider>
     </QueryClientProvider>
   </StrictMode>,
 );
