@@ -574,3 +574,73 @@ processed" from "add a photo", because those need different actions from the use
 An hourly `cleanup-images` job sweeps `PENDING` rows older than 24h and orphaned
 originals with no matching row. Verified by backdating the pending rows and
 running it: 4 swept, the originals prefix emptied, READY and REJECTED untouched.
+
+## Correction 2 — autocomplete
+
+### D39. Autocomplete is two tiers: pg_trgm locally, Nominatim only when that falls short
+
+Removing Photon (D26) left one real requirement behind: type-ahead has to feel
+instant. A round trip to a geocoder per keystroke does not, whoever hosts it.
+
+**Tier 1 is `pg_trgm` over our own rows** — `City.name`, `Locality.name`, and the
+`title` and `address` of PUBLISHED listings — with GIN `gin_trgm_ops` indexes
+declared in `schema.prisma` (Prisma emits them from
+`@@index([name(ops: raw("gin_trgm_ops"))], type: Gin)`, so no hand-written
+migration is needed; same reasoning as D13). One statement, three sources, a
+`UNION ALL` and a score.
+
+`Locality` had to become a table for this. It existed only as literals in
+`scripts/cities.ts`, and a trigram search over a TypeScript array is not a
+search. The seed writes them and prunes any that leave `cities.ts`, so the two
+cannot drift.
+
+Two match paths, and the second is not optional:
+
+- `%`, the trigram similarity operator, which is what makes "koramangla" find
+  Koramangala. Verified against the seeded database: similarity 0.64.
+- a case-insensitive prefix, which is what makes a short query work at all.
+  `similarity('Koramangala', 'ko')` is about 0.18 — under any useful threshold —
+  and "ko" is exactly how someone starts typing it. Verified: "ko" returns
+  Koramangala and Kothrud at 0.92, "hinjew" returns Hinjewadi, "zzzz" returns
+  nothing.
+
+A prefix hit scores 0.92 rather than 1.0 so a true trigram match still wins, and
+listing rows are multiplied by 0.8: a locality is a better answer to "where is
+your office" than a listing whose title happens to contain the word.
+
+**Tier 2 is Nominatim**, and it is reached only when tier 1 returned fewer than
+five results AND the term is at least three characters. Both bounds are in
+`@machiya/shared` so the client and the server agree on them. Results are cached
+in Redis for seven days under a normalised query — trimmed, lowercased,
+whitespace-collapsed — because "Boring Road", "boring road" and "BORING ROAD "
+are one question, and without normalising they were three cache entries and
+three upstream calls.
+
+The client adds the other half of the restraint: a 250 ms trailing debounce, and
+React Query's own `AbortSignal`, which cancels the in-flight request when the
+term changes. The API forwards that abort to Nominatim, so an abandoned
+keystroke stops work upstream rather than merely being ignored on arrival.
+`placeholderData` keeps the previous list visible while the next loads —
+without it the dropdown empties and refills on every pause, which reads as
+flicker and makes a fast list feel slow.
+
+**One endpoint, one ranked list, a `source` per row.** The two tiers merge behind
+`/api/places/suggest`, and the scores are deliberately on one 0-1 scale so
+merging them is meaningful rather than arbitrary: Nominatim's own `importance`
+is rescaled to sit below a tier-1 prefix hit and above a weak trigram one.
+
+De-duplication is by normalised label plus coordinates rounded to ~100 m. On a
+collision **the local row wins regardless of score**, because it is the one
+carrying a `citySlug` and, for a listing, a slug — the things the UI needs to act
+on a selection. Two Koramangalas 300 km apart still both appear; the same
+Koramangala from both tiers appears once.
+
+`degraded` means one specific thing: tier 2 was needed and answered nothing.
+Tier 1 being sufficient is the fast path, not a degradation, and conflating the
+two would have the UI apologising on its best case.
+
+Verified by 16 tests in `apps/api/test/places.test.ts` against real Postgres for
+tier 1 (a mocked query would prove nothing about trigram behaviour) and a stubbed
+provider for tier 2, since what needs testing there is the gating and the merge,
+not Nominatim. Included: a DRAFT listing is never suggested, because the local
+tier is a public surface.

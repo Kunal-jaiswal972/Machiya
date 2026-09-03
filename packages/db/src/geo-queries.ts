@@ -403,6 +403,153 @@ export async function findSimilarListings(input: {
   return z.array(similarListingSchema).parse(rows);
 }
 
+// --- tier 1 of the autocomplete --------------------------------------------
+
+/**
+ * Local place search: city names, locality names, and the titles and addresses
+ * of published listings, ranked by trigram similarity with a prefix boost.
+ *
+ * This is tier 1 of the two-tier autocomplete (D39). It answers most
+ * office-selection queries in single-digit milliseconds with results that are
+ * actually inside the three cities the product serves, and it needs no network.
+ *
+ * Two match paths, deliberately:
+ *  - `%` (trigram similarity above the session threshold), which the GIN
+ *    gin_trgm_ops indexes serve. This is what makes "koramangla" find
+ *    Koramangala.
+ *  - a case-insensitive prefix, which is what makes a two-character query work
+ *    at all: `similarity('Koramangala', 'ko')` is about 0.18, well under any
+ *    useful threshold, but "ko" is exactly how someone starts typing it.
+ *
+ * The prefix path scores 0.92 rather than 1.0 so an exact trigram match still
+ * outranks it, and each kind carries a weight: a locality or city is a better
+ * office answer than a listing whose title happens to contain the word.
+ */
+const placeRowSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  context: z.string().nullable(),
+  lat: z.number(),
+  lng: z.number(),
+  kind: z.enum(['city', 'locality', 'listing']),
+  score: z.number(),
+  citySlug: z.string().nullable(),
+  listingSlug: z.string().nullable(),
+  bbox: z.unknown().nullable(),
+});
+
+export type LocalPlaceRow = z.infer<typeof placeRowSchema>;
+
+export async function searchPlacesLocally(input: {
+  query: string;
+  citySlug?: string;
+  limit?: number;
+}): Promise<LocalPlaceRow[]> {
+  const { query, citySlug, limit } = z
+    .object({
+      query: z.string().min(1).max(120),
+      citySlug: z.string().min(1).optional(),
+      limit: z.coerce.number().int().min(1).max(40).default(8),
+    })
+    .parse(input);
+
+  const term = query.trim();
+  if (term.length === 0) return [];
+
+  const prefix = `${term.toLowerCase()}%`;
+  const cityFilter = citySlug ?? null;
+
+  // One statement, three sources. Nothing is fetched and filtered in JS, and
+  // the term reaches SQL only as a bound parameter — the trigram operators are
+  // literal text in the query, not interpolated input.
+  const rows = await prisma.$queryRaw<unknown[]>(Prisma.sql`
+    WITH scored AS (
+      SELECT
+        'city:' || c."id"          AS "id",
+        c."name"                   AS "label",
+        c."state"                  AS "context",
+        c."centroidLat"            AS "lat",
+        c."centroidLng"            AS "lng",
+        'city'                     AS "kind",
+        LEAST(
+          1.0,
+          GREATEST(
+            similarity(c."name", ${term}),
+            CASE WHEN lower(c."name") LIKE ${prefix} THEN 0.92 ELSE 0 END
+          )
+        )::double precision        AS "score",
+        c."slug"                   AS "citySlug",
+        NULL::text                 AS "listingSlug",
+        c."bbox"                   AS "bbox"
+      FROM "City" c
+      WHERE (c."name" % ${term} OR lower(c."name") LIKE ${prefix})
+        AND (${cityFilter}::text IS NULL OR c."slug" = ${cityFilter})
+
+      UNION ALL
+
+      SELECT
+        'locality:' || l."id",
+        l."name",
+        c."name" || ', ' || c."state",
+        l."lat",
+        l."lng",
+        'locality',
+        LEAST(
+          1.0,
+          GREATEST(
+            similarity(l."name", ${term}),
+            CASE WHEN lower(l."name") LIKE ${prefix} THEN 0.92 ELSE 0 END
+          )
+        )::double precision,
+        c."slug",
+        NULL::text,
+        NULL::jsonb
+      FROM "Locality" l
+      JOIN "City" c ON c."id" = l."cityId"
+      WHERE (l."name" % ${term} OR lower(l."name") LIKE ${prefix})
+        AND (${cityFilter}::text IS NULL OR c."slug" = ${cityFilter})
+
+      UNION ALL
+
+      SELECT
+        'listing:' || li."id",
+        li."title",
+        li."locality" || ', ' || c."name",
+        li."lat",
+        li."lng",
+        'listing',
+        (LEAST(
+          1.0,
+          GREATEST(
+            similarity(li."title", ${term}),
+            similarity(li."address", ${term}),
+            CASE
+              WHEN lower(li."title") LIKE ${prefix} OR lower(li."address") LIKE ${prefix}
+              THEN 0.92 ELSE 0
+            END
+          )
+        ) * 0.8)::double precision,
+        c."slug",
+        li."slug",
+        NULL::jsonb
+      FROM "Listing" li
+      JOIN "City" c ON c."id" = li."cityId"
+      WHERE li."status" = 'PUBLISHED'
+        AND (
+          li."title" % ${term} OR li."address" % ${term}
+          OR lower(li."title") LIKE ${prefix} OR lower(li."address") LIKE ${prefix}
+        )
+        AND (${cityFilter}::text IS NULL OR c."slug" = ${cityFilter})
+    )
+    SELECT * FROM scored
+    WHERE "score" > 0
+    ORDER BY "score" DESC, "label" ASC
+    LIMIT ${limit}
+  `);
+
+  return z.array(placeRowSchema).parse(rows);
+}
+
 /**
  * Straight-line distance in metres. Road distance comes from OSRM — this is for
  * ring maths and sanity checks, never for commute cost.

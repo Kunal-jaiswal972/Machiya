@@ -6,9 +6,11 @@ export { probeDatabase, type DatabaseProbe } from './probe.js';
 export {
   searchListingsInRadius,
   findSimilarListings,
+  searchPlacesLocally,
   straightLineDistanceMeters,
   decodeCursor,
   type SimilarListing,
+  type LocalPlaceRow,
 } from './geo-queries.js';
 
 // Generated Prisma types and enums, so nothing outside this package reaches into

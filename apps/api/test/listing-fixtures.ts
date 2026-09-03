@@ -22,7 +22,7 @@ export async function resetWorld(): Promise<ListingTestWorld> {
   await prisma.$executeRawUnsafe(`
     TRUNCATE TABLE "ListingAmenity", "ListingImage", "ListingView", "Favorite",
       "EnquiryMessage", "Enquiry", "SavedSearch", "FuelPrice", "Listing",
-      "OfficeLocation", "Amenity", "Session", "Account", "User", "City"
+      "OfficeLocation", "Amenity", "Locality", "Session", "Account", "User", "City"
       RESTART IDENTITY CASCADE
   `);
 

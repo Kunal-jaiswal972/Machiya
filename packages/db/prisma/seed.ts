@@ -240,6 +240,27 @@ async function seedCities(): Promise<Map<string, string>> {
       update: data,
     });
     ids.set(city.slug, row.id);
+
+    // Localities are a table, not just literals in scripts/cities.ts, because
+    // tier 1 of the autocomplete has to query them. This is the one place the
+    // two are kept in step. See DECISIONS.md D39.
+    for (const locality of city.localities) {
+      const slug = slugify(locality.name);
+      await prisma.locality.upsert({
+        where: { cityId_slug: { cityId: row.id, slug } },
+        create: { cityId: row.id, slug, name: locality.name, lat: locality.lat, lng: locality.lng },
+        update: { name: locality.name, lat: locality.lat, lng: locality.lng },
+      });
+    }
+
+    // A locality dropped from cities.ts must disappear from the table too, or a
+    // renamed neighbourhood lingers as a suggestion nothing else knows about.
+    await prisma.locality.deleteMany({
+      where: {
+        cityId: row.id,
+        slug: { notIn: city.localities.map((locality) => slugify(locality.name)) },
+      },
+    });
   }
 
   return ids;
@@ -644,6 +665,74 @@ async function seedEngagement(
   return { enquiries, favorites: favouriteIds.length, savedSearches: searches.length };
 }
 
+// --- views ------------------------------------------------------------------
+
+/**
+ * Backdated view rows, so the lister's analytics panel has a shape rather than
+ * a flat line on a fresh seed.
+ *
+ * `Listing.viewCount` is set to match the rows written, because the two are
+ * separate by design — the counter is what the search query reads and the rows
+ * are what the chart aggregates — and a seed that disagreed with itself would
+ * look like a bug in whichever one you checked second.
+ *
+ * Deleted and rewritten rather than upserted: a view has no natural key, so
+ * re-running the seed would otherwise pile up a new fortnight of history every
+ * time.
+ */
+async function seedListingViews(
+  listingIds: string[],
+  users: Map<string, { id: string; city: string }>,
+): Promise<number> {
+  const viewerIds = [...users.values()].map((user) => user.id);
+  const dayMs = 86_400_000;
+
+  await prisma.listingView.deleteMany({ where: { listingId: { in: listingIds } } });
+
+  const rows: Array<{ listingId: string; userId: string | null; viewedAt: Date }> = [];
+
+  for (const [index, listingId] of listingIds.entries()) {
+    // The first listings in the plan are the ones the enquiries and favourites
+    // point at, so give them the most traffic: a dashboard where every row has
+    // the same number teaches nothing.
+    const popularity = index < 6 ? between(18, 40) : index < 20 ? between(4, 16) : between(0, 5);
+    const total = Math.round(popularity);
+
+    for (let n = 0; n < total; n += 1) {
+      // Weighted towards recent: squaring a uniform sample bunches it near 0.
+      const daysAgo = Math.floor(random() ** 2 * 14);
+      const viewer =
+        random() < 0.45 ? (viewerIds[Math.floor(random() * viewerIds.length)] ?? null) : null;
+
+      rows.push({
+        listingId,
+        userId: viewer,
+        viewedAt: new Date(Date.now() - daysAgo * dayMs - Math.floor(random() * dayMs)),
+      });
+    }
+  }
+
+  if (rows.length > 0) {
+    await prisma.listingView.createMany({ data: rows });
+  }
+
+  // Keep the denormalised counter honest.
+  const counts = await prisma.listingView.groupBy({
+    by: ['listingId'],
+    where: { listingId: { in: listingIds } },
+    _count: { _all: true },
+  });
+
+  for (const row of counts) {
+    await prisma.listing.update({
+      where: { id: row.listingId },
+      data: { viewCount: row._count._all },
+    });
+  }
+
+  return rows.length;
+}
+
 // --- fuel prices -----------------------------------------------------------
 
 /**
@@ -726,6 +815,9 @@ async function main(): Promise<void> {
   console.log(
     `  activity   ${engagement.enquiries} enquiries, ${engagement.favorites} favourites, ${engagement.savedSearches} saved searches`,
   );
+
+  const views = await seedListingViews(listingIds, users);
+  console.log(`  views      ${views} listing views over the last 14 days`);
 
   const fuelRows = await seedFuelPrices(cityIds);
   console.log(`  fuel       ${fuelRows} price rows`);

@@ -112,6 +112,38 @@ model City {
 
   listings   Listing[]
   fuelPrices FuelPrice[]
+  localities Locality[]
+
+  /// Tier 1 of the autocomplete matches city names by trigram. See D39.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+/// A named neighbourhood inside a city.
+///
+/// These exist as a table, not just as literals in `scripts/cities.ts`, because
+/// tier 1 of the autocomplete has to be able to QUERY them — a trigram search
+/// over a TypeScript array is not a search. The seed keeps the two in step, and
+/// `location` is derived from lat/lng by the same trigger as every other geo
+/// model. See D39.
+model Locality {
+  id     String @id @default(cuid())
+  cityId String
+  slug   String
+  name   String
+  lat    Float
+  lng    Float
+
+  location Unsupported("geography(Point, 4326)")?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  city City @relation(fields: [cityId], references: [id], onDelete: Cascade)
+
+  @@unique([cityId, slug])
+  @@index([cityId])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([location], map: "locality_location_gix", type: Gist)
 }
 
 /// Application user. Better Auth owns the identity columns (id, email,
