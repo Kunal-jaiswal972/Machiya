@@ -287,6 +287,11 @@ model ListingImage {
   failureReason String?
   processedAt   DateTime?
 
+  /// How many times the reconciler has re-enqueued this row (see D40). A row
+  /// that keeps coming back without reaching a terminal state becomes FAILED
+  /// with a reason rather than being retried forever.
+  reconcileAttempts Int @default(0)
+
   /// Zero until the worker has decoded the image.
   width     Int
   height    Int

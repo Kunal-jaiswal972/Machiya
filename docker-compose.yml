@@ -181,6 +181,7 @@ services:
       IMAGE_CONCURRENCY: ${IMAGE_CONCURRENCY:-3}
       KEEP_ORIGINALS: ${KEEP_ORIGINALS:-false}
       IMAGE_CLEANUP_CRON: ${IMAGE_CLEANUP_CRON:-17 * * * *}
+      IMAGE_RECONCILE_INTERVAL_MS: ${IMAGE_RECONCILE_INTERVAL_MS:-60000}
     depends_on:
       postgis:
         condition: service_healthy

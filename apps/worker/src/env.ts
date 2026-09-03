@@ -50,6 +50,12 @@ const envSchema = z.object({
   /** Sweep PENDING rows and orphaned originals older than this. */
   IMAGE_CLEANUP_AFTER_HOURS: z.coerce.number().int().min(1).max(720).default(24),
   IMAGE_CLEANUP_CRON: z.string().min(1).default('17 * * * *'),
+  /**
+   * How often the reconciler looks for PENDING rows nothing is processing.
+   * Sixty seconds: the window in which a dropped enqueue is invisible to the
+   * user should be shorter than their patience with a spinner. See D40.
+   */
+  IMAGE_RECONCILE_INTERVAL_MS: z.coerce.number().int().min(5_000).max(600_000).default(60_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

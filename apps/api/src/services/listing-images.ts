@@ -8,6 +8,7 @@ import {
   type ListingImageView,
 } from '@machiya/shared';
 import { originalObjectKey, variantObjectKey, VARIANT_SIZES } from '@machiya/shared/images';
+import { logger } from '../logger.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { assertOwnership, type RequestSession } from '../middleware/require-auth.js';
 import {
@@ -166,12 +167,26 @@ export async function markImageUploaded(
     throw new HttpError(409, 'upload_missing', 'That upload did not arrive — try again');
   }
 
-  await enqueueImageProcessing({ listingId, imageId, objectKey: image.objectKey });
-
+  // The row is committed FIRST and the enqueue happens after. The PENDING row is
+  // the durable record of intent — the outbox, in effect — and the job id is the
+  // image id, so enqueueing is idempotent. See DECISIONS.md D40.
   const updated = await prisma.listingImage.update({
     where: { id: imageId },
-    data: { status: 'PENDING', failureReason: null },
+    data: { status: 'PENDING', failureReason: null, reconcileAttempts: 0 },
   });
+
+  try {
+    await enqueueImageProcessing({ listingId, imageId, objectKey: image.objectKey });
+  } catch (error) {
+    // Deliberately NOT rethrown. The upload landed and the row is committed;
+    // the reconciler drains it within minutes. Failing the request here would
+    // tell the user their photo was lost when it was not, and there is nothing
+    // for them to do differently. See DECISIONS.md D40.
+    logger.error(
+      { err: error, listingId, imageId },
+      'image enqueue failed after commit — leaving it for the reconciler',
+    );
+  }
 
   return toImageView(updated, listingId);
 }

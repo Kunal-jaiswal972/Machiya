@@ -644,3 +644,67 @@ tier 1 (a mocked query would prove nothing about trigram behaviour) and a stubbe
 provider for tier 2, since what needs testing there is the gating and the merge,
 not Nominatim. Included: a DRAFT listing is never suggested, because the local
 tier is a public surface.
+
+## Correction 4 — the image dual write
+
+### D40. The PENDING row IS the outbox; what was missing was a reconciler
+
+Amends D38. The sharp-in-worker split (D34) and the rejection/failure
+distinction (D38) both stand. The hole was elsewhere.
+
+`ListingImage` commits to Postgres and the BullMQ job goes to Redis. Two
+systems, no transaction across them. If the enqueue threw — a Redis blip, a
+failover, the API dying in the gap — the row was committed and nothing was ever
+coming for it. It sat in the gallery as a spinner until the 24-hour cleanup
+sweep deleted it: the user's upload silently vanished, hours later, with no
+error anywhere the user could see. Worse, the old code enqueued BEFORE updating
+the row and let the enqueue failure reach the client as a 500, so the user was
+told the upload failed while the row stayed committed.
+
+**No outbox table.** The `PENDING` row already is the durable record of intent,
+and the job id already equals the image id, which makes enqueueing idempotent by
+construction. A separate `Outbox` table would duplicate a row that already
+exists, add a write to the hot path, and need its own drain anyway. What was
+missing was not a record — it was something to notice.
+
+So:
+
+1. **The enqueue happens strictly after the commit, never inside it.** And if it
+   throws, it is logged and the request still returns success. The bytes are in
+   the bucket, the row is committed, the reconciler will pick it up — telling the
+   user their photo was lost would be false, and there is nothing they could do
+   differently anyway. Never roll back a committed upload because Redis hiccuped.
+2. **A `reconcile-images` repeatable job every 60 seconds.** It selects `PENDING`
+   rows older than two minutes, oldest first, bounded to 100 per run, asks the
+   queue directly whether a job with that id is active/waiting/delayed — the id
+   being the image id is what makes that a single lookup rather than a queue scan
+   — and enqueues the ones nothing is working on. The grace period matters: a row
+   committed a second ago is one whose enqueue is very likely in flight, and
+   racing it would resize the same photo twice.
+3. **A `reconcileAttempts` counter on the row.** After five re-enqueues without
+   reaching a terminal state the row becomes `FAILED` with a reason the user can
+   act on. A row that never processes is a bug to surface, not a loop to hide.
+4. **The hourly cleanup sweep stays, and now means what it says.** Anything
+   enqueueable is drained within minutes, so a `PENDING` row that survives to the
+   24-hour cutoff really is an upload the client never completed.
+
+One case is NOT idempotent on its own and the reconciler handles it explicitly: a
+job that ran to completion while the row stayed `PENDING` — the process died
+between the resize and the database update. BullMQ keeps finished jobs and `add`
+with an existing id is a **silent no-op**, so the corpse is removed before the id
+is reused. Without that the row would be stranded permanently, which is the exact
+class of bug this entry exists to close.
+
+**What would justify a real outbox table:** more than one unrelated side effect
+per transaction. The moment a single commit has to reliably produce, say, a queue
+job _and_ an email _and_ a webhook, the row-as-outbox stops working — there is no
+single column that means "all three happened", and you are back to needing an
+append-only log of intents with per-intent delivery state. One side effect, one
+status column, one reconciler is the whole of it.
+
+Verified by 10 tests in `apps/worker/test/reconcile-images.test.ts` against real
+Postgres and real Redis — a mocked queue would prove nothing about `getJob`, job
+states or id collisions, which is precisely where the bug lives. The headline
+test commits a `PENDING` row without enqueueing anything and asserts it reaches
+`READY`. The job processor is the one substitution: derivation needs sharp and
+object storage and is covered elsewhere, so the test's processor stands in for it.

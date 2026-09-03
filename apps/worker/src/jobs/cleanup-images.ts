@@ -18,6 +18,12 @@ export interface CleanupResult {
  *    succeeded, the upload landed, and then the row was deleted underneath it.
  *
  * Both are bounded by an age cutoff so an upload in flight is never swept.
+ *
+ * Since the reconciler landed (D40) this job no longer catches dropped
+ * enqueues — those are drained within minutes — so a row that survives to the
+ * 24-hour cutoff really is an upload the client never completed. That narrowing
+ * is the point: before it, this sweep was silently deleting photos that had
+ * simply lost their queue message.
  */
 export async function cleanupImages(): Promise<CleanupResult> {
   const cutoff = new Date(Date.now() - env.IMAGE_CLEANUP_AFTER_HOURS * 60 * 60 * 1000);

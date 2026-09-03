@@ -1,10 +1,11 @@
 import { createServer } from 'node:http';
 import { disconnectPrisma } from '@machiya/db';
-import type { Job } from 'bullmq';
+import type { Job, Queue } from 'bullmq';
 import sharp from 'sharp';
 import { env } from './env.js';
 import { cleanupImages } from './jobs/cleanup-images.js';
 import { markImageFailed, processImageJob, type ProcessImageJob } from './jobs/process-image.js';
+import { reconcileImages } from './jobs/reconcile-images.js';
 import { logger } from './logger.js';
 import { QUEUE_NAMES, createConnection, createQueue, createWorker } from './queues.js';
 
@@ -20,7 +21,7 @@ sharp.cache({ memory: 64, files: 0, items: 64 });
 
 const connection = createConnection();
 
-const imagesQueue = createQueue(QUEUE_NAMES.images, connection);
+const imagesQueue = createQueue(QUEUE_NAMES.images, connection) as Queue<ProcessImageJob>;
 const fuelQueue = createQueue(QUEUE_NAMES.fuelPrices, connection);
 const maintenanceQueue = createQueue(QUEUE_NAMES.maintenance, connection);
 
@@ -65,6 +66,13 @@ const maintenanceWorker = createWorker(
       logger.info(result, 'image cleanup finished');
       return result;
     }
+
+    if (job.name === 'reconcile-images') {
+      // Runs every minute and is silent when there is nothing to do, which is
+      // almost always. See DECISIONS.md D40.
+      return await reconcileImages(imagesQueue);
+    }
+
     return undefined;
   },
   connection,
@@ -90,8 +98,20 @@ async function registerSchedules(): Promise<void> {
     { name: 'cleanup-images' },
   );
 
+  // Every 60 seconds, not on a cron pattern: cron's finest granularity is a
+  // minute anyway, and `every` keeps the interval honest across restarts.
+  await maintenanceQueue.upsertJobScheduler(
+    'image-reconcile',
+    { every: env.IMAGE_RECONCILE_INTERVAL_MS },
+    { name: 'reconcile-images' },
+  );
+
   logger.info(
-    { fuel: env.FUEL_SCRAPE_CRON, imageCleanup: env.IMAGE_CLEANUP_CRON },
+    {
+      fuel: env.FUEL_SCRAPE_CRON,
+      imageCleanup: env.IMAGE_CLEANUP_CRON,
+      imageReconcileMs: env.IMAGE_RECONCILE_INTERVAL_MS,
+    },
     'schedules registered',
   );
 }
