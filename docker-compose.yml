@@ -10,10 +10,14 @@
 # The OSRM images are published for linux/amd64 only, hence the platform pins.
 # On Apple silicon they run under emulation and the graph build is slow.
 #
-# `api`, `worker` and `web` declare no `healthcheck:` here on purpose: each of
-# their Dockerfiles ends with a HEALTHCHECK, and compose's `service_healthy`
-# reads the container's health status regardless of which layer declared it.
-# Duplicating them here would mean two definitions to keep in step.
+# `api` and `worker` declare their `healthcheck:` HERE rather than in their
+# Dockerfiles. Compose does read a Dockerfile HEALTHCHECK, so the old
+# arrangement worked — but `web` declares `depends_on: api: service_healthy` in
+# this file, and a dependency whose condition is defined in a different file is
+# one that silently never becomes satisfiable if the image is ever rebuilt,
+# retagged or replaced without that layer. The check belongs where the
+# dependency is written. `web` keeps its Dockerfile HEALTHCHECK: nothing
+# depends on it, so nothing here reads it.
 
 name: machiya
 
@@ -148,6 +152,21 @@ services:
       OVERPASS_URL: ${OVERPASS_URL:-https://overpass.kumi.systems/api/interpreter}
     ports:
       - '${API_PORT:-4000}:4000'
+    healthcheck:
+      # /health answers 503 when a dependency is down and 200 otherwise (D10),
+      # so this is a real dependency check, not a liveness probe. Node's own
+      # fetch is used because the runtime image has neither curl nor wget.
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   worker:
     build:
@@ -191,6 +210,18 @@ services:
         condition: service_completed_successfully
     ports:
       - '${WORKER_PORT:-4100}:4100'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4100/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   web:
     build:
