@@ -74,7 +74,8 @@ export async function processImageJob(job: Job<ProcessImageJob>): Promise<void> 
   await Promise.all(
     derived.variants.map((variant) =>
       putObjectBytes({
-        objectKey: variantObjectKey(listingId, imageId, variant.size, variant.extension),
+        // The row says where its variants go; ids are not recomputed here. D41.
+        objectKey: variantObjectKey(image.variantBaseKey, variant.size, variant.extension),
         body: variant.body,
         contentType: variant.contentType,
       }),

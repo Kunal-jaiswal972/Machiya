@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import sharp from 'sharp';
-import { ImageRejected, validateAndDerive, variantObjectKey } from '../src/images/index.js';
+import {
+  fixtureVariantBaseKey,
+  ImageRejected,
+  isListingOwnedVariantBase,
+  validateAndDerive,
+  variantBaseKey,
+  variantObjectKey,
+} from '../src/images/index.js';
 
 function gradient(width: number, height: number) {
   return sharp({
@@ -134,8 +141,38 @@ describe('validateAndDerive rejections', () => {
 
 describe('object keys', () => {
   it('puts variants under the public prefix and keeps them per image', () => {
-    expect(variantObjectKey('listing-1', 'image-9', 'card', 'webp')).toBe(
+    expect(variantObjectKey('variants/listing-1/image-9', 'card', 'webp')).toBe(
       'variants/listing-1/image-9/card.webp',
+    );
+  });
+});
+
+describe('variant key ownership', () => {
+  it('claims a listing’s own variant prefix', () => {
+    expect(isListingOwnedVariantBase(variantBaseKey('listing-1', 'image-9'), 'listing-1')).toBe(
+      true,
+    );
+  });
+
+  it('does not claim a shared fixture prefix', () => {
+    // The whole point: deleting a seeded listing must not delete the shared
+    // photo that every other seeded listing is also pointing at. See D41.
+    expect(isListingOwnedVariantBase(fixtureVariantBaseKey('unsplash-abc'), 'listing-1')).toBe(
+      false,
+    );
+  });
+
+  it('does not claim another listing’s prefix', () => {
+    expect(isListingOwnedVariantBase(variantBaseKey('listing-2', 'image-9'), 'listing-1')).toBe(
+      false,
+    );
+  });
+
+  it('is not fooled by a listing id that is a prefix of another', () => {
+    // 'listing-1' must not match 'listing-12'; the trailing slash is what stops
+    // it, and it is easy to drop.
+    expect(isListingOwnedVariantBase(variantBaseKey('listing-12', 'image-9'), 'listing-1')).toBe(
+      false,
     );
   });
 });

@@ -7,7 +7,13 @@ import {
   type ImageUploadTicket,
   type ListingImageView,
 } from '@machiya/shared';
-import { originalObjectKey, variantObjectKey, VARIANT_SIZES } from '@machiya/shared/images';
+import {
+  isListingOwnedVariantBase,
+  originalObjectKey,
+  variantBaseKey,
+  variantObjectKey,
+  VARIANT_SIZES,
+} from '@machiya/shared/images';
 import { logger } from '../logger.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { assertOwnership, type RequestSession } from '../middleware/require-auth.js';
@@ -30,6 +36,7 @@ const EXTENSION_BY_TYPE: Record<string, string> = {
 
 interface ImageRow {
   id: string;
+  variantBaseKey: string;
   status: 'PENDING' | 'READY' | 'REJECTED' | 'FAILED';
   width: number;
   height: number;
@@ -40,7 +47,7 @@ interface ImageRow {
   lqip: string | null;
 }
 
-export function toImageView(image: ImageRow, listingId: string): ListingImageView {
+export function toImageView(image: ImageRow, _listingId: string): ListingImageView {
   return {
     id: image.id,
     status: image.status,
@@ -52,12 +59,14 @@ export function toImageView(image: ImageRow, listingId: string): ListingImageVie
     dominantColor: image.dominantColor,
     lqip: image.lqip,
     // Only READY images have public bytes. The original is in a private prefix.
+    // Built from the row's stored base key, not recomputed from ids: a seeded
+    // listing shares one copy of a photo under variants/fixtures/. See D41.
     urls:
       image.status === 'READY'
         ? {
-            thumb: publicVariantUrl(variantObjectKey(listingId, image.id, 'thumb', 'webp')),
-            card: publicVariantUrl(variantObjectKey(listingId, image.id, 'card', 'webp')),
-            full: publicVariantUrl(variantObjectKey(listingId, image.id, 'full', 'webp')),
+            thumb: publicVariantUrl(variantObjectKey(image.variantBaseKey, 'thumb', 'webp')),
+            card: publicVariantUrl(variantObjectKey(image.variantBaseKey, 'card', 'webp')),
+            full: publicVariantUrl(variantObjectKey(image.variantBaseKey, 'full', 'webp')),
           }
         : null,
   };
@@ -113,6 +122,7 @@ export async function requestImageUpload(
       id: imageId,
       listingId,
       objectKey,
+      variantBaseKey: variantBaseKey(listingId, imageId),
       status: 'PENDING',
       width: 0,
       height: 0,
@@ -235,14 +245,28 @@ export async function reorderImages(
   return images.map((image) => toImageView(image, listingId));
 }
 
-/** Original plus every derivative of one image. */
-function objectKeysFor(listingId: string, imageId: string, originalKey: string | null): string[] {
+/**
+ * Original plus every derivative of one image.
+ *
+ * Variants are only included when the base key belongs to THIS listing. A
+ * seeded listing points at a shared `variants/fixtures/...` copy, and deleting
+ * one such listing must not blank the galleries of every other listing using
+ * the same photo. See DECISIONS.md D41.
+ */
+function objectKeysFor(
+  listingId: string,
+  image: { id: string; objectKey: string | null; variantBaseKey: string },
+): string[] {
+  const owned = isListingOwnedVariantBase(image.variantBaseKey, listingId);
+
   return [
-    ...(originalKey ? [originalKey] : []),
-    ...VARIANT_SIZES.flatMap((size) => [
-      variantObjectKey(listingId, imageId, size.name, 'webp'),
-      variantObjectKey(listingId, imageId, size.name, 'jpg'),
-    ]),
+    ...(image.objectKey ? [image.objectKey] : []),
+    ...(owned
+      ? VARIANT_SIZES.flatMap((size) => [
+          variantObjectKey(image.variantBaseKey, size.name, 'webp'),
+          variantObjectKey(image.variantBaseKey, size.name, 'jpg'),
+        ])
+      : []),
   ];
 }
 
@@ -260,7 +284,7 @@ export async function deleteImage(
   }
 
   await prisma.listingImage.delete({ where: { id: imageId } });
-  await deleteObjects(objectKeysFor(listingId, imageId, image.objectKey));
+  await deleteObjects(objectKeysFor(listingId, image));
 
   // Keep sortOrder contiguous and make sure a cover still exists.
   const remaining = await prisma.listingImage.findMany({
@@ -287,10 +311,10 @@ export async function deleteImage(
 export async function listingObjectKeys(listingId: string): Promise<string[]> {
   const images = await prisma.listingImage.findMany({
     where: { listingId },
-    select: { id: true, objectKey: true },
+    select: { id: true, objectKey: true, variantBaseKey: true },
   });
 
-  return images.flatMap((image) => objectKeysFor(listingId, image.id, image.objectKey));
+  return images.flatMap((image) => objectKeysFor(listingId, image));
 }
 
 export { deleteObject };

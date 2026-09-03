@@ -278,9 +278,14 @@ model ListingImage {
   listingId String
 
   /// Object key of the ORIGINAL upload, under the private `originals/` prefix.
-  /// Derivatives live under `variants/{listingId}/{id}/{size}.{ext}` and are the
-  /// only publicly readable copies. Cleared when the original is discarded.
+  /// Cleared when the original is discarded after derivation.
   objectKey String?
+
+  /// Where this image's public variants live, WITHOUT the `/{size}.{ext}` tail.
+  /// Normally `variants/{listingId}/{id}`, but seeded listings share one copy of
+  /// a photo under `variants/fixtures/{photoId}` — which is why this is stored
+  /// rather than derived from the ids. See DECISIONS.md D41.
+  variantBaseKey String
 
   status        ImageStatus @default(PENDING)
   /// Why a REJECTED or FAILED image did not make it, shown in the wizard.

@@ -40,8 +40,8 @@
     "compose:nuke": "docker compose down -v",
     "compose:logs": "docker compose logs -f",
     "bootstrap": "bash scripts/bootstrap.sh",
-    "fixtures:generate": "tsx scripts/generate-fixtures.ts",
-    "prepare": "husky"
+    "prepare": "husky",
+    "seed:photos": "tsx --env-file-if-exists=.env scripts/fetch-seed-photos.ts"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
@@ -73,6 +73,7 @@
     "sharp": "^0.35.4",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.69.0"
+    "typescript-eslint": "^8.69.0",
+    "zod": "^4.5.4"
   }
 }

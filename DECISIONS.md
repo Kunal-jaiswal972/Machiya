@@ -443,16 +443,62 @@ each dev office) and the rest spread across the others: dense enough that the
 ring view, the filters and the sort orders all have something to work on, while
 the wider city still has listings for a different office.
 
-### D31. Fixture images are uploaded once and shared
+### D31. Seed photos are real photographs, from a committed manifest
 
-`scripts/generate-fixtures.ts` renders eight gradient JPEGs (~11 KB each, 89 KB
-total) which are committed. The seed uploads them to `fixtures/<name>.jpg` in
-MinIO and every listing's `ListingImage` rows reference those shared keys.
+Rewritten. The first version of this entry described eight committed gradient
+JPEGs, "deliberately plain — labelled Machiya seed data — so a placeholder is
+never mistaken for a real photo". That was the wrong trade. A product whose
+entire argument is "look at these homes near your office" cannot be evaluated
+against grey gradients: every screenshot looks broken, and no one can tell a
+layout problem from a data problem.
 
-Uploading a private copy per listing would mean ~200 objects of identical bytes:
-the object key is what the gallery code exercises, not the pixels. Real uploads
-get their own keys in step 5. The images are deliberately plain — labelled
-"Machiya seed data" — so a placeholder is never mistaken for a real photo.
+So the seed uses **real house photographs**, without making `db:seed` depend on a
+live network call. Three pieces:
+
+1. **`scripts/fetch-seed-photos.ts`, run explicitly as `pnpm seed:photos`.** Not
+   part of `db:seed`. It queries the Unsplash official API (free Demo tier, 50
+   requests an hour) with `UNSPLASH_ACCESS_KEY` from the root `.env`, over a
+   fixed set of terms with a fixed count per term — apartment interior, living
+   room, indian house exterior, bedroom, kitchen, balcony, apartment building.
+   23 photos.
+2. **`scripts/fixtures/photos.json`, committed.** Photo ids, pinned download
+   URLs, dimensions, photographer name and profile link. **This is the
+   deterministic artifact**, not the images. With a manifest present the script
+   never re-queries the API and downloads only what is missing, so a machine with
+   no Unsplash key at all reproduces the identical seed, and a warm cache needs
+   no network whatsoever. The binaries live in `scripts/fixtures/photos/`, which
+   is gitignored — 6.6 MB of JPEG does not belong in git history.
+3. **A keyless fallback that is still photographs.** With no key AND no manifest,
+   it falls back to `picsum.photos` at fixed ids: keyless, deterministic (an id
+   always returns the same image), and Unsplash-sourced anyway. Never gradients.
+   The script says loudly what is missing and how to fix it.
+
+`UNSPLASH_ACCESS_KEY` is read only by this script, running on the host. It is
+deliberately NOT in any compose service's environment, and it is an empty entry
+in `.env.example`.
+
+**Unsplash's search endpoint returns transient 5xx for valid queries**, verified
+rather than guessed: "apartment interior", "indian house exterior" and "balcony"
+each failed with 502/503 two to four times in a row and then succeeded, while
+"bedroom" and "living room" answered first time, and the identical requests
+succeeded through curl throughout. It is not the key, the spaces or the
+parameters. So a 5xx is retried with backoff (8 attempts) and only a 4xx stops
+the run — a 401 and a 403 get their own messages, the 403 one printing the
+rate-limit header, because "wrong key" and "you have used your 50 an hour" need
+different actions.
+
+**Attribution** is honoured as the API terms require: the per-photo
+`download_location` endpoint is triggered when a photo is actually cached (not on
+a cache hit — that is not a download), and `docs/attribution.md` is generated from
+the manifest crediting every photographer with a link to their profile and to the
+photo. The seeded UI carries a dev-only "seed photos via Unsplash" line on the
+listing gallery.
+
+One trap worth recording: `packages/db/prisma/seed.ts` imports
+`readPhotoManifest` from the fetcher, and the fetcher's `main()` was initially
+unguarded — so importing it started a network fetch, which is exactly the
+coupling the split exists to prevent. It now guards on `process.argv[1]`, the
+same way `scripts/cities.ts` does.
 
 ### D32. Dev account passwords are hashed by Better Auth's own hasher
 
@@ -708,3 +754,39 @@ states or id collisions, which is precisely where the bug lives. The headline
 test commits a `PENDING` row without enqueueing anything and asserts it reaches
 `READY`. The job processor is the one substitution: derivation needs sharp and
 object storage and is covered elsewhere, so the test's processor stands in for it.
+
+## Correction 3 — seed photos
+
+### D41. An image row stores where its variants live, rather than recomputing it
+
+The old code built variant keys from `(listingId, imageId)` at four separate call
+sites. That made a shared photo impossible, which mattered the moment the seed
+started using 23 real photographs: one private copy per listing would be roughly
+1,200 objects of identical bytes — around 90 MB of duplicated JPEG and WebP in a
+development bucket, to show 23 distinct pictures.
+
+Note that the first version of D31 already CLAIMED the fixtures were "uploaded
+once and shared" while the code wrote a private copy per listing. The claim was
+aspirational; this is the change that makes it true.
+
+`ListingImage.variantBaseKey` is now a NOT NULL column holding the prefix without
+the `/{size}.{ext}` tail:
+
+- an upload gets `variants/{listingId}/{imageId}`, set when the PENDING row is
+  created — both ids are known then, which is why the column can be required.
+- a seeded photo gets `variants/fixtures/{photoId}`, written once and pointed at
+  by every listing that draws that photo.
+
+One column, one source of truth, and the URL for an image is no longer derived
+independently in the API, the worker and the seed.
+
+The hazard this creates is deletion, and it is guarded explicitly:
+`isListingOwnedVariantBase(baseKey, listingId)` is checked before a listing's
+variant objects are deleted, so removing one seeded listing cannot blank the
+gallery of every other listing sharing the same photo. The rule is one line and
+lives next to the key helpers rather than being remembered at each delete site.
+
+The migration is hand-edited: Prisma's generated version added a NOT NULL column
+with no default to a populated table, which cannot run. The value is derivable
+for every existing row — it is exactly what the old code computed — so it is
+backfilled in place and only then constrained.

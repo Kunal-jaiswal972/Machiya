@@ -1,4 +1,5 @@
 import { prisma } from '@machiya/db';
+import { variantBaseKey } from '@machiya/shared/images';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Object storage is mocked: these tests are about ownership, validation and
@@ -182,6 +183,7 @@ describe('publishing', () => {
       data: {
         listingId: listing.id,
         objectKey: null,
+        variantBaseKey: variantBaseKey(listing.id, 'seeded-image'),
         status: 'READY',
         width: 800,
         height: 600,

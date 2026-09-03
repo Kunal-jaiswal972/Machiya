@@ -93,6 +93,7 @@ async function commitPendingRowWithoutEnqueueing(options: { ageMs?: number } = {
     data: {
       listingId,
       objectKey: `originals/${listingId}/orphan.jpg`,
+      variantBaseKey: `variants/${listingId}/orphan`,
       status: 'PENDING',
       width: 0,
       height: 0,

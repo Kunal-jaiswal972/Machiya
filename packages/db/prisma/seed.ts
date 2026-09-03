@@ -12,17 +12,17 @@
  *    machine. Screenshots, tests and bug reports stay comparable.
  */
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { existsSync, readFileSync } from 'node:fs';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { hashPassword } from 'better-auth/crypto';
-import { validateAndDerive, variantObjectKey } from '@machiya/shared/images';
+import { fixtureVariantBaseKey, validateAndDerive, variantObjectKey } from '@machiya/shared/images';
 import { CITIES, type CityConfig, type Locality } from '../../../scripts/cities.js';
+import {
+  photoFilePath,
+  readPhotoManifest,
+  type SeedPhoto,
+} from '../../../scripts/fetch-seed-photos.js';
 import { prisma } from '../src/client.js';
-
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const FIXTURE_DIR = join(REPO_ROOT, 'scripts', 'fixtures');
 
 /** Known dev credentials. Documented in the README; never used in production. */
 const DEV_PASSWORD = 'devpass123';
@@ -50,17 +50,6 @@ const AMENITIES = [
   { slug: 'balcony', name: 'Balcony', icon: 'sun', category: 'interior' },
   { slug: 'pet-friendly', name: 'Pet friendly', icon: 'paw-print', category: 'rules' },
   { slug: 'vegetarian-only', name: 'Vegetarian only', icon: 'salad', category: 'rules' },
-];
-
-const FIXTURE_IMAGES = [
-  'exterior-01',
-  'exterior-02',
-  'exterior-03',
-  'living-01',
-  'living-02',
-  'bedroom-01',
-  'kitchen-01',
-  'balcony-01',
 ];
 
 const HOUSE_RULES = [
@@ -162,38 +151,66 @@ const s3 = new S3Client({
 const BUCKET = process.env.S3_BUCKET ?? 'machiya-listings';
 
 /**
- * Derives the fixture photos through the SAME pipeline the worker runs, then
- * uploads the variants under each image row's own keys.
+ * Loads the seed photos and derives each one ONCE, through the same
+ * `validateAndDerive` the worker runs.
  *
- * Two reasons not to shortcut this. The variant key layout is what the gallery
- * code exercises, so seeded data has to use it; and running the real
- * `validateAndDerive` means the seed would break if that code broke, instead of
- * quietly diverging from production behaviour.
+ * Two reasons not to shortcut the real pipeline: the variant key layout is what
+ * the gallery code exercises, so seeded data has to use it; and running the real
+ * derivation means the seed breaks if that code breaks, rather than quietly
+ * diverging from production behaviour.
+ *
+ * The variants are uploaded once under `variants/fixtures/{photoId}/` and shared
+ * across every listing that uses the photo — 23 photos rather than one private
+ * copy per listing, which would be ~1,200 objects of identical bytes. See D41.
  */
-type DerivedFixture = Awaited<ReturnType<typeof validateAndDerive>>;
-
-async function deriveFixtures(): Promise<DerivedFixture[]> {
-  const derived: DerivedFixture[] = [];
-
-  for (const name of FIXTURE_IMAGES) {
-    const bytes = readFileSync(join(FIXTURE_DIR, `${name}.jpg`));
-    derived.push(await validateAndDerive(bytes));
-  }
-
-  return derived;
+interface SeedFixture {
+  photo: SeedPhoto;
+  derived: Awaited<ReturnType<typeof validateAndDerive>>;
+  variantBaseKey: string;
 }
 
-async function uploadVariants(
-  listingId: string,
-  imageId: string,
-  fixture: DerivedFixture,
-): Promise<void> {
+async function loadFixtures(): Promise<SeedFixture[]> {
+  const manifest = readPhotoManifest();
+
+  if (!manifest) {
+    throw new Error(
+      [
+        'No seed photos. Run `pnpm seed:photos` first — it writes',
+        'scripts/fixtures/photos.json and caches the images. With a key in',
+        'UNSPLASH_ACCESS_KEY it uses the Unsplash API; without one it falls back to',
+        'fixed picsum.photos ids. Either way the manifest is committed, so the seed',
+        'is reproducible afterwards with no network at all.',
+      ].join(' '),
+    );
+  }
+
+  const fixtures: SeedFixture[] = [];
+
+  for (const photo of manifest.photos) {
+    const path = photoFilePath(photo);
+
+    if (!existsSync(path)) {
+      throw new Error(
+        `Seed photo ${photo.id} is in the manifest but not cached at ${path}. ` +
+          'Run `pnpm seed:photos` — it downloads only what is missing.',
+      );
+    }
+
+    const derived = await validateAndDerive(readFileSync(path));
+    fixtures.push({ photo, derived, variantBaseKey: fixtureVariantBaseKey(photo.id) });
+  }
+
+  return fixtures;
+}
+
+/** Uploads one photo's variants to the shared fixture prefix. */
+async function uploadFixture(fixture: SeedFixture): Promise<void> {
   await Promise.all(
-    fixture.variants.map((variant) =>
+    fixture.derived.variants.map((variant) =>
       s3.send(
         new PutObjectCommand({
           Bucket: BUCKET,
-          Key: variantObjectKey(listingId, imageId, variant.size, variant.extension),
+          Key: variantObjectKey(fixture.variantBaseKey, variant.size, variant.extension),
           Body: variant.body,
           ContentType: variant.contentType,
           CacheControl: 'public, max-age=31536000, immutable',
@@ -453,7 +470,7 @@ async function seedListings(
   cityIds: Map<string, string>,
   amenityIds: Map<string, string>,
   ownerId: string,
-  fixtures: DerivedFixture[],
+  fixtures: SeedFixture[],
 ): Promise<string[]> {
   const listingIds: string[] = [];
   const plannedSlugs: string[] = [];
@@ -517,26 +534,36 @@ async function seedListings(
 
       await prisma.listingImage.deleteMany({ where: { listingId: listing.id } });
 
-      const chosen = pickSome(fixtures, 4);
-      for (const [position, fixture] of chosen.entries()) {
-        const image = await prisma.listingImage.create({
+      // 3-6 photos per listing, drawn from the shared pool by the same PRNG as
+      // everything else, so the assignment is stable across runs. An exterior
+      // shot is preferred for the cover when the draw contains one — a gallery
+      // that opens on a close-up of a tap reads as a mistake.
+      const chosen = pickSome(fixtures, Math.floor(between(3, 6.99)));
+      const exteriorFirst = [
+        ...chosen.filter((fixture) => fixture.photo.tag === 'exterior'),
+        ...chosen.filter((fixture) => fixture.photo.tag !== 'exterior'),
+      ];
+
+      for (const [position, fixture] of exteriorFirst.entries()) {
+        await prisma.listingImage.create({
           data: {
             listingId: listing.id,
             // Seeded photos skip the upload path entirely, so there is no
             // original to keep — they go straight in as READY.
             objectKey: null,
+            // The shared fixture prefix, not this listing's own: one copy of
+            // each photo serves every listing that draws it. See D41.
+            variantBaseKey: fixture.variantBaseKey,
             status: 'READY',
-            width: fixture.width,
-            height: fixture.height,
-            dominantColor: fixture.dominantColor,
-            lqip: fixture.lqip,
+            width: fixture.derived.width,
+            height: fixture.derived.height,
+            dominantColor: fixture.derived.dominantColor,
+            lqip: fixture.derived.lqip,
             sortOrder: position,
             isCover: position === 0,
             processedAt: new Date(),
           },
         });
-
-        await uploadVariants(listing.id, image.id, fixture);
       }
     }
   }
@@ -791,9 +818,12 @@ async function main(): Promise<void> {
   const startedAt = Date.now();
   console.log('seeding three cities…');
 
-  const fixtures = await deriveFixtures();
+  const fixtures = await loadFixtures();
+  for (const fixture of fixtures) {
+    await uploadFixture(fixture);
+  }
   console.log(
-    `  images     ${fixtures.length} fixtures derived into ${fixtures[0]?.variants.length ?? 0} variants each`,
+    `  photos     ${String(fixtures.length)} shared photos, ${String(fixtures[0]?.derived.variants.length ?? 0)} variants each, under variants/fixtures/`,
   );
 
   const amenityIds = await seedAmenities();

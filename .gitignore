@@ -17,7 +17,6 @@ build/
 .osm-cache/
 osm-data/
 osrm-data/
-photon-data/
 *.osm.pbf
 *.osrm*
 
@@ -49,6 +48,10 @@ apps/web/public/maplibre/
 
 # playwright mcp scratch output
 .playwright-mcp/
+
+# Seed photo binaries. scripts/fixtures/photos.json IS committed — the manifest
+# is the deterministic artifact, the bytes are a cache. See DECISIONS.md D31.
+scripts/fixtures/photos/
 
 # merged three-city extract produced by scripts/bootstrap.sh
 osm-data/
