@@ -8,6 +8,7 @@ import {
 import { z } from 'zod';
 import { env } from '../env.js';
 import { cached } from '../lib/cache.js';
+import { geoCacheKey } from './manifest.js';
 import { logger } from '../logger.js';
 
 /**
@@ -60,7 +61,9 @@ export class OsrmRoutingProvider implements RoutingProvider {
     signal?: AbortSignal;
   }): Promise<RouteResult | null> {
     const { from, to, profile } = input;
-    const key = `route:${profile}:${keyPart(from)}:${keyPart(to)}`;
+    // Epoch-prefixed: a route belongs to the graph that produced it, so a
+    // rebuilt graph must not be able to serve the old geometry. See D46.
+    const key = geoCacheKey('route', profile, keyPart(from), keyPart(to));
 
     try {
       const { value } = await cached<RouteResult | null>({

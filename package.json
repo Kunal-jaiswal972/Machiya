@@ -40,6 +40,7 @@
     "compose:nuke": "docker compose down -v",
     "compose:logs": "docker compose logs -f",
     "bootstrap": "bash scripts/bootstrap.sh",
+    "geo:manifest": "tsx --env-file-if-exists=.env scripts/geo-manifest.ts write",
     "prepare": "husky",
     "seed:photos": "tsx --env-file-if-exists=.env scripts/fetch-seed-photos.ts"
   },
@@ -58,6 +59,7 @@
   "devDependencies": {
     "@better-auth/cli": "^1.4.21",
     "@eslint/js": "^9.39.5",
+    "@machiya/shared": "workspace:*",
     "@types/node": "^22.20.1",
     "concurrently": "^10.0.5",
     "eslint": "^9.39.5",

@@ -22,8 +22,42 @@ export interface CachedValue<T> {
   stale: boolean;
 }
 
+/**
+ * The cache client is `lazyConnect` with no offline queue (D21), which means
+ * the FIRST command of a fresh process is issued before the socket is ready
+ * and rejects outright. That is not merely a slow first read: the first cache
+ * *write* was dropped too, so a background POI warm right after boot produced
+ * nothing and the next viewer warmed the same key again.
+ *
+ * So connect once, explicitly, and let every read and write await it. Kept out
+ * of module scope on purpose: importing this file must not open a socket, or
+ * every test that touches a service would need a Redis to run.
+ */
+let connecting: Promise<void> | null = null;
+
+async function ready(): Promise<void> {
+  if (redis.status === 'ready') return;
+
+  if (!connecting && (redis.status === 'wait' || redis.status === 'end')) {
+    connecting = redis
+      .connect()
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => {
+        connecting = null;
+      });
+  }
+
+  // While a connect is in flight, wait for it. While ioredis is reconnecting on
+  // its own, do not — a cache miss is always an acceptable answer here.
+  if (connecting) await connecting;
+}
+
 async function readRaw(key: string): Promise<string | null> {
   try {
+    await ready();
     return await redis.get(key);
   } catch (error) {
     logger.debug({ err: error, key }, 'cache read failed');
@@ -33,6 +67,7 @@ async function readRaw(key: string): Promise<string | null> {
 
 async function writeRaw(key: string, payload: string, ttlSeconds: number): Promise<void> {
   try {
+    await ready();
     await redis.set(key, payload, 'EX', ttlSeconds);
   } catch (error) {
     logger.debug({ err: error, key }, 'cache write failed');

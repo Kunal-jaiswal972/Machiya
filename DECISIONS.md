@@ -908,3 +908,73 @@ bottom sheet on mobile, and it renders **one or the other** — chosen by a
 That was not a preference: hiding one put the entire listing in the DOM twice,
 with two `aria-label="Listing detail"` landmarks and every control duplicated,
 which a Playwright strict-mode violation caught before a person had to.
+
+## Correction 7 — the geo artifacts
+
+### D46. Derived cache keys are scoped to a geo epoch, not flushed by hand
+
+Routes, POIs and geocodes are all **derived from the OSM artifacts**: the two
+OSRM graphs, the Nominatim database and (from D48) the Overpass database, each
+built from one merged extract. A cached entry is therefore only valid for the
+artifacts that produced it — after a re-cut with different bounds, the same key
+names a different answer, and the wrong one.
+
+**Chosen: a geo epoch prefixed onto every derived key.** It is a 12-hex-character
+hash of the artifact-relevant city config plus the sha256 of every source zone
+extract, computed by `computeGeoEpoch` in `@machiya/shared/cities` and written
+into `osm-data/manifest.json` as the last step of `scripts/bootstrap.sh`. The
+API reads it once at boot and `geoCacheKey()` puts it in front of every route,
+POI and geocode key.
+
+A rebuild then changes the epoch and every derived entry becomes **unreachable**
+without anyone flushing anything; the orphans expire on their own TTL. That
+beats a manual flush in the two ways that matter: nobody has to remember, and a
+partial rebuild on one machine cannot serve another machine's geometry — the
+epoch differs, so the two never read each other's keys even against a shared
+Redis.
+
+Verified against the compose Redis rather than a mock, because the whole
+mechanism _is_ the key string and a mocked cache would prove nothing:
+`apps/api/test/geo-epoch.test.ts` caches a route and a POI set under a random
+epoch, re-imports the module graph against a manifest carrying a different one,
+and asserts the second read re-derives — one upstream call becomes two, and the
+POI panel goes back to `degraded` with an empty list instead of serving the
+previous epoch's answer. Directly observable in `redis-cli --scan` too: the
+pre-correction `route:bike:25.6191,85.1767:...` keys are still present and now
+unreachable, sitting next to a `<epoch>:route:car:...` one.
+
+Four details worth stating, because each was a decision:
+
+- **The forward-geocode cache is scoped too**, keeping its 7-day TTL.
+  Nominatim's answers come from the imported extract, so they are as derived as
+  a route is. The TTL is about churn in what a query _should_ return; the epoch
+  is what makes the entry **correct** across a rebuild. This is stated in
+  `docs/geo.md` as well, because a 7-day TTL reads like the safety mechanism
+  and is not one.
+- **`view:{listingId}:{viewerHash}` is deliberately NOT prefixed.** A view
+  dedupe window has nothing to do with OSM data, and prefixing it would reset
+  every window on a rebuild — turning an artifact rebuild into a spike in view
+  counts.
+- **The POI key gained a category component** at the same time. `nearby()`
+  accepts a subset of the seven categories while the key described only the
+  centre and the radius, so a future two-category caller would have written its
+  answer over the key the seven-category panel reads. It is `all` for the full
+  set so the common key stays readable.
+- **With no manifest the epoch is the literal `unbuilt`**, logged at warn with
+  the path. The core stack is usable before `pnpm bootstrap` has ever run (D6),
+  so a missing manifest cannot be fatal — but it must not be silent either, and
+  inventing a plausible-looking epoch would make the first real build look like
+  a no-change rebuild.
+
+The config hash is deliberately narrower than the city record: slug, zone and
+bbox only. Transit fares and locality names are seed data — changing one does
+not invalidate a routing graph, and hashing them here would raise a
+stale-artifact alarm that no rebuild could clear.
+
+One real bug fell out of writing the test, and it was not the epoch's:
+`apps/api/src/lib/cache.ts` issued its first command on a `lazyConnect` client
+with no offline queue (D21), so the **first cache read and write of a fresh
+process both rejected**. A cold POI warm immediately after boot therefore
+persisted nothing and the next viewer warmed the identical key again. `ready()`
+now connects once and every read and write awaits it. Still no socket at import
+time: a test that touches a service must not need a Redis.

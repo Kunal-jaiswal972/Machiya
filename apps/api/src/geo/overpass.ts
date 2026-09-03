@@ -10,6 +10,7 @@ import {
 import { z } from 'zod';
 import { env } from '../env.js';
 import { cacheGet, cacheSet } from '../lib/cache.js';
+import { geoCacheKey } from './manifest.js';
 import { logger } from '../logger.js';
 
 /**
@@ -149,6 +150,15 @@ function buildQuery(
 /** How many of each category are kept. A legend with 200 pharmacies is a mess. */
 const MAX_PER_CATEGORY = 12;
 
+/**
+ * The category component of a cache key: `all` for the full set, so the key
+ * every real caller uses stays readable, and a sorted list otherwise.
+ */
+function categoryKeyPart(categories: readonly PoiCategory[]): string {
+  const unique = [...new Set(categories)].sort();
+  return unique.length === POI_CATEGORIES.length ? 'all' : unique.join('+');
+}
+
 export class OverpassPoiProvider implements PoiProvider {
   readonly name = 'overpass';
 
@@ -167,9 +177,15 @@ export class OverpassPoiProvider implements PoiProvider {
     signal?: AbortSignal;
   }): Promise<PoiLookupResult> {
     const categories = input.categories ?? POI_CATEGORIES;
-    const key = `poi:${input.center.lat.toFixed(4)},${input.center.lng.toFixed(4)}:${String(
+    // Epoch-prefixed (D46) and category-scoped. The category part is not
+    // decoration: `nearby` accepts a subset, and without it a two-category
+    // answer would be written over the key a seven-category caller reads.
+    const key = geoCacheKey(
+      'poi',
+      `${input.center.lat.toFixed(4)},${input.center.lng.toFixed(4)}`,
       Math.round(input.radiusMeters),
-    )}`;
+      categoryKeyPart(categories),
+    );
 
     const hit = await cacheGet<PoiLookupResult>(key);
     if (hit) return hit;

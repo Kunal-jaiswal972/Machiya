@@ -8,6 +8,7 @@ import {
 import { z } from 'zod';
 import { env } from '../env.js';
 import { cached, normalizeQueryKey } from '../lib/cache.js';
+import { geoCacheKey } from './manifest.js';
 import { logger } from '../logger.js';
 
 /**
@@ -136,7 +137,10 @@ export class NominatimGeocodeProvider implements GeocodeProvider {
     if (term.length === 0) return [];
 
     const limit = options.limit ?? 8;
-    const key = `geocode:nominatim:${term}:${options.citySlug ?? 'all'}:${String(limit)}`;
+    // Epoch-prefixed like the others: Nominatim's answers come from the
+    // imported extract, so they are as derived as a route is. The 7-day TTL is
+    // about churn; the epoch is what makes it CORRECT across a rebuild.
+    const key = geoCacheKey('geocode', term, options.citySlug ?? 'all', limit);
 
     try {
       const { value } = await cached<GeocodeResult[]>({
@@ -180,7 +184,7 @@ export class NominatimGeocodeProvider implements GeocodeProvider {
     // pixel is the same address, and full precision would make every drag a miss.
     const lat = coordinate.lat.toFixed(4);
     const lng = coordinate.lng.toFixed(4);
-    const key = `geocode:nominatim:reverse:${lat},${lng}`;
+    const key = geoCacheKey('geocode', 'reverse', `${lat},${lng}`);
 
     try {
       const { value } = await cached<GeocodeResult | null>({

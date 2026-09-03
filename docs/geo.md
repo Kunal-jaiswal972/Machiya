@@ -67,7 +67,10 @@ office" than a listing whose title happens to contain the word.
 **and** the term is at least 3 characters. Cached in Redis for 7 days under a
 normalised query (trimmed, lowercased, whitespace-collapsed — otherwise
 `Boring Road`, `boring  road` and `BORING ROAD ` are three cache entries for one
-question).
+question), and under the **geo epoch** — Nominatim answers come from the
+imported extract, so a geocode is as derived as a route is. The 7-day TTL reads
+like the thing that keeps this honest across a rebuild and is **not**: the
+epoch is. See [the geo epoch](#the-geo-epoch-and-the-artifact-manifest).
 
 The client adds the rest of the restraint: a 250 ms trailing debounce, and React
 Query's `AbortSignal`, which cancels the in-flight request when the term changes.
@@ -215,6 +218,47 @@ Passing only the caller's signal — which is the request-close signal — silen
 seconds instead of degrading at 25. If you add a fourth provider, combine the
 signals.
 
+## The geo epoch and the artifact manifest
+
+Routes, POIs and geocodes are all derived from the OSM artifacts. A cached
+entry is therefore only valid for the artifacts that produced it: after a
+re-cut with different bounds, the same key names a different — and wrong —
+answer.
+
+So every derived Redis key is prefixed with a **geo epoch**: a 12-character
+hash of the artifact-relevant city config (slug, zone, bboxes) plus the sha256
+of every source zone extract. `scripts/bootstrap.sh` writes it into
+`osm-data/manifest.json` as its last step; the API reads it once at boot and
+`geoCacheKey()` puts it in front of every route, POI and geocode key.
+
+```
+<epoch>:route:car:25.6127,85.1145:25.5941,85.1376
+<epoch>:poi:12.9352,77.6245:1500:all
+<epoch>:geocode:koramangala:bengaluru:8
+```
+
+A rebuild changes the epoch and every derived entry becomes unreachable —
+**nobody has to flush Redis**, and a partial rebuild on one machine cannot
+serve another machine's geometry. The orphaned keys expire on their own TTL.
+
+What is deliberately NOT prefixed: `view:{listingId}:{viewerHash}`. A view
+dedupe window has nothing to do with OSM data, and prefixing it would turn
+every artifact rebuild into a spike in view counts.
+
+With no manifest — a clone that has never run `pnpm bootstrap` — the epoch is
+the literal `unbuilt`, logged at warn with the path it looked in. The core
+stack has to be usable before the artifacts exist (D6), so this cannot be
+fatal; it must not be silent either.
+
+Useful commands:
+
+```bash
+pnpm geo:manifest                        # rewrite osm-data/manifest.json (bootstrap's last step)
+pnpm tsx scripts/geo-manifest.ts print   # show it, or say it is missing
+```
+
+Reasoning and what was verified: DECISIONS.md D46.
+
 ## OSM data pipeline
 
 `scripts/bootstrap.sh`, idempotent, everything in containers (D28):
@@ -229,6 +273,8 @@ signals.
 4. Delegate the OSRM graph build to the `osrm-init` compose service, so the
    pipeline is defined once.
 5. Nominatim imports the same file on first boot.
+6. Write `osm-data/manifest.json`: the checksums of every input and output, and
+   the geo epoch derived from them.
 
 On Windows the mount paths go through `cygpath -m` with `MSYS_NO_PATHCONV=1`,
 because Docker Desktop wants `C:/...` and Git Bash would otherwise rewrite

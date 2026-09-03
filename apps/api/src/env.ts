@@ -60,6 +60,16 @@ const envSchema = z.object({
   /** Public base URL objects are served from, for building image URLs. */
   S3_PUBLIC_BASE_URL: z.string().url().default('http://localhost:9000/machiya-listings'),
 
+  // --- OSM artifacts -------------------------------------------------------
+  /**
+   * Where `scripts/bootstrap.sh` left the artifact manifest. Its `epoch` field
+   * prefixes every derived cache key, so a rebuild strands the old entries
+   * instead of serving them. Relative paths resolve against the process's cwd,
+   * which is the repo root in dev and `/app` in the container — hence the
+   * absolute default in compose, where `./osm-data` is mounted at `/osm`.
+   */
+  GEO_MANIFEST_PATH: z.string().min(1).default('osm-data/manifest.json'),
+
   // --- Geocoding -----------------------------------------------------------
   /**
    * Which geocoder the adapter selects. `nominatim` is the only value today —

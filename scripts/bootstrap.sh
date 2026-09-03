@@ -8,6 +8,8 @@
 #   3. merge the cuts into one small .osm.pbf
 #   4. build the OSRM car and bicycle graphs from it
 #   5. import it into a self-hosted Nominatim for geocoding
+#   6. write osm-data/manifest.json: the checksums of everything above, plus
+#      the geo epoch every derived cache key is prefixed with (D46)
 #
 # Every step is idempotent: anything whose output already exists is skipped, so
 # re-running after an interruption costs only what is left. Downloads are cached
@@ -82,6 +84,11 @@ docker info >/dev/null 2>&1 || die "the docker daemon is not running"
 info "docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo '?'), pnpm $(pnpm --version)"
 
 mkdir -p "$CACHE_DIR" "$OUT_DIR"
+
+# scripts/geo-manifest.ts imports @machiya/shared/cities, and @machiya/shared is
+# consumed as built dist (D9) — so build it before anything reads it.
+info "building @machiya/shared (the manifest schema and epoch hash live there)"
+pnpm -s -F @machiya/shared build
 
 ZONES=$(pnpm -s tsx scripts/cities.ts zones)
 EXTRACTS=$(pnpm -s tsx scripts/cities.ts extracts)
@@ -173,6 +180,16 @@ for attempt in $(seq 1 240); do
   fi
   sleep 15
 done
+
+# --- 6. the artifact manifest ---------------------------------------------
+
+step "Writing the artifact manifest"
+# Last, because it checksums the outputs of every step above. The epoch it
+# derives prefixes every cached route, POI set and geocode, so this run's
+# artifacts cannot be described by a stale manifest — and a rebuild with
+# different bounds strands the previous run's cache entries instead of serving
+# them. See DECISIONS.md D46.
+pnpm -s tsx scripts/geo-manifest.ts write
 
 # --- summary ---------------------------------------------------------------
 
