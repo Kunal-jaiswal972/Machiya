@@ -1,79 +1,169 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
+/* ---------------------------------------------------------------------------
+   Machiya design tokens. The direction, and the reasoning for every value
+   below, is docs/design.md — read that before changing anything here.
+
+   The short version: the map is the bright real surface and the UI is
+   calibrated chrome over it, so every colour is derived from the OpenFreeMap
+   Liberty style the map actually renders. Nothing in the chrome is a colour the
+   map does not already contain.
+   --------------------------------------------------------------------------- */
+
 /* Dark mode is a class on <html>, toggled by the theme store — not a media
    query — so the user's choice can override the OS. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: 'Inter var', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Three roles, one pairing. Fallbacks are real, not decorative: the metrics
+     are close enough that a font swap does not reflow the page. */
+  --font-display:
+    'Bricolage Grotesque', ui-sans-serif, 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-sans: 'Instrument Sans', ui-sans-serif, 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* Price-band ramp used by map markers and result cards. */
-  --color-band-1: oklch(0.72 0.16 150);
-  --color-band-2: oklch(0.78 0.15 95);
-  --color-band-3: oklch(0.74 0.16 55);
-  --color-band-4: oklch(0.65 0.19 25);
+  /* Radius encodes what a thing IS: chrome is an instrument bezel, map-native
+     objects are round. Nothing lands between 4px and 12px. */
+  --radius-chrome: 4px;
+  --radius-inset: 2px;
+  --radius-sheet: 12px;
+  --radius-round: 999px;
 
-  /* Distance rings, 1 km / 2 km / 3 km. */
-  --color-ring-1: oklch(0.7 0.14 200);
-  --color-ring-2: oklch(0.66 0.12 230);
-  --color-ring-3: oklch(0.6 0.1 260);
+  /* The map's own ring geometry: one family getting quieter outward. */
+  --color-ring-1: oklch(0.66 0.11 240);
+  --color-ring-2: oklch(0.72 0.085 245);
+  --color-ring-3: oklch(0.78 0.055 250);
 }
 
-/* One palette, two themes. Every token the shadcn primitives reference is
-   defined in both blocks — a token missing from .dark renders as an invisible
-   control rather than a wrong colour, which is far harder to spot. */
+/* One palette, two themes. Every token is defined in BOTH blocks: a token
+   missing from one renders as an invisible control, which is far harder to
+   spot than a wrong colour. */
 :root {
-  --radius: 0.625rem;
+  --radius: var(--radius-chrome);
 
-  --background: oklch(0.99 0.002 250);
-  --foreground: oklch(0.21 0.02 260);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.21 0.02 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.21 0.02 260);
-  --muted: oklch(0.96 0.005 250);
-  --muted-foreground: oklch(0.5 0.02 260);
-  --accent: oklch(0.95 0.012 250);
-  --accent-foreground: oklch(0.24 0.02 260);
-  --secondary: oklch(0.96 0.005 250);
-  --secondary-foreground: oklch(0.24 0.02 260);
-  --primary: oklch(0.58 0.16 245);
-  --primary-foreground: oklch(0.99 0 0);
-  --destructive: oklch(0.58 0.21 27);
+  /* Liberty's land fill, and two steps up from it for panels. */
+  --paper: oklch(0.97 0.008 85);
+  --paper-raised: oklch(0.995 0.004 85);
+  --paper-sunken: oklch(0.94 0.01 85);
+
+  /* Liberty's water, pushed dark. Text and chrome in light mode. */
+  --ink: oklch(0.22 0.035 250);
+  --ink-soft: oklch(0.44 0.025 250);
+  --ink-faint: oklch(0.62 0.02 250);
+
+  /* Liberty's motorway casing. PRICE, and the active ring. Nothing else. */
+  --signal: oklch(0.78 0.15 78);
+  --signal-ink: oklch(0.26 0.06 78);
+
+  /* Liberty's water fill. The office, the route, focus. */
+  --water: oklch(0.62 0.11 245);
+  --water-soft: oklch(0.9 0.035 245);
+
+  /* Liberty's park fill. A judgement: this fits your budget. */
+  --verdant: oklch(0.62 0.11 145);
+  --verdant-soft: oklch(0.93 0.04 145);
+
+  /* Liberty's building fill, saturated. The other judgement. */
+  --clay: oklch(0.55 0.17 33);
+  --clay-soft: oklch(0.94 0.03 33);
+
+  --edge: oklch(0.86 0.012 250);
+  --edge-strong: oklch(0.76 0.018 250);
+
+  /* --- the shadcn primitives' token names, mapped onto the above --------- */
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: var(--paper-raised);
+  --card-foreground: var(--ink);
+  --popover: var(--paper-raised);
+  --popover-foreground: var(--ink);
+  --muted: var(--paper-sunken);
+  --muted-foreground: var(--ink-soft);
+  --accent: var(--paper-sunken);
+  --accent-foreground: var(--ink);
+  --secondary: var(--paper-sunken);
+  --secondary-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: var(--paper-raised);
+  --destructive: var(--clay);
   --destructive-foreground: oklch(0.99 0 0);
-  --border: oklch(0.91 0.01 260);
-  --input: oklch(0.89 0.012 260);
-  --ring: oklch(0.58 0.16 245);
+  --border: var(--edge);
+  --input: var(--edge-strong);
+  --ring: var(--water);
+
+  --elev-chrome:
+    0 0 0 1px var(--edge), 0 1px 2px -1px oklch(0.22 0.035 250 / 0.12),
+    0 8px 24px -14px oklch(0.22 0.035 250 / 0.22);
+  --elev-over:
+    0 0 0 1px var(--edge), 0 2px 4px -2px oklch(0.22 0.035 250 / 0.14),
+    0 24px 48px -18px oklch(0.22 0.035 250 / 0.34);
 }
 
+/* Designed, not inverted. The map cannot be recoloured, so dark mode moves the
+   chrome to the ink family and FRAMES the bright map rather than fighting it —
+   and `signal` gains lightness, because ochre on ink needs more luminance to
+   stay a price and not a warning. */
 .dark {
-  --background: oklch(0.19 0.02 260);
-  --foreground: oklch(0.95 0.01 250);
-  --card: oklch(0.23 0.02 260);
-  --card-foreground: oklch(0.95 0.01 250);
-  --popover: oklch(0.23 0.02 260);
-  --popover-foreground: oklch(0.95 0.01 250);
-  --muted: oklch(0.25 0.02 260);
-  --muted-foreground: oklch(0.68 0.02 260);
-  --accent: oklch(0.29 0.02 260);
-  --accent-foreground: oklch(0.95 0.01 250);
-  --secondary: oklch(0.27 0.02 260);
-  --secondary-foreground: oklch(0.95 0.01 250);
-  --primary: oklch(0.72 0.14 235);
-  --primary-foreground: oklch(0.18 0.02 260);
-  --destructive: oklch(0.66 0.19 25);
-  --destructive-foreground: oklch(0.16 0.02 260);
-  --border: oklch(0.32 0.02 260);
-  --input: oklch(0.36 0.02 260);
-  --ring: oklch(0.72 0.14 235);
+  --paper: oklch(0.19 0.024 252);
+  --paper-raised: oklch(0.235 0.026 252);
+  --paper-sunken: oklch(0.16 0.022 252);
+
+  --ink: oklch(0.95 0.008 85);
+  --ink-soft: oklch(0.76 0.012 250);
+  --ink-faint: oklch(0.58 0.016 250);
+
+  --signal: oklch(0.85 0.155 82);
+  --signal-ink: oklch(0.2 0.05 82);
+
+  --water: oklch(0.74 0.105 245);
+  --water-soft: oklch(0.3 0.05 245);
+
+  --verdant: oklch(0.76 0.12 145);
+  --verdant-soft: oklch(0.28 0.05 145);
+
+  --clay: oklch(0.68 0.16 33);
+  --clay-soft: oklch(0.29 0.06 33);
+
+  --edge: oklch(0.32 0.02 252);
+  --edge-strong: oklch(0.42 0.024 252);
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: var(--paper-raised);
+  --card-foreground: var(--ink);
+  --popover: var(--paper-raised);
+  --popover-foreground: var(--ink);
+  --muted: var(--paper-sunken);
+  --muted-foreground: var(--ink-soft);
+  --accent: oklch(0.29 0.028 252);
+  --accent-foreground: var(--ink);
+  --secondary: oklch(0.27 0.026 252);
+  --secondary-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: oklch(0.19 0.024 252);
+  --destructive: var(--clay);
+  --destructive-foreground: oklch(0.16 0.02 252);
+  --border: var(--edge);
+  --input: var(--edge-strong);
+  --ring: var(--water);
+
+  --elev-chrome:
+    0 0 0 1px var(--edge), 0 1px 2px -1px oklch(0 0 0 / 0.4), 0 8px 24px -14px oklch(0 0 0 / 0.5);
+  --elev-over:
+    0 0 0 1px var(--edge), 0 2px 4px -2px oklch(0 0 0 / 0.45), 0 24px 48px -18px oklch(0 0 0 / 0.6);
+
+  /* Ring lightnesses flip so the family still reads as quieter outward. */
+  --color-ring-1: oklch(0.78 0.11 240);
+  --color-ring-2: oklch(0.7 0.085 245);
+  --color-ring-3: oklch(0.6 0.055 250);
 }
 
 @theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-sm: var(--radius-inset);
+  --radius-md: var(--radius-chrome);
+  --radius-lg: var(--radius-chrome);
+  --radius-xl: var(--radius-sheet);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -94,6 +184,26 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  --color-paper: var(--paper);
+  --color-paper-raised: var(--paper-raised);
+  --color-paper-sunken: var(--paper-sunken);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-signal: var(--signal);
+  --color-signal-ink: var(--signal-ink);
+  --color-water: var(--water);
+  --color-water-soft: var(--water-soft);
+  --color-verdant: var(--verdant);
+  --color-verdant-soft: var(--verdant-soft);
+  --color-clay: var(--clay);
+  --color-clay-soft: var(--clay-soft);
+  --color-edge: var(--edge);
+  --color-edge-strong: var(--edge-strong);
+
+  --shadow-chrome: var(--elev-chrome);
+  --shadow-over: var(--elev-over);
 }
 
 @layer base {
@@ -111,22 +221,135 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.47;
     -webkit-font-smoothing: antialiased;
   }
 
-  /* Every interactive control must show where focus is, map controls included. */
+  /* Every interactive control shows where focus is, map controls included. */
   :focus-visible {
-    outline: 2px solid var(--color-primary);
+    outline: 2px solid var(--color-water);
     outline-offset: 2px;
   }
 }
 
-/* MapLibre paints its own controls; align them with the app surface. */
+/* --- the type scale: six sizes, not twelve -------------------------------- */
+
+@utility text-price-xl {
+  font-family: var(--font-display);
+  font-size: 2.5rem;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+@utility text-price-lg {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  line-height: 1.07;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+@utility text-title {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+@utility text-label {
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  line-height: 1.23;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+/* Measurements. Monospaced on purpose: a column of distances is scanned. */
+@utility text-data {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.33;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- chrome ---------------------------------------------------------------- */
+
+/* Anything resting on the map. A shadow alone does not separate a panel from a
+   park, so the hairline is part of the token. */
+@utility chrome {
+  background-color: var(--color-card);
+  border-radius: var(--radius-chrome);
+  box-shadow: var(--elev-chrome);
+}
+
+@utility chrome-over {
+  background-color: var(--color-popover);
+  border-radius: var(--radius-chrome);
+  box-shadow: var(--elev-over);
+}
+
+/* In dark mode the bright map reads as a lit surface inside a dark instrument
+   rather than a hole in the page. */
+@utility map-frame {
+  position: relative;
+}
+
+.map-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px var(--color-edge);
+}
+
+.dark .map-frame::after {
+  box-shadow:
+    inset 0 0 0 1px oklch(0.19 0.024 252 / 0.6),
+    inset 0 0 40px -10px oklch(0.19 0.024 252 / 0.5);
+}
+
+/* MapLibre paints its own controls; align them with the instrument. */
 .maplibregl-ctrl-group {
-  background: var(--color-card);
-  border: 1px solid var(--color-border);
+  background: var(--color-card) !important;
+  border: 1px solid var(--color-edge) !important;
+  border-radius: var(--radius-chrome) !important;
+  box-shadow: var(--elev-chrome) !important;
 }
 
 .maplibregl-ctrl-group button + button {
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid var(--color-edge);
+}
+
+.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  filter: var(--map-ctrl-filter, none);
+}
+
+.dark .maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+.maplibregl-ctrl-attrib {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* --- reduced motion ------------------------------------------------------- */
+
+/* The fallback is an INSTANT state change, never a shorter animation: the rings
+   appear, the sheet is open, the number is the new number. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

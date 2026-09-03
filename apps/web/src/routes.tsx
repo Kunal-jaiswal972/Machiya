@@ -1,9 +1,10 @@
 import { createBrowserRouter } from 'react-router';
 import { App } from './App';
 import { RequireAuth } from './components/RequireAuth';
+import { RouteError } from './components/RouteError';
 import { AccountPage } from './pages/AccountPage';
 import { ForbiddenPage } from './pages/ForbiddenPage';
-import { HomePage } from './pages/HomePage';
+import { SearchPage } from './pages/SearchPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
 import { ResetPasswordPage } from './pages/auth/ResetPasswordPage';
@@ -15,8 +16,11 @@ export const router = createBrowserRouter([
   {
     path: '/',
     element: <App />,
+    // Per-route error boundaries with a retry that re-runs the route rather
+    // than reloading the page — reloading would throw away the search state.
+    errorElement: <RouteError />,
     children: [
-      { index: true, element: <HomePage /> },
+      { index: true, element: <SearchPage />, errorElement: <RouteError /> },
 
       { path: 'auth/sign-in', element: <SignInPage /> },
       { path: 'auth/sign-up', element: <SignUpPage /> },

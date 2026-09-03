@@ -34,3 +34,17 @@ export type PropertyType = z.infer<typeof propertyTypeSchema>;
 export type EnquiryStatus = z.infer<typeof enquiryStatusSchema>;
 export type FuelType = z.infer<typeof fuelTypeSchema>;
 export type ImageStatus = z.infer<typeof imageStatusSchema>;
+
+/**
+ * The value arrays, for anything that has to RENDER every option — a filter
+ * chip row, a wizard select, a legend. Derived from the schemas rather than
+ * written twice, so adding a variant reaches the UI without a second edit.
+ */
+export const USER_ROLES = userRoleSchema.options;
+export const LISTING_TYPES = listingTypeSchema.options;
+export const LISTING_STATUSES = listingStatusSchema.options;
+export const FURNISHING_TYPES = furnishingTypeSchema.options;
+export const PROPERTY_TYPES = propertyTypeSchema.options;
+export const ENQUIRY_STATUSES = enquiryStatusSchema.options;
+export const FUEL_TYPES = fuelTypeSchema.options;
+export const IMAGE_STATUSES = imageStatusSchema.options;
