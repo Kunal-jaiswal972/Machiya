@@ -53,10 +53,11 @@ export function useListingRoute(input: {
 /**
  * Nearby places.
  *
- * The server answers a cold cache **immediately** with `degraded: true` and an
- * empty list while it warms in the background — the batched Overpass query takes
- * around 38 seconds and nothing may wait for that. So this refetches while the
- * answer is degraded and empty, and stops the moment real data arrives.
+ * Against the self-hosted Overpass (D48) a cold read normally just returns the
+ * answer. But the server bounds how long it waits: if the geo profile is
+ * importing or down it answers `degraded: true` with an empty list rather than
+ * holding the request open. So this refetches while the answer is degraded and
+ * empty, and stops the moment real data arrives.
  */
 export function useListingPois(slug: string) {
   return useQuery({
@@ -67,8 +68,9 @@ export function useListingPois(slug: string) {
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return false;
-      // Still warming. Poll gently — the warm takes tens of seconds, and a
-      // tighter interval would just queue requests behind it.
+      // Still warming, which now means the local Overpass is importing or
+      // down. Poll gently: a tighter interval would just queue requests
+      // behind a service that is not ready.
       return data.degraded && data.pois.length === 0 ? 8_000 : false;
     },
   });

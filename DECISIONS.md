@@ -793,11 +793,14 @@ backfilled in place and only then constrained.
 
 ## Step 7 — the detail view
 
-### D42. Overpass is warmed in the background; a request never waits for it
+### D42. The measurements that made a public Overpass mirror untenable
 
-The brief asks for a single batched Overpass query per listing, cached 24h,
-degrading on 429 rather than failing. All of that stands. What measurement
-added is that **the query is far too slow to be on a request path at all**.
+Rewritten. The original version of this entry chose a public mirror and a
+never-block design around its latency. The mirror choice is **superseded by
+D48** — Overpass is self-hosted from the merged extract now, and a mirror is a
+fallback only. What stands, and what this entry is kept for, is the
+measurement, because it is why the fallback is a fallback and why two pieces of
+the implementation look the way they do.
 
 Measured against `overpass.kumi.systems`, the batched seven-category query
 inside 1.5 km of a Koramangala address:
@@ -809,42 +812,36 @@ inside 1.5 km of a Koramangala address:
 | `qt`, later in the day            | 200 in 85s               |
 | radius reduced to 1 km, with `qt` | still running at 90s     |
 
-Two things follow. First, **`qt` is not a nicety** — sorting by quadtile index
-rather than by id is the difference between an answer and a timeout, and it is
-now in the query. Second, the narrower query timing out while the wider one
-succeeded means the variance is the mirror queueing us, not the query's cost, so
-there is no version of this that is reliably fast.
+Three things follow, all of them still live:
 
-So the POI lookup **never blocks**: a cold read returns
-`{ pois: [], degraded: true }` immediately and starts a background warm; the
-client polls every 8 seconds while the answer is degraded and empty, and picks
-up the real one when it lands. Every later viewer of that listing is served from
-cache for 24 hours, and a second key holds a two-week copy so a later refusal
-has something to serve. An in-flight key set means ten simultaneous viewers
-produce one upstream query.
+- **`qt` is load-bearing, not a nicety.** Sorting by quadtile index rather than
+  by id is the difference between an answer and a timeout. Note that the
+  original entry claimed this was "now in the query" and the code emitted
+  `out center tags;` — the claim was aspirational for two weeks. D48 is the
+  commit that actually put it there, and `apps/api/test/overpass.test.ts`
+  asserts the request body contains it so the claim cannot go stale again.
+- **The variance is the mirror's queue, not the query's cost.** The narrower
+  1 km query timed out while the wider 1.5 km one succeeded. There is therefore
+  no version of a public mirror that is reliably fast, which is the substance of
+  why one cannot be the default — the fair-use argument is real but secondary.
+- **`overpass-api.de` is not usable at all.** It answers **406 Not Acceptable**
+  to every User-Agent tried except curl's own — verified across four: no UA,
+  `Machiya/0.1 (contact@example.com)`, `Mozilla/5.0 machiya/0.1`, and
+  `curl/8.0.1`, of which only the last got a 200, with the identical query and
+  parameters. Spoofing curl to get past a mirror's own policy is not a fix. So
+  when a mirror is used at all, it is one that accepts a descriptive UA, and the
+  `accept` and `user-agent` headers stay on the request for that path.
 
-`degraded` already meant "could not refresh, not necessarily empty", so this is
-exactly the state it exists for — and the panel says "checking" while warming
-and "could not refresh" afterwards, never "none nearby".
+`OVERPASS_TIMEOUT_MS` therefore had to be 90 seconds against a mirror. Against
+the local instance it defaults to 30, and the cold-read wait that used to be
+"never" is now a 3-second bound — see D48 for both.
 
-`OVERPASS_TIMEOUT_MS` therefore defaults to **90 seconds**. That is not a request
-timeout: it bounds a background job and the `[timeout:]` inside the Overpass
-query, and nothing waits on either.
-
-**The default mirror is NOT `overpass-api.de`.** It answers **406 Not
-Acceptable** to every User-Agent tried except curl's own — verified across four:
-no UA, `Machiya/0.1 (contact@example.com)`, `Mozilla/5.0 machiya/0.1`, and
-`curl/8.0.1`, of which only the last got a 200, with the identical query and
-parameters. Spoofing curl to get past a mirror's own policy is not a fix, so the
-default is the Kumi Systems mirror, which accepts a descriptive UA. Alternatives
-and the self-host path are in `docs/geo.md`.
-
-One smaller bug the same work exposed, now fixed in all three geo providers:
-passing only the caller's `AbortSignal` — which is the request-close signal —
-**silently removed the timeout**, and a slow mirror held a request open past 45
-seconds instead of degrading at 25. They now pass
-`AbortSignal.any([caller, AbortSignal.timeout(ms)])`, so the ceiling holds
-whether or not a caller supplies one.
+One smaller bug the same work exposed, fixed in all three geo providers and
+still the rule for any fourth: passing only the caller's `AbortSignal` — which
+is the request-close signal — **silently removed the timeout**, and a slow
+upstream held a request open past 45 seconds instead of degrading at 25. They
+pass `AbortSignal.any([caller, AbortSignal.timeout(ms)])`, so the ceiling holds
+whether or not a caller supplies a signal.
 
 ### D43. A route we could not measure is labelled, not hidden
 
@@ -1043,3 +1040,98 @@ Verified three ways:
   `paddedBbox` to the hashed config changed `configHash` away from
   `2e8d102364f5`, so every route and POI cached against the old cuts became
   unreachable with nothing flushed.
+
+### D48. Overpass is self-hosted from the same extract; a public mirror is a fallback
+
+"Public instance, self-hosting as the scale path" stopped being defensible the
+moment the merged extract existed. Two reasons, and the second is the one that
+matters more:
+
+1. **The mirrors ask people not to build products against them.** That was
+   always borrowed time, and D42's own findings are the evidence: one mirror
+   answers 406 to every User-Agent but curl's, another 504'd under this load,
+   and the batched query took 38-85 seconds depending on the mirror's queue
+   rather than on the query.
+2. **POIs came from planet-current OSM while routing and geocoding came from a
+   fixed extract.** So a listing's road graph and its nearby-hospital list
+   could disagree about what exists — a hospital tagged last month appears in
+   the POI panel and not in anything derived from the extract, and there is no
+   way for a reader of a bug report to tell that apart from a code bug. It is
+   unfalsifiable, which is the worst property a discrepancy can have.
+
+**Chosen: `wiktorn/overpass-api:v0.7.62.11` in the `geo` profile, initialised
+from `osm-data/merged.osm.pbf` — the same file OSRM and Nominatim read** — with
+its own `overpass-db` volume. `OVERPASS_URL` stays, so a public mirror is a
+one-line fallback, and `docs/geo.md` says plainly that it is a fallback and
+never the default.
+
+Configuration, each setting for a reason rather than copied from a README:
+
+- **`OVERPASS_META=no`.** Changeset ids and user attribution are dead weight
+  for a POI lookup and roughly halve the database.
+- **`OVERPASS_DIFF_URL` unset — diff updates disabled entirely.** A fixed
+  snapshot is a feature here, the same reasoning that makes the seed
+  deterministic (D29): screenshots and bug reports have to be comparable across
+  machines, and POIs drifting under a fixed routing graph is precisely the
+  problem this entry exists to remove.
+- **`OVERPASS_USE_AREAS=false`.** Nothing in this codebase uses `area` or
+  `is_in` — every query is `around:` — and area generation is a large slice of
+  both the initial import and the ongoing updater process.
+- **`OVERPASS_PLANET_PREPROCESS` converts PBF to bz2 in place.** Overpass's own
+  init reads OSM XML, not PBF; the image ships `osmium`, so the conversion is
+  three shell commands rather than a second artifact on disk. `file://` URLs
+  work because the entrypoint fetches with curl, so the service really does read
+  the same bytes as the other two.
+- **No `platform:` pin, unlike OSRM (D26).** Verified:
+  `docker manifest inspect wiktorn/overpass-api:v0.7.62.11` returns a manifest
+  **list** with `linux/arm64` and `linux/amd64` entries, so Apple silicon runs
+  it natively.
+- **The healthcheck runs a real interpreter query** (`node(1);out ids;`) rather
+  than probing the port. Overpass answers HTTP long before its database is
+  queryable, so a port probe reports healthy in the middle of an import — and
+  the API would then serve empty POI sets while every check was green.
+  `start_period` is 45 minutes so a cold init is not mistaken for a wedged
+  container. `bootstrap.sh` waits on the same query for the same reason.
+
+**What was simplified, and what deliberately was not.** The 429/504 special
+case is gone: it existed to be polite to a shared service, and a local instance
+either answers or is down. `!response.ok` throws, the caller degrades the panel,
+and that is the whole error path.
+
+The Redis cache and the 24h TTL **stay**, with a rewritten justification: the
+reason is now query cost, not fair use. A revisited sidebar has to be instant,
+and a seven-selector `around:` scan is not free even locally. The two-week
+`:stale` copy stays for the same reason it always existed, but what it now
+protects against is the geo profile being down rather than a mirror refusing.
+One batched query per listing also stays, on its own merits — seven queries are
+seven scans of the same neighbourhood and seven round trips, and the panel would
+fill in seven steps instead of at once.
+
+**The cold read changed shape, because the measurement it was built on no
+longer holds.** D42's answer-immediately-and-poll design existed because the
+query took 38 seconds. A cold read now starts the warm and waits
+`OVERPASS_COLD_WAIT_MS` (default 3 s) for it, so against the local instance the
+panel is simply populated and the client never polls. The bound is what keeps
+the wait from becoming a dependency: an importing or wedged Overpass degrades
+the panel instead of holding a request open, and the client's 8-second poll
+still picks up the answer when it lands. The warm remains untied to the
+request's abort signal, so closing the sidebar still leaves the cache warm.
+
+The `degraded` UI state stays but now names the real remaining cause. It is no
+longer "a mirror rate-limited us" — it is **the geo profile is not up**, which
+has a completely different fix, so the panel's dev-only line names
+`docker compose --profile geo up -d` instead.
+
+Also fixed here, because it contradicted D42 rather than merely being stale:
+the query builder emitted `out center tags;` while D42 had measured `qt` as the
+difference between a 38-second answer and no answer at all. It now emits
+`out center tags qt;`.
+
+Verified: `docker manifest inspect` for the platform claim, and 4 tests in
+`apps/api/test/overpass.test.ts` against real Redis and a stubbed upstream —
+a fast upstream populates the cold read rather than degrading it, the request
+body contains `qt`, a 5-second upstream degrades in under the bound and the
+warm still lands afterwards, and a refusing upstream serves the `:stale` copy
+marked degraded rather than an empty list. The live-service assertions are in
+`apps/api/test/geo-boundary.test.ts` and the measured import numbers are in
+`docs/audit-2026-09.md`.

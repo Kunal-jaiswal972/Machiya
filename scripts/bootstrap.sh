@@ -4,10 +4,10 @@
 # cities defined in scripts/cities.ts.
 #
 #   1. download the Geofabrik India zone extracts that contain those cities
-#   2. cut each city out by bounding box with osmium
+#   2. cut each city out by its PADDED bounding box with osmium
 #   3. merge the cuts into one small .osm.pbf
 #   4. build the OSRM car and bicycle graphs from it
-#   5. import it into a self-hosted Nominatim for geocoding
+#   5. import it into self-hosted Nominatim (geocoding) and Overpass (POIs)
 #   6. write osm-data/manifest.json: the checksums of everything above, plus
 #      the geo epoch every derived cache key is prefixed with (D46)
 #
@@ -179,23 +179,46 @@ step "Building OSRM graphs (car + bicycle)"
 # a re-cut with new bounds rebuilds rather than being skipped.
 docker compose --profile geo run --rm --no-deps osrm-init
 
-# --- 5. Nominatim import --------------------------------------------------
+# --- 5. Nominatim and Overpass imports ------------------------------------
 
-step "Importing into Nominatim"
-# mediagis/nominatim imports PBF_PATH on first boot into its own volume, then
-# serves. So there is no separate import command: start it and wait. A second
-# run finds the volume populated and comes straight up.
-docker compose --profile geo up -d nominatim
+step "Importing into Nominatim and Overpass"
+# Both images import their planet file on FIRST BOOT into their own volume and
+# then serve; neither has a separate import command, so the way to import is to
+# start it and wait. A second run finds the volume populated and comes straight
+# up. Both read the same merged extract, which is the point: routing, geocoding
+# and POIs cannot then disagree about what exists (D48).
+docker compose --profile geo up -d nominatim overpass
 
-info "waiting for Nominatim to answer (a first import of three cities takes a while)"
 NOMINATIM_PORT_LOCAL="${NOMINATIM_PORT:-7070}"
+OVERPASS_PORT_LOCAL="${OVERPASS_PORT:-12345}"
+
+# A real interpreter query, not a port probe: Overpass answers HTTP long before
+# its database is queryable, and a port check would call an import "ready".
+overpass_ready() {
+  curl -fsS --data-urlencode 'data=[out:json][timeout:5];node(1);out ids;' \
+    "http://127.0.0.1:$OVERPASS_PORT_LOCAL/api/interpreter" 2>/dev/null \
+    | grep -q elements
+}
+
+info "waiting for both to answer (a first import of three cities takes a while)"
+nominatim_up=0
+overpass_up=0
 for attempt in $(seq 1 240); do
-  if curl -fsS "http://127.0.0.1:$NOMINATIM_PORT_LOCAL/status" >/dev/null 2>&1; then
+  [ "$nominatim_up" -eq 1 ] || if curl -fsS "http://127.0.0.1:$NOMINATIM_PORT_LOCAL/status" >/dev/null 2>&1; then
+    nominatim_up=1
     info "Nominatim is up after $((attempt * 15))s"
+  fi
+  [ "$overpass_up" -eq 1 ] || if overpass_ready; then
+    overpass_up=1
+    info "Overpass is up after $((attempt * 15))s"
+  fi
+
+  if [ "$nominatim_up" -eq 1 ] && [ "$overpass_up" -eq 1 ]; then
     break
   fi
   if [ "$attempt" -eq 240 ]; then
-    info "still importing after an hour — follow it with: docker compose logs -f nominatim"
+    info "still importing after an hour — follow it with:"
+    info "  docker compose logs -f nominatim overpass"
   fi
   sleep 15
 done
@@ -227,6 +250,6 @@ printf '    %-38s %s\n' "$MERGED" "$(file_size "$MERGED")"
 cat <<'SUMMARY'
 
 Next:
-  docker compose --profile geo up -d     # osrm-car, osrm-bike, nominatim
+  docker compose --profile geo up -d     # osrm-car, osrm-bike, nominatim, overpass
   pnpm db:deploy && pnpm db:seed         # schema + three cities of listings
 SUMMARY

@@ -1,11 +1,13 @@
 # Machiya / RentNear local environment.
 #
 #   docker compose up -d                  core stack: db, cache, storage, mail, apps
-#   docker compose --profile geo up -d    adds Nominatim and OSRM
+#   docker compose --profile geo up -d    adds Nominatim, OSRM and Overpass
 #
 # The geo services sit behind a profile on purpose: they cannot start until
 # scripts/bootstrap.sh has produced the merged OSM extract and built their
-# indexes, and the core stack has to be usable before that happens.
+# indexes, and the core stack has to be usable before that happens. All three
+# of them — routing, geocoding and POIs — are built from that one extract, so
+# they cannot disagree about what exists.
 #
 # The OSRM images are published for linux/amd64 only, hence the platform pins.
 # On Apple silicon they run under emulation and the graph build is slow.
@@ -149,7 +151,9 @@ services:
       NOMINATIM_URL: http://nominatim:8080
       OSRM_CAR_URL: http://osrm-car:5000
       OSRM_BIKE_URL: http://osrm-bike:5000
-      OVERPASS_URL: ${OVERPASS_URL:-https://overpass.kumi.systems/api/interpreter}
+      # The local instance by default. The env var stays so a public mirror is
+      # a one-line fallback, never the default — see docs/geo.md.
+      OVERPASS_URL: ${OVERPASS_URL:-http://overpass:80/api/interpreter}
       GEO_MANIFEST_PATH: /osm/manifest.json
     volumes:
       # Read-only, and only for manifest.json: the API never touches the
@@ -283,6 +287,66 @@ services:
       # A cold import must not be mistaken for a wedged container.
       start_period: 45m
 
+  # Nearby places. Initialised from the SAME merged extract that feeds OSRM and
+  # Nominatim, which is the point: with POIs coming from a public mirror's
+  # planet-current data, a listing's road graph and its nearby-hospital list
+  # could disagree about what exists, and that is unfalsifiable in a bug report.
+  # See DECISIONS.md D48.
+  #
+  # Unlike OSRM there is NO platform pin: `docker manifest inspect
+  # wiktorn/overpass-api:v0.7.62.11` returns a manifest list with both
+  # linux/arm64 and linux/amd64, so Apple silicon runs this natively.
+  overpass:
+    image: wiktorn/overpass-api:v0.7.62.11
+    profiles: ['geo']
+    restart: unless-stopped
+    environment:
+      OVERPASS_MODE: init
+      # curl handles file://, so this really is the local extract rather than a
+      # download of something that might differ from it.
+      OVERPASS_PLANET_URL: file:///osm/merged.osm.pbf
+      # Overpass's own init reads OSM XML, not PBF. The image ships osmium, so
+      # the conversion happens in place: the entrypoint has already put the
+      # planet file at /db/planet.osm.bz2 (whatever its real format) by the
+      # time this runs.
+      OVERPASS_PLANET_PREPROCESS: >-
+        mv /db/planet.osm.bz2 /db/planet.osm.pbf &&
+        osmium cat -o /db/planet.osm.bz2 /db/planet.osm.pbf &&
+        rm /db/planet.osm.pbf
+      # Changeset ids and user attribution are dead weight for a POI lookup and
+      # roughly halve the database.
+      OVERPASS_META: 'no'
+      # No `area` or `is_in` query in this codebase — everything is `around:` —
+      # and area generation is a large slice of both init time and the ongoing
+      # area-updater process.
+      OVERPASS_USE_AREAS: 'false'
+      # OVERPASS_DIFF_URL is deliberately UNSET: a fixed snapshot is a feature
+      # here, for the same reason the seed is deterministic. Screenshots and bug
+      # reports have to be comparable across machines, and POIs drifting under
+      # the routing graph is exactly what this service exists to stop.
+      OVERPASS_STOP_AFTER_INIT: 'false'
+      OVERPASS_MAX_TIMEOUT: ${OVERPASS_MAX_TIMEOUT:-180}
+      OVERPASS_ALLOW_DUPLICATE_QUERIES: 'yes'
+    volumes:
+      - ./osm-data:/osm:ro
+      - overpass-db:/db
+    ports:
+      - '${OVERPASS_PORT:-12345}:80'
+    healthcheck:
+      # A real interpreter query, not a port probe: the HTTP listener answers
+      # long before the database is queryable, so a port check would report
+      # healthy in the middle of an import and let the API serve empty POI sets.
+      test:
+        [
+          'CMD-SHELL',
+          'curl -fsS --data-urlencode "data=[out:json][timeout:5];node(1);out ids;" http://127.0.0.1/api/interpreter | grep -q elements',
+        ]
+      interval: 30s
+      timeout: 15s
+      retries: 20
+      # A cold init must not be mistaken for a wedged container.
+      start_period: 45m
+
   osrm-init:
     image: osrm/osrm-backend:v5.25.0
     platform: linux/amd64
@@ -377,3 +441,4 @@ volumes:
   minio-data:
   osrm-data:
   nominatim-data:
+  overpass-db:

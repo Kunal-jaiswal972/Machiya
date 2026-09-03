@@ -14,18 +14,23 @@ import { geoCacheKey } from './manifest.js';
 import { logger } from '../logger.js';
 
 /**
- * Nearby places, from Overpass.
+ * Nearby places, from the **self-hosted** Overpass in the `geo` compose
+ * profile, initialised from the same merged extract that feeds OSRM and
+ * Nominatim (D48). A public mirror remains reachable through `OVERPASS_URL`,
+ * but it is a fallback, never the default.
  *
- * **One batched query per listing, not one per category.** Seven sequential
- * requests to a free Overpass mirror will be rate-limited where one is
- * tolerated, and the whole panel appears at once instead of filling in seven
- * steps. The query below is a single `[out:json]` block with a union of seven
- * selectors, each tagged with the category it belongs to.
+ * **One batched query per listing, not one per category.** That rule outlived
+ * the fair-use argument it was first made for: seven queries mean seven
+ * `around:` scans over the same neighbourhood and seven round trips, and the
+ * panel would fill in seven steps instead of appearing at once. The query
+ * below is a single `[out:json]` block with a union of the seven selectors.
  *
- * On a 429 or a timeout the answer is **cached-or-empty with `degraded: true`**,
- * never an error. The sidebar then says "couldn't refresh nearby places" instead
- * of "none nearby", because to someone choosing where to live those are opposite
- * statements.
+ * A failure is now ordinary error handling rather than a politeness protocol:
+ * the local service either answers or is down. Either way the answer is
+ * **cached-or-empty with `degraded: true`**, never an error, and the sidebar
+ * says "couldn't refresh nearby places" rather than "none nearby" — to someone
+ * choosing where to live those are opposite statements. What changed is the
+ * remaining cause: not a rate limit, but the geo profile not being up.
  */
 interface Selector {
   filter: string;
@@ -143,7 +148,12 @@ function buildQuery(
     '(',
     ...clauses,
     ');',
-    'out center tags;',
+    // `qt` sorts by quadtile index instead of by id. D42 measured that as the
+    // difference between an answer and a timeout on a public mirror, and the
+    // code never actually carried it — fixed here. It stays for the local
+    // instance too: ordering by id is work nobody asked for, and the client
+    // re-sorts by distance regardless.
+    'out center tags qt;',
   ].join('\n');
 }
 
@@ -168,7 +178,7 @@ export class OverpassPoiProvider implements PoiProvider {
    * replica doing its own warm is one extra query, not a thundering herd, and
    * a distributed lock for a 24h-cached read is not worth the Redis round trip.
    */
-  private readonly warming = new Set<string>();
+  private readonly warming = new Map<string, Promise<void>>();
 
   async nearby(input: {
     center: Coordinate;
@@ -191,32 +201,60 @@ export class OverpassPoiProvider implements PoiProvider {
     if (hit) return hit;
 
     /**
-     * **The request never waits for Overpass.** Measured: this batched query
-     * takes about 38 seconds against a healthy public mirror on a cold cache.
-     * Blocking a panel on that would be indefensible, and splitting it into
-     * seven fast queries just gets us rate-limited.
+     * A cold read starts a background warm and waits a **bounded** moment for
+     * it before giving up and answering degraded.
      *
-     * So a cold read answers immediately with `degraded: true` and starts a
-     * background warm. The client refetches while the answer is degraded and
-     * picks up the real one within a minute; every later viewer of that
-     * listing gets it from cache for 24 hours. Degraded already means "could
-     * not refresh, not necessarily empty", which is exactly the state this is.
+     * Against the local instance the wait is what actually happens: the query
+     * returns in about a second, so the panel is simply populated and the
+     * client never polls. The bound is what keeps that from becoming a
+     * dependency — an importing or wedged Overpass degrades the panel in
+     * `OVERPASS_COLD_WAIT_MS` rather than holding a request open, and the
+     * client's poll picks the answer up when it lands.
+     *
+     * The warm itself is deliberately NOT tied to the request's abort signal:
+     * it outlives the request on purpose, so a user who closes the sidebar
+     * still leaves the cache warm for the next viewer.
      */
-    const stale = await cacheGet<PoiLookupResult>(`${key}:stale`);
+    const warming = this.startWarm(key, input.center, input.radiusMeters, categories);
 
-    if (!this.warming.has(key)) {
-      this.warming.add(key);
-      // Deliberately not awaited, and deliberately not tied to the request's
-      // abort signal — the whole point is that it outlives the request.
-      void this.warm(key, input.center, input.radiusMeters, categories).finally(() => {
-        this.warming.delete(key);
-      });
-    }
+    const raced = await Promise.race([
+      warming.then(() => cacheGet<PoiLookupResult>(key)),
+      new Promise<null>((resolve) => {
+        // unref'd: a pending timer must not hold the process open at shutdown.
+        setTimeout(() => resolve(null), env.OVERPASS_COLD_WAIT_MS).unref();
+      }),
+    ]);
+
+    if (raced) return raced;
 
     // A previous day's answer is a much better one than nothing.
+    const stale = await cacheGet<PoiLookupResult>(`${key}:stale`);
     if (stale) return { ...stale, degraded: true };
 
     return { pois: [], degraded: true, fetchedAt: new Date().toISOString() };
+  }
+
+  /**
+   * One warm per key, however many viewers arrive at once — process-local,
+   * which is correct here: a second API replica doing its own warm is one
+   * extra query, not a thundering herd, and a distributed lock for a
+   * 24h-cached read is not worth the Redis round trip.
+   */
+  private startWarm(
+    key: string,
+    center: Coordinate,
+    radiusMeters: number,
+    categories: readonly PoiCategory[],
+  ): Promise<void> {
+    const existing = this.warming.get(key);
+    if (existing) return existing;
+
+    const started = this.warm(key, center, radiusMeters, categories).finally(() => {
+      this.warming.delete(key);
+    });
+
+    this.warming.set(key, started);
+    return started;
   }
 
   private async warm(
@@ -234,8 +272,9 @@ export class OverpassPoiProvider implements PoiProvider {
       };
 
       await cacheSet(key, result, CACHE_TTL_SECONDS.poi);
-      // A long-lived copy under a second key, so a later 429 or timeout has
-      // something to serve. Overpass refusing is routine, not exceptional.
+      // A long-lived copy under a second key, so a later outage has something
+      // to serve. It is also what makes the geo profile being down a degraded
+      // panel rather than an empty one.
       await cacheSet(`${key}:stale`, result, CACHE_TTL_SECONDS.poi * 14);
       logger.info({ key, count: pois.length }, 'overpass cache warmed');
     } catch (error) {
@@ -253,33 +292,30 @@ export class OverpassPoiProvider implements PoiProvider {
       method: 'POST',
       headers: {
         'content-type': 'application/x-www-form-urlencoded',
-        // Both of these are required in practice, not decoration. Without an
-        // Accept header and a descriptive User-Agent, overpass-api.de answers
-        // **406 Not Acceptable** — verified: the identical query succeeds
-        // through curl (which sends its own UA) and fails from Node's fetch,
-        // which sends neither. The UA is the same one Nominatim is given, for
-        // the same reason: a free tier is entitled to know who is calling.
+        // Both kept for the fallback path, where they are load-bearing rather
+        // than decorative: without an Accept header and a descriptive
+        // User-Agent, overpass-api.de answers 406 Not Acceptable (D42). The
+        // local instance does not care, and identifying ourselves costs
+        // nothing.
         accept: 'application/json',
         'user-agent': env.NOMINATIM_USER_AGENT,
       },
       body: new URLSearchParams({ data: buildQuery(center, radiusMeters, categories) }),
       // BOTH signals, combined. Passing only the caller's (which is the
-      // request-close signal) silently disabled the timeout — a slow mirror
-      // then held the request open past 45 seconds instead of degrading at 25,
-      // which is the opposite of what the timeout exists for.
+      // request-close signal) silently disabled the timeout — an upstream then
+      // held the request open past 45 seconds instead of degrading at 25,
+      // which is the opposite of what the timeout exists for (D42).
       signal: AbortSignal.any([
         ...(signal ? [signal] : []),
         AbortSignal.timeout(env.OVERPASS_TIMEOUT_MS),
       ]),
     });
 
-    if (response.status === 429 || response.status === 504) {
-      // The documented way a free mirror says "slow down". Not a fault.
-      throw new Error(`overpass rate limited (${String(response.status)})`);
-    }
-
+    // Ordinary error handling. The 429/504 special case existed to be polite
+    // to a shared service; a local instance either answers or is down, and the
+    // caller degrades the panel identically either way.
     if (!response.ok) {
-      throw new Error(`overpass ${String(response.status)}`);
+      throw new Error(`overpass ${String(response.status)} from ${env.OVERPASS_URL}`);
     }
 
     const parsed = overpassResponseSchema.parse(await response.json());

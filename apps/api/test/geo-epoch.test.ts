@@ -29,6 +29,7 @@ function manifestWithEpoch(epoch: string): GeoManifest {
         slug: 'patna',
         zone: 'eastern-zone',
         bbox: { minLng: 84, minLat: 25, maxLng: 86, maxLat: 26 },
+        paddedBbox: { minLng: 83.9, minLat: 24.9, maxLng: 86.1, maxLat: 26.1 },
       },
     ],
     sources: [{ name: 'eastern-zone-latest.osm.pbf', bytes: 1, sha256: 'a'.repeat(64) }],
@@ -106,15 +107,6 @@ function overpassResponse() {
   } as unknown as Response;
 }
 
-/** The warm is deliberately not awaited, so poll for the cache write. */
-async function waitFor(check: () => Promise<boolean>, label: string): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (await check()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`timed out waiting for ${label}`);
-}
-
 const epochA = `ta${randomBytes(4).toString('hex')}`;
 const epochB = `tb${randomBytes(4).toString('hex')}`;
 
@@ -178,30 +170,22 @@ describe('the geo epoch scopes derived cache entries', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(overpassResponse());
 
     const first = await loadAt(epochA);
-    // A cold read never blocks: it answers degraded and warms in the background.
     const cold = await first.pois.nearby({ center: LISTING, radiusMeters: 1500 });
-    expect(cold.degraded).toBe(true);
-    expect(cold.pois).toHaveLength(0);
-
-    await waitFor(async () => {
-      const warmed = await first.pois.nearby({ center: LISTING, radiusMeters: 1500 });
-      return !warmed.degraded && warmed.pois.length === 1;
-    }, 'the background Overpass warm');
+    expect(cold.degraded).toBe(false);
+    expect(cold.pois).toHaveLength(1);
 
     const callsAfterWarm = fetchSpy.mock.calls.length;
 
+    // Same epoch: straight out of Redis, no further upstream call.
+    const cached = await first.pois.nearby({ center: LISTING, radiusMeters: 1500 });
+    expect(cached.pois).toHaveLength(1);
+    expect(fetchSpy.mock.calls.length).toBe(callsAfterWarm);
+
+    // A rebuild. Neither the entry nor its `:stale` copy is reachable — both
+    // are prefixed — so this re-derives rather than serving the old answer.
     const second = await loadAt(epochB);
     const afterRebuild = await second.pois.nearby({ center: LISTING, radiusMeters: 1500 });
-    // Not the previous epoch's answer — including not its `:stale` copy, which
-    // is prefixed too. It re-derives from scratch.
-    expect(afterRebuild.degraded).toBe(true);
-    expect(afterRebuild.pois).toHaveLength(0);
-
-    await waitFor(async () => {
-      const warmed = await second.pois.nearby({ center: LISTING, radiusMeters: 1500 });
-      return !warmed.degraded && warmed.pois.length === 1;
-    }, 'the background Overpass warm under the new epoch');
-
+    expect(afterRebuild.pois).toHaveLength(1);
     expect(fetchSpy.mock.calls.length).toBeGreaterThan(callsAfterWarm);
 
     fetchSpy.mockRestore();

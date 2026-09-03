@@ -76,10 +76,10 @@ D5.
 
 ## Compose profiles
 
-| Command                              | Brings up                                        |
-| ------------------------------------ | ------------------------------------------------ |
-| `docker compose up -d`               | postgis, redis, minio, mailhog, api, worker, web |
-| `docker compose --profile geo up -d` | adds nominatim, osrm-init, osrm-car, osrm-bike   |
+| Command                              | Brings up                                                |
+| ------------------------------------ | -------------------------------------------------------- |
+| `docker compose up -d`               | postgis, redis, minio, mailhog, api, worker, web         |
+| `docker compose --profile geo up -d` | adds nominatim, overpass, osrm-init, osrm-car, osrm-bike |
 
 The geo services sit behind a profile because they cannot start until
 `scripts/bootstrap.sh` has produced the merged OSM extract and built their
@@ -92,7 +92,7 @@ One-time, and idempotent:
 
 ```bash
 pnpm bootstrap                        # ~1 GB of downloads, cached in .osm-cache/
-docker compose --profile geo up -d    # nominatim, osrm-car, osrm-bike
+docker compose --profile geo up -d    # nominatim, overpass, osrm-car, osrm-bike
 ```
 
 `scripts/bootstrap.sh` downloads the three Geofabrik India **zone** extracts that
@@ -112,19 +112,20 @@ More on what each service does and how it degrades: [geo.md](geo.md).
 
 ## Ports
 
-| Service     | URL                   | Notes                                      |
-| ----------- | --------------------- | ------------------------------------------ |
-| web (vite)  | http://localhost:5173 | `pnpm dev`                                 |
-| web (nginx) | http://localhost:8080 | production build inside compose            |
-| api         | http://localhost:4000 | `/health`, `/health/live`, `/api/*`        |
-| worker      | http://localhost:4100 | `/health`                                  |
-| postgis     | localhost:5432        | user / password / db all `machiya`         |
-| redis       | localhost:6379        |                                            |
-| minio       | http://localhost:9000 | console :9001, `minioadmin` / `minioadmin` |
-| mailhog     | http://localhost:8025 | catches every outbound mail                |
-| nominatim   | http://localhost:7070 | `geo` profile                              |
-| osrm-car    | http://localhost:5100 | `geo` profile — 5000 is AirPlay on macOS   |
-| osrm-bike   | http://localhost:5001 | `geo` profile                              |
+| Service     | URL                    | Notes                                      |
+| ----------- | ---------------------- | ------------------------------------------ |
+| web (vite)  | http://localhost:5173  | `pnpm dev`                                 |
+| web (nginx) | http://localhost:8080  | production build inside compose            |
+| api         | http://localhost:4000  | `/health`, `/health/live`, `/api/*`        |
+| worker      | http://localhost:4100  | `/health`                                  |
+| postgis     | localhost:5432         | user / password / db all `machiya`         |
+| redis       | localhost:6379         |                                            |
+| minio       | http://localhost:9000  | console :9001, `minioadmin` / `minioadmin` |
+| mailhog     | http://localhost:8025  | catches every outbound mail                |
+| nominatim   | http://localhost:7070  | `geo` profile                              |
+| overpass    | http://localhost:12345 | `geo` profile                              |
+| osrm-car    | http://localhost:5100  | `geo` profile — 5000 is AirPlay on macOS   |
+| osrm-bike   | http://localhost:5001  | `geo` profile                              |
 
 ## Dev accounts
 

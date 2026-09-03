@@ -54,8 +54,17 @@ export function PoiPanel({ pois, degraded, isLoading }: PoiPanelProps) {
 
       {warming ? (
         <p className="text-sm text-ink-soft">
-          Looking up hospitals, schools, transit and shops around this address. It takes a moment
-          the first time — the answer is then cached for a day.
+          Looking up hospitals, schools, transit and shops around this address.
+          {/* The remaining cause of a stuck panel is the geo profile not being
+              up (D48), which is a developer's problem, not a visitor's — so the
+              command is dev-only while the sentence above is for everyone. */}
+          {import.meta.env.DEV ? (
+            <>
+              {' '}
+              If it does not fill in, the map services are not running:{' '}
+              <code className="text-data">docker compose --profile geo up -d</code>.
+            </>
+          ) : null}
         </p>
       ) : null}
 

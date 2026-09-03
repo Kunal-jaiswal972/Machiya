@@ -116,12 +116,12 @@ latency — is better served locally by tier 1 above. Full reasoning: D26.
 
 ### Free-tier limits and the swap-out path
 
-| Service   | Self-hosted here                        | Public fallback                  | Limit                                          | Swap-out                                              |
-| --------- | --------------------------------------- | -------------------------------- | ---------------------------------------------- | ----------------------------------------------------- |
-| Nominatim | `mediagis/nominatim:5.3`, `geo` profile | `nominatim.openstreetmap.org`    | 1 req/s, needs a real contact in the UA        | New `GeocodeProvider`, add a `GEOCODE_PROVIDER` value |
-| OSRM      | `osrm/osrm-backend:v5.25.0` x2          | `router.project-osrm.org` (demo) | Demo server, no SLA, `ALLOW_PUBLIC_OSRM` gated | New `RoutingProvider`                                 |
-| Overpass  | not self-hosted                         | `overpass-api.de` and mirrors    | ~10k queries/day, 429s under load              | New `PoiProvider`; or self-host Overpass              |
-| Tiles     | not self-hosted                         | `tiles.openfreemap.org`          | Free, no key, fair use                         | `VITE_MAP_STYLE_URL`                                  |
+| Service   | Self-hosted here                                 | Public fallback                  | Limit                                            | Swap-out                                              |
+| --------- | ------------------------------------------------ | -------------------------------- | ------------------------------------------------ | ----------------------------------------------------- |
+| Nominatim | `mediagis/nominatim:5.3`, `geo` profile          | `nominatim.openstreetmap.org`    | 1 req/s, needs a real contact in the UA          | New `GeocodeProvider`, add a `GEOCODE_PROVIDER` value |
+| OSRM      | `osrm/osrm-backend:v5.25.0` x2                   | `router.project-osrm.org` (demo) | Demo server, no SLA, `ALLOW_PUBLIC_OSRM` gated   | New `RoutingProvider`                                 |
+| Overpass  | `wiktorn/overpass-api:v0.7.62.11`, `geo` profile | mirrors (NOT `overpass-api.de`)  | fallback only; ~10k queries/day, 429s under load | New `PoiProvider`                                     |
+| Tiles     | not self-hosted                                  | `tiles.openfreemap.org`          | Free, no key, fair use                           | `VITE_MAP_STYLE_URL`                                  |
 
 `NOMINATIM_USER_AGENT` must carry a real contact address **before** pointing
 `NOMINATIM_URL` at the public instance — it rejects requests without one, and
@@ -155,60 +155,87 @@ is for ring arithmetic only, never for cost.
 
 ## POIs: Overpass
 
+**Self-hosted**, `wiktorn/overpass-api:v0.7.62.11` in the `geo` profile,
+initialised from the same `osm-data/merged.osm.pbf` that OSRM and Nominatim
+read. A public mirror is reachable through `OVERPASS_URL` but is a **fallback,
+never the default** — the mirrors explicitly ask people not to build products
+against them, and POIs from planet-current data sitting next to routing from a
+fixed extract let a listing's road graph and its nearby-hospital list disagree
+about what exists. Full reasoning: DECISIONS.md D48.
+
 Seven categories, fixed: hospital, police, school, pharmacy, atm, supermarket,
 transit. Fixed rather than open because they are one batched query, one legend
-and one set of icon layers, and each of those has to know the whole set up front.
+and one set of icon layers, and each of those has to know the whole set up
+front.
 
-**One batched query per listing**, not one per category — a free Overpass mirror
-will rate-limit seven sequential requests where it tolerates one. Cached 24 h,
-with a second two-week copy so a later refusal has something to serve.
+**One batched query per listing**, not one per category. The rule outlived the
+fair-use argument it was made for: seven queries are seven `around:` scans over
+the same neighbourhood and seven round trips, and the panel would fill in seven
+steps instead of appearing at once.
 
-### The query is too slow to be on a request path
+Cached 24 h, with a second two-week copy under a `:stale` key. The reason is
+now query cost, not politeness — and the stale copy is what makes the geo
+profile being down a _degraded_ panel instead of an empty one.
 
-Measured against `overpass.kumi.systems`, inside 1.5 km of a Koramangala
-address:
+### Service configuration, and why each setting
 
-| Query                         | Result                   |
-| ----------------------------- | ------------------------ |
-| `out center tags qt;`         | 200 in 38s, 343 elements |
-| the same, without `qt`        | still running at 60s     |
-| `qt` again, later in the day  | 200 in 85s               |
-| radius cut to 1 km, with `qt` | still running at 90s     |
+| Setting                                  | Why                                                                                                                                      |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `OVERPASS_MODE=init`                     | Build from our own extract rather than cloning someone's database.                                                                       |
+| `OVERPASS_PLANET_URL=file:///osm/...pbf` | curl handles `file://`, so it is literally the same file the other two services read.                                                    |
+| `OVERPASS_PLANET_PREPROCESS`             | Overpass's init reads OSM XML, not PBF. The image ships `osmium`, so the conversion happens in place.                                    |
+| `OVERPASS_META=no`                       | Changeset ids and user attribution are dead weight for a POI lookup and roughly halve the database.                                      |
+| `OVERPASS_USE_AREAS=false`               | Nothing here uses `area` or `is_in` — every query is `around:` — and area generation is a large slice of both init and the updater loop. |
+| `OVERPASS_DIFF_URL` **unset**            | Diff updates disabled entirely. A fixed snapshot is a feature: screenshots and bug reports have to be comparable across machines.        |
+| no `platform:` pin                       | Verified with `docker manifest inspect`: this image publishes **both** linux/arm64 and linux/amd64, unlike OSRM.                         |
 
-Two conclusions. **`qt` is load-bearing** — quadtile ordering is the difference
-between an answer and a timeout. And the narrower query timing out while the
-wider one succeeded means the variance is the mirror queueing us, not the
-query's cost, so no version of this is reliably fast.
+The healthcheck runs a **real interpreter query**
+(`node(1);out ids;`), not a port probe: the HTTP listener answers long before
+the database is queryable, so a port check reports healthy in the middle of an
+import and lets the API serve empty POI sets. `start_period` is 45 minutes so a
+cold init is not mistaken for a wedged container.
 
-So **a request never waits for Overpass**. A cold read returns
-`{ pois: [], degraded: true }` immediately and starts a background warm; the
-client polls every 8 seconds while the answer is degraded and empty. Every later
-viewer is served from cache. An in-flight key set means ten simultaneous viewers
-produce one upstream query.
+### The cold read, and what `degraded` means now
 
-`OVERPASS_TIMEOUT_MS` (default 90s) bounds that background job and the
-`[timeout:]` inside the query — never anything a user waits for.
+A cold read starts a warm and waits `OVERPASS_COLD_WAIT_MS` (default 3 s) for
+it. Against the local instance the wait is what happens: the query returns and
+the panel is simply populated. The bound is what stops that from becoming a
+dependency — an importing or wedged Overpass degrades the panel instead of
+holding a request open, and the client polls every 8 s while the answer is
+degraded and empty.
 
-### Which mirror, and why not the main one
+The warm is not tied to the request's abort signal on purpose: it outlives the
+request, so a user who closes the sidebar still leaves the cache warm.
 
-**`overpass-api.de` answers 406 Not Acceptable to every User-Agent tried except
-curl's own.** Verified across four UAs with the identical query: no UA,
-`Machiya/0.1 (contact@example.com)`, `Mozilla/5.0 machiya/0.1` and
-`curl/8.0.1` — only the last got a 200. Spoofing curl to get past a mirror's own
-policy is not a fix, so the default is:
+`degraded: true` no longer means "a mirror rate-limited us". It means one thing:
+**the geo profile is not up** (or is still importing). The panel says "could not
+refresh" rather than "none nearby", and in development it names the command that
+fixes it.
 
-```
-OVERPASS_URL=https://overpass.kumi.systems/api/interpreter
-```
+Query failures are ordinary error handling now. The old 429/504 special case
+existed to be polite to a shared service; a local instance either answers or is
+down, and the caller degrades identically either way.
 
-Others, if that one is unavailable: `https://overpass.private.coffee/api/interpreter`
-(504'd under the same load here), `https://overpass.osm.jp/api/interpreter`, or
-self-hosting `wiktorn/overpass-api` against the same merged extract the other geo
-services use — which is the real answer for anything beyond development.
+### `qt` is load-bearing
 
-On a 429 or a timeout the lookup returns cached-or-empty with `degraded: true`
-rather than failing the request. The sidebar then says "couldn't refresh nearby
-places" instead of "none nearby", because those mean opposite things.
+The query ends `out center tags qt;`. Measured against a public mirror
+(DECISIONS.md D42): the same seven-category query answered in 38 s with
+quadtile ordering and had not returned after 60 s without it. It stays against
+the local instance too — ordering by id is work nobody asked for, and the
+client re-sorts by distance regardless.
+
+### If you must use a public mirror
+
+Set `OVERPASS_URL` and raise `OVERPASS_TIMEOUT_MS` to 90000. **Not
+`overpass-api.de`**: it answers 406 Not Acceptable to every User-Agent tried
+except curl's own — verified across four UAs with the identical query, and
+spoofing curl to get past a mirror's own policy is not a fix. Mirrors that do
+accept a descriptive UA: `https://overpass.kumi.systems/api/interpreter`,
+`https://overpass.private.coffee/api/interpreter` (504'd under this load here),
+`https://overpass.osm.jp/api/interpreter`.
+
+Expect the panel to go back to answering degraded-then-polling, because a
+public mirror does not return inside the cold-wait bound.
 
 ### The abort-signal trap
 
@@ -305,7 +332,8 @@ Reasoning and what was verified: DECISIONS.md D46.
 3. Merge the three cuts into one `osm-data/merged.osm.pbf`, a few MB.
 4. Delegate the OSRM graph build to the `osrm-init` compose service, so the
    pipeline is defined once.
-5. Nominatim imports the same file on first boot.
+5. Nominatim and Overpass both import the same file on first boot, each into
+   its own volume. Neither has a separate import command: start it and wait.
 6. Write `osm-data/manifest.json`: the checksums of every input and output, and
    the geo epoch derived from them.
 
