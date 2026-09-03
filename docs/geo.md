@@ -218,6 +218,36 @@ Passing only the caller's signal — which is the request-close signal — silen
 seconds instead of degrading at 25. If you add a fourth provider, combine the
 signals.
 
+## Two bounding boxes per city
+
+Each city in `scripts/cities.ts` carries two boxes, and they are not
+interchangeable:
+
+| Box          | What it is                           | What reads it                                           |
+| ------------ | ------------------------------------ | ------------------------------------------------------- |
+| `bbox`       | the administrative box, hand-written | "is this locality inside its city", city-overlap checks |
+| `paddedBbox` | `bbox` grown by 9 km, **derived**    | `osmium extract` — everything downstream is cut from it |
+
+The padding is not a safety margin, it is a correctness requirement. With a
+3 km search radius around an arbitrary office:
+
+- a listing near an edge gets a **truncated** POI answer — half a 1.5 km circle
+  with no data in it, reported as "3 schools nearby" rather than "the map stops
+  here";
+- a **route** is bounded by neither radius. A road can leave the box and come
+  back, and a graph that ends mid-carriageway answers either `NoRoute` or an
+  absurd detour — the second being worse, because it looks measured.
+
+`paddedBbox` is computed by `padBbox()` and attached to every city once, so no
+caller can cut an artifact from the administrative box by mistake. Do not write
+it out by hand; two boxes maintained separately drift, and the drift reads as a
+data bug in whichever you check second.
+
+`pnpm tsx scripts/cities.ts extracts` prints the **padded** boxes (bootstrap
+cuts with these); `... bboxes` prints the administrative ones.
+
+Reasoning, and what the tight cut actually broke: DECISIONS.md D47.
+
 ## The geo epoch and the artifact manifest
 
 Routes, POIs and geocodes are all derived from the OSM artifacts. A cached
@@ -268,7 +298,10 @@ Reasoning and what was verified: DECISIONS.md D46.
    assumed return an HTML error page, which fails much later as a corrupt
    download (D27). Patna → `eastern-zone`, Bengaluru → `southern-zone`, Pune →
    `western-zone`; ~1 GB, cached in `.osm-cache/`.
-2. Cut each city out by bounding box with `osmium` (`iboates/osmium:1.19.0`).
+2. Cut each city out by its **padded** bounding box with `osmium`
+   (`iboates/osmium:1.19.0`). Each cut is stamped with the bounds it was made
+   with, so changing a bbox re-cuts instead of being skipped as "already
+   present" — which is how an unpadded cut used to survive a re-run.
 3. Merge the three cuts into one `osm-data/merged.osm.pbf`, a few MB.
 4. Delegate the OSRM graph build to the `osrm-init` compose service, so the
    pipeline is defined once.

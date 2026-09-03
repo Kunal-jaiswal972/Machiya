@@ -3,12 +3,23 @@
  * the bounding boxes from here (via the CLI at the bottom) and prisma/seed.ts
  * imports the same objects, so adding a fourth city is a single entry.
  *
- * Coordinates are WGS84. Bounding boxes are deliberately generous — roughly
- * 20-30 km across — so a 3 km office radius anywhere inside the built-up area
- * still has road network on every side after the extract is cut.
+ * Coordinates are WGS84. Each city carries TWO bounding boxes and they are not
+ * interchangeable:
+ *
+ * - `bbox` is the administrative one written below. It answers "is this
+ *   locality inside its city" and "are two cities ambiguous to assign between".
+ * - `paddedBbox` is derived from it by `padBbox` and is what `osmium extract`
+ *   cuts from. It is 9 km larger on every side, because a listing or an office
+ *   near an edge needs road network and POIs on all sides of it, and a road
+ *   route can legitimately leave the box and come back. See DECISIONS.md D47.
+ *
+ * The padded box is DERIVED, never written by hand: two boxes maintained
+ * separately would drift, and the drift would look like a data bug in whichever
+ * one you checked second.
  */
 
 import { basename } from 'node:path';
+import { BBOX_PAD_KM, padBbox } from '@machiya/shared/cities';
 
 export type GeofabrikZone = 'eastern-zone' | 'southern-zone' | 'western-zone';
 
@@ -25,7 +36,10 @@ export interface CityConfig {
   /** Which Geofabrik India zone extract contains this city. */
   zone: GeofabrikZone;
   centroid: { lat: number; lng: number };
+  /** Administrative bounds. Validation and city assignment use this one. */
   bbox: { minLng: number; minLat: number; maxLng: number; maxLat: number };
+  /** `bbox` grown by BBOX_PAD_KM. Artifacts are cut from this one. Derived. */
+  paddedBbox: { minLng: number; minLat: number; maxLng: number; maxLat: number };
   defaultFuelType: 'PETROL' | 'DIESEL' | 'CNG';
   /** Local bus fares, in whole rupees. No free API exposes these reliably. */
   transitFare: {
@@ -39,7 +53,9 @@ export interface CityConfig {
   localities: Locality[];
 }
 
-export const CITIES: CityConfig[] = [
+type CityConfigInput = Omit<CityConfig, 'paddedBbox'>;
+
+const CITY_INPUTS: CityConfigInput[] = [
   {
     slug: 'patna',
     name: 'Patna',
@@ -114,6 +130,15 @@ export const CITIES: CityConfig[] = [
   },
 ];
 
+/**
+ * The city list every consumer reads. `paddedBbox` is attached here, once, so
+ * no caller can accidentally cut an artifact from the administrative box.
+ */
+export const CITIES: CityConfig[] = CITY_INPUTS.map((city) => ({
+  ...city,
+  paddedBbox: padBbox(city.bbox, BBOX_PAD_KM),
+}));
+
 export const ZONES: GeofabrikZone[] = [...new Set(CITIES.map((city) => city.zone))];
 
 export function cityBySlug(slug: string): CityConfig {
@@ -128,7 +153,9 @@ export function cityBySlug(slug: string): CityConfig {
  * CLI used by scripts/bootstrap.sh, so the shell never hardcodes a coordinate.
  *
  *   tsx scripts/cities.ts zones    -> one zone name per line
- *   tsx scripts/cities.ts extracts -> "slug zone minLng minLat maxLng maxLat" per line
+ *   tsx scripts/cities.ts extracts -> "slug zone minLng minLat maxLng maxLat" per line,
+ *                                     with the PADDED box: it is what osmium cuts
+ *   tsx scripts/cities.ts bboxes   -> the same for the unpadded administrative box
  */
 function main(command: string | undefined): void {
   switch (command) {
@@ -136,6 +163,22 @@ function main(command: string | undefined): void {
       console.log(ZONES.join('\n'));
       return;
     case 'extracts':
+      // The PADDED box, deliberately: this is what bootstrap.sh cuts with.
+      console.log(
+        CITIES.map((city) =>
+          [
+            city.slug,
+            city.zone,
+            city.paddedBbox.minLng,
+            city.paddedBbox.minLat,
+            city.paddedBbox.maxLng,
+            city.paddedBbox.maxLat,
+          ].join(' '),
+        ).join('\n'),
+      );
+      return;
+    case 'bboxes':
+      // The administrative box, for anything validating membership.
       console.log(
         CITIES.map((city) =>
           [
@@ -153,7 +196,7 @@ function main(command: string | undefined): void {
       console.log(CITIES.map((city) => city.slug).join('\n'));
       return;
     default:
-      console.error('Usage: tsx scripts/cities.ts <zones|extracts|slugs>');
+      console.error('Usage: tsx scripts/cities.ts <zones|extracts|bboxes|slugs>');
       process.exit(1);
   }
 }

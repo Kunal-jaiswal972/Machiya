@@ -25,7 +25,7 @@ import { z } from 'zod';
 import { cityBboxSchema, type CityBbox } from '../geo/schemas.js';
 
 /** Bumped when the manifest's shape changes, so an old file is rejected loudly. */
-export const GEO_MANIFEST_VERSION = 1;
+export const GEO_MANIFEST_VERSION = 2;
 
 /**
  * The epoch used when there is no manifest at all — a clone that has never run
@@ -53,6 +53,8 @@ export const geoManifestCitySchema = z.object({
   zone: z.string().min(1),
   /** The administrative bbox: what "is this locality in its city" validates against. */
   bbox: cityBboxSchema,
+  /** What `osmium extract` actually cut. Padded by BBOX_PAD_KM — see D47. */
+  paddedBbox: cityBboxSchema,
 });
 
 export type GeoManifestCity = z.infer<typeof geoManifestCitySchema>;
@@ -84,14 +86,22 @@ function shortHash(input: string): string {
  * here would raise a stale-artifact alarm that a rebuild could not clear.
  */
 export function computeGeoConfigHash(
-  cities: readonly { slug: string; zone: string; bbox: CityBbox }[],
+  cities: readonly { slug: string; zone: string; bbox: CityBbox; paddedBbox: CityBbox }[],
 ): string {
+  const flat = (bbox: CityBbox): number[] => [bbox.minLng, bbox.minLat, bbox.maxLng, bbox.maxLat];
+
   const canonical = [...cities]
     .sort((a, b) => a.slug.localeCompare(b.slug))
     .map((city) => ({
       slug: city.slug,
       zone: city.zone,
-      bbox: [city.bbox.minLng, city.bbox.minLat, city.bbox.maxLng, city.bbox.maxLat],
+      bbox: flat(city.bbox),
+      // The padded box is the one artifacts are cut from, so it is the one that
+      // decides whether they are stale. The unpadded box is hashed too: it
+      // drives city assignment and locality validation, and a change to it
+      // without a rebuild would leave the manifest describing bounds nothing
+      // was cut with.
+      paddedBbox: flat(city.paddedBbox),
     }));
 
   return shortHash(JSON.stringify(canonical));

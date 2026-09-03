@@ -7,4 +7,5 @@
  * Vite build. Nothing in the web app needs the city config — it reads
  * `/api/cities` — so the boundary costs nothing.
  */
+export * from './bbox.js';
 export * from './manifest.js';

@@ -119,33 +119,50 @@ done
 # --- 2. cut each city out by bounding box ---------------------------------
 
 step "Extracting cities by bounding box"
+# `cities.ts extracts` emits the PADDED box (D47), not the administrative one: a
+# listing or office near an edge needs road network and POIs on every side, and
+# a road route can legitimately leave the box and come back.
+#
+# Each cut is stamped with the bounds it was made with. Without the stamp, "the
+# file exists" meant "skip" — so changing a bbox left every earlier cut in place
+# and the pipeline silently kept serving geometry from the old bounds.
 CITY_FILES=()
+RECUT=0
 while read -r slug zone min_lng min_lat max_lng max_lat; do
   [ -n "${slug:-}" ] || continue
   target="$CACHE_DIR/$slug.osm.pbf"
+  stamp="$CACHE_DIR/$slug.bbox"
+  want="$min_lng,$min_lat,$max_lng,$max_lat"
   CITY_FILES+=("/cache/$slug.osm.pbf")
 
-  if [ -s "$target" ]; then
-    skip "$slug.osm.pbf already cut ($(file_size "$target"))"
+  if [ -s "$target" ] && [ "$(cat "$stamp" 2>/dev/null || true)" = "$want" ]; then
+    skip "$slug.osm.pbf already cut at $want ($(file_size "$target"))"
     continue
   fi
 
-  info "cutting $slug from $zone"
+  if [ -s "$target" ]; then
+    info "$slug bounds changed ($(cat "$stamp" 2>/dev/null || printf 'unstamped') -> $want)"
+  fi
+
+  info "cutting $slug from $zone at $want"
   osmium extract \
-    --bbox "$min_lng,$min_lat,$max_lng,$max_lat" \
+    --bbox "$want" \
     --set-bounds \
     --overwrite \
     -o "/cache/$slug.osm.pbf" \
     "/cache/$zone-latest.osm.pbf"
+  printf '%s' "$want" > "$stamp"
+  RECUT=1
   info "$slug: $(file_size "$target")"
 done <<< "$EXTRACTS"
 
 # --- 3. merge into one file -----------------------------------------------
 
 step "Merging city extracts"
-if [ -s "$MERGED" ]; then
+if [ -s "$MERGED" ] && [ "$RECUT" -eq 0 ]; then
   skip "merged.osm.pbf already built ($(file_size "$MERGED"))"
 else
+  [ "$RECUT" -eq 1 ] && info "a city was re-cut, so the merge is redone"
   osmium merge --overwrite -o /out/merged.osm.pbf "${CITY_FILES[@]}"
   info "merged.osm.pbf: $(file_size "$MERGED")"
 fi
@@ -157,7 +174,9 @@ fi
 step "Building OSRM graphs (car + bicycle)"
 # The build itself lives in the osrm-init compose service, so the pipeline is
 # defined once and `docker compose --profile geo up` can rebuild it too. That
-# container skips any profile whose graph is already present.
+# container skips any profile whose graph was already built FROM THIS EXTRACT —
+# it compares the extract's sha256 against one stored in the graph directory, so
+# a re-cut with new bounds rebuilds rather than being skipped.
 docker compose --profile geo run --rm --no-deps osrm-init
 
 # --- 5. Nominatim import --------------------------------------------------

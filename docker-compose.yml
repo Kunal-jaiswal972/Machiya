@@ -300,17 +300,24 @@ services:
         echo "three city bboxes and merges them into ./osm-data/merged.osm.pbf.";
         exit 1;
         fi;
+        src=$$(sha256sum /data/merged.osm.pbf | cut -d' ' -f1);
+        echo "extract sha256 $$src";
         for profile in car bicycle; do
-        if [ -f "/graph/$$profile/merged.osrm.mldgr" ]; then
-        echo "$$profile graph already built, skipping";
+        if [ -f "/graph/$$profile/merged.osrm.mldgr" ] && [ "$$(cat /graph/$$profile/source.sha256 2>/dev/null)" = "$$src" ]; then
+        echo "$$profile graph already built from this extract, skipping";
         continue;
         fi;
+        if [ -f "/graph/$$profile/merged.osrm.mldgr" ]; then
+        echo "$$profile graph was built from a different extract; rebuilding";
+        fi;
+        rm -rf "/graph/$$profile";
         mkdir -p "/graph/$$profile";
         cp /data/merged.osm.pbf "/graph/$$profile/merged.osm.pbf";
         osrm-extract -p "/opt/$$profile.lua" "/graph/$$profile/merged.osm.pbf";
         osrm-partition "/graph/$$profile/merged.osrm";
         osrm-customize "/graph/$$profile/merged.osrm";
         rm -f "/graph/$$profile/merged.osm.pbf";
+        echo "$$src" > "/graph/$$profile/source.sha256";
         done;
         echo "osrm graphs ready"
     restart: 'no'

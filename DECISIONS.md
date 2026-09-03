@@ -978,3 +978,68 @@ process both rejected**. A cold POI warm immediately after boot therefore
 persisted nothing and the next viewer warmed the identical key again. `ready()`
 now connects once and every read and write awaits it. Still no socket at import
 time: a test that touches a service must not need a Redis.
+
+### D47. Two bboxes per city: an administrative one and a padded one the extract is cut from
+
+The city bboxes were cut tight — roughly the built-up area and nothing else —
+and step 7 had been exercising the consequence without naming it. With a 3 km
+search radius around an **arbitrary** office, a tight cut is not an edge case:
+
+- a listing or office within a few kilometres of an edge gets a **truncated**
+  POI answer. Half of a 1.5 km circle contains no data, and the panel says
+  "3 schools nearby" rather than "we cut the map here". Nothing in the response
+  distinguishes a genuinely quiet area from a boundary artifact.
+- a **route** is not bounded by either radius. A road from an office near one
+  edge to a listing near another can legitimately leave the box and come back,
+  and a graph that ends mid-carriageway answers either `NoRoute` or an absurd
+  detour — the second being the worse one, because it looks like a measurement.
+
+**Chosen: every bbox is padded by 9 km before `osmium extract`, and both boxes
+are kept in the city record.** `paddedBbox` is what artifacts are cut from;
+`bbox` stays the administrative box that answers "is this locality inside its
+city" and "are two cities ambiguous to assign between". Conflating them would
+make the overlap check in D50 meaningless — every city would overlap its
+neighbours by 18 km of padding and the validator would either fire constantly
+or be written to ignore the thing it exists to catch.
+
+9 km rather than 3-5: the radii would justify 5, but a route is unbounded, and
+the marginal cost is a few MB of extract per city.
+
+**`paddedBbox` is derived, never written by hand.** `padBbox()` in
+`@machiya/shared/cities` computes it from `bbox`, and `CITIES` attaches it once
+so no caller can cut an artifact from the administrative box by accident. Two
+hand-maintained boxes would drift, and the drift would read as a data bug in
+whichever one was checked second. The longitude pad is computed at the latitude
+**furthest from the equator**, where a degree of longitude is shortest, so the
+pad is at least 9 km everywhere in the box rather than only at its centre.
+
+The same work closed a second, quieter bug in `bootstrap.sh`: **"the file
+exists" meant "skip"**, so changing a bbox left every earlier cut in place and
+the whole pipeline kept serving geometry from the old bounds — an artifact
+staleness bug that would have made this correction look like it had landed when
+it had not. Each cut is now stamped with the bounds it was made with
+(`.osm-cache/<slug>.bbox`) and re-cut when they differ; a re-cut forces the
+merge; and `osrm-init` stores the extract's sha256 next to each graph and
+rebuilds when it no longer matches. Nominatim and Overpass import on first boot
+only, so those two re-imports are volume drops — `pnpm geo:status` (D51) prints
+the exact commands.
+
+Verified three ways:
+
+- `packages/shared/test/bbox.test.ts` — 6 tests on the arithmetic, run: every
+  side grows by at least 9 km and not much more, the unpadded box is contained
+  in the padded one, a point 4 km outside the administrative edge is inside the
+  padded box and outside the unpadded one, padding never produces an invalid
+  box, and two boxes 1,000 km apart still report no intersection once padded.
+- `apps/api/test/geo-boundary.test.ts` — the live pair, which only real
+  services can answer. A car route between two points that Bengaluru's old
+  `maxLng` of 77.78 split (Whitefield to Hoskote) must return real geometry
+  rather than `degraded`, and a POI lookup centred exactly on the old edge must
+  return places on **both** sides of it. The POI assertion is deliberately
+  "some POIs east of 77.78" rather than a count, because a truncated
+  half-circle still has places in it. The measured results are in
+  `docs/audit-2026-09.md` under the rebuild.
+- the epoch moved on its own, which is D46 working as intended: adding
+  `paddedBbox` to the hashed config changed `configHash` away from
+  `2e8d102364f5`, so every route and POI cached against the old cuts became
+  unreachable with nothing flushed.

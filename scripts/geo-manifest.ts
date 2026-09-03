@@ -73,7 +73,16 @@ export async function buildManifest(): Promise<GeoManifest> {
     epoch: computeGeoEpoch({ configHash, sources }),
     configHash,
     generatedAt: new Date().toISOString(),
-    cities: CITIES.map((city) => ({ slug: city.slug, zone: city.zone, bbox: city.bbox })),
+    cities: CITIES.map((city) => ({
+      slug: city.slug,
+      zone: city.zone,
+      bbox: city.bbox,
+      // The box artifacts were actually cut from. Recorded separately from the
+      // administrative one because they answer different questions (D47), and
+      // a manifest that reported only one of them could not tell a reader
+      // whether a stale artifact was a padding change or a bounds change.
+      paddedBbox: city.paddedBbox,
+    })),
     sources,
     merged,
   });
