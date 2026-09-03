@@ -5,7 +5,7 @@ import {
   listingTypeSchema,
   propertyTypeSchema,
 } from './enums.js';
-import { coordinateSchema, radiusMetersSchema, ringSchema } from './geo.js';
+import { coordinateSchema, radiusMetersSchema, ringSchema } from './geo/index.js';
 
 /**
  * Every filter the map search accepts. All of them compose into ONE

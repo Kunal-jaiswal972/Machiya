@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MAX_SEARCH_RADIUS_METERS, RING_RADII_METERS } from './constants.js';
+import { MAX_SEARCH_RADIUS_METERS, RING_RADII_METERS } from '../constants.js';
 
 export const latitudeSchema = z.number().min(-90).max(90);
 export const longitudeSchema = z.number().min(-180).max(180);

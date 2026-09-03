@@ -10,7 +10,8 @@ no hosted auth SaaS, no paid email SDK.
 
 ## Core features
 
-1. **Map search from the office** — Photon autocomplete or map click sets the office;
+1. **Map search from the office** — trigram + Nominatim autocomplete, map click or pin
+   drag sets the office;
    `ST_DWithin` radius search returns listings inside 3 km, drawn in turf-generated rings,
    clustered natively by MapLibre, filterable and shareable via URL state.
 2. **Listing detail** — real OSRM road route (car + bike), image gallery, amenities,
@@ -42,7 +43,8 @@ no hosted auth SaaS, no paid email SDK.
 ## Geo stack (all free)
 
 - **Tiles** — OpenFreeMap liberty style, no API key. Behind `VITE_MAP_STYLE_URL`.
-- **Geocoding** — self-hosted Photon, Nominatim fallback at 1 req/s with Redis caching.
+- **Geocoding** — self-hosted Nominatim, plus a local pg_trgm tier for type-ahead.
+  Photon was evaluated and removed; see DECISIONS.md D26.
 - **Routing** — self-hosted OSRM (car + bike profiles) from a merged three-city extract.
 - **POIs** — Overpass API, one batched query per listing, Redis-cached 24h.
 
@@ -108,10 +110,10 @@ anything whose output already exists is skipped, so an interrupted run resumes
 cheaply. Nothing needs osmium, osrm or postgres on the host; every tool runs in a
 container.
 
-Geocoding is self-hosted **Nominatim**, not Photon: Photon cannot read an
-`.osm.pbf` (it imports from a Nominatim database), and no official Photon image
-exists. Photon is still available as a type-ahead layer on top of the same
-database behind `--profile photon`. Reasoning in [DECISIONS.md](DECISIONS.md) D26.
+Geocoding is self-hosted **Nominatim**. Photon was evaluated and removed
+outright: it cannot read an `.osm.pbf`, its only import source is a Nominatim
+database it would duplicate, and no official image exists. Type-ahead is served
+locally by pg_trgm instead. Reasoning in [DECISIONS.md](DECISIONS.md) D26.
 
 ### Ports
 
@@ -126,9 +128,10 @@ database behind `--profile photon`. Reasoning in [DECISIONS.md](DECISIONS.md) D2
 | minio       | http://localhost:9000 | console on :9001, `minioadmin` / `minioadmin` |
 | mailhog     | http://localhost:8025 | catches every outbound mail                   |
 
-The geo services (Photon, OSRM car and bike) sit behind a compose profile because
-they need a prebuilt OSM index: `docker compose --profile geo up -d`, once
-`scripts/bootstrap.sh` exists and has run.
+The geo services (Nominatim, OSRM car and bike) sit behind a compose profile
+because they need a prebuilt OSM index: `docker compose --profile geo up -d`,
+once `scripts/bootstrap.sh` has run. The OSRM images are amd64-only, so they are
+pinned to `platform: linux/amd64` and run emulated on Apple silicon.
 
 ### Verify
 
@@ -241,7 +244,7 @@ originals and public variants.
 107 tests: 39 geo queries against real PostGIS, 58 API service and guard tests
 against real PostGIS, 10 derivation tests against real sharp.
 
-Next: the map view — Photon/Nominatim geocoding, the 1/2/3 km rings, the
+Next: the map view — the two-tier autocomplete, the 1/2/3 km rings, the
 `ST_DWithin` search wired to filters, and shareable URL state.
 
 ### Database notes

@@ -4,7 +4,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 
-const dbPackage = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'packages', 'db');
+// Prisma 7 reads the connection string from prisma.config.ts at the repo root,
+// so the CLI has to run from there rather than from packages/db.
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 /**
  * The listing service tests run against real PostGIS: ownership, cascades, the
@@ -33,9 +35,9 @@ export default async function setup(): Promise<() => Promise<void>> {
   const prismaCli = createRequire(import.meta.url).resolve('prisma/build/index.js');
   execFileSync(
     process.execPath,
-    [prismaCli, 'migrate', 'deploy', '--schema=prisma/schema.prisma'],
+    [prismaCli, 'migrate', 'deploy', '--schema=packages/db/prisma/schema.prisma'],
     {
-      cwd: dbPackage,
+      cwd: repoRoot,
       env: { ...process.env, DATABASE_URL: databaseUrl },
       stdio: 'inherit',
     },

@@ -1,0 +1,11 @@
+{
+  // Root-level TypeScript that belongs to no workspace package: the Prisma
+  // config and the host-side scripts. Without this they were the one part of
+  // the repo `pnpm typecheck` never looked at.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["prisma.config.ts", "scripts/**/*.ts"]
+}

@@ -4,7 +4,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 
-const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+// Prisma 7 reads the connection string from prisma.config.ts, which lives at
+// the repo root — so the CLI has to be invoked from there, not from this
+// package. Running it here fails with "datasource.url property is required".
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 /**
  * These tests run against real PostGIS, never a mock — the whole point is to
@@ -38,9 +41,9 @@ export default async function setup(): Promise<() => Promise<void>> {
 
   execFileSync(
     process.execPath,
-    [prismaCli, 'migrate', 'deploy', '--schema=prisma/schema.prisma'],
+    [prismaCli, 'migrate', 'deploy', '--schema=packages/db/prisma/schema.prisma'],
     {
-      cwd: packageRoot,
+      cwd: repoRoot,
       env: { ...process.env, DATABASE_URL: databaseUrl },
       stdio: 'inherit',
     },

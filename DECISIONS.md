@@ -31,7 +31,7 @@ documented here and in a comment at the top of the schema.
 The legacy `prisma-client-js` generator writes CommonJS into `node_modules` and
 is awkward to import from a pure-ESM package. The `prisma-client` generator is
 ESM-native, requires an explicit output path, and is the shape Prisma 7 makes
-mandatory — so this also removes work from the eventual v7 upgrade.
+mandatory — which is why the v7 move in D5 needed no generator change at all.
 
 ### D4. All Prisma CLI commands run from the repo root
 
@@ -41,35 +41,84 @@ explicit `--schema` path, so the root `.env` is the single source of environment
 truth. Running the CLI inside `packages/db` would make it look for a second
 `.env` there and silently diverge from what the apps use.
 
-### D5. Spec-named major versions are honoured even where a newer major exists
+### D5. Prisma 7, with the connection string in `prisma.config.ts`
 
-The brief pins react-router v7, Prisma 6, and ESLint 9. At scaffold time
-react-router 8, Prisma 7, and ESLint 10 were all released. The pins were kept:
-the brief is the contract, and a mid-scaffold major bump costs more than the new
-features are worth right now. Upgrade path, when it is wanted: react-router 8
-drops the `react-router-dom` shim (already unused here — imports come from
-`react-router` and `react-router/dom`), and Prisma 7 requires exactly the
-generator shape chosen in D3.
+Rewritten. The scaffold pinned Prisma 6 because the brief named it, and that pin
+is now reversed: the toolchain is on **Prisma 7.10.0**. What forced it is that a
+v7 CLI against a v6-shaped schema fails outright with "The datasource property
+url is no longer supported in schema files" — there is no half-way state to sit
+in, and pinning backwards to keep a v6 schema shape only defers the same move.
 
-Related: Vite 7 rather than 8, because `@vitejs/plugin-react` 6 (the version Vite
-8 requires) pulls in oxc/rolldown peers that are churning. TypeScript 5.9 rather
-than 7, because `typescript-eslint` 8 targets the 5.x compiler.
+What v7 actually changes here, all of it verified by running the commands rather
+than reading the changelog:
+
+- **`datasource.url` is gone from the schema.** It lives in `prisma.config.ts` at
+  the repo root, which also carries `schema` and `migrations.path`. `extensions`
+  is gone too: the `postgresqlExtensions` preview feature was deprecated in
+  September 2025 and removed in 7, so `postgis` and `pg_trgm` are created by the
+  plain SQL already in the init migration. Verified: `prisma migrate status`
+  reports "Database schema is up to date!" — dropping the declaration causes no
+  drift, because without the feature Prisma does not track extensions at all.
+- **Prisma no longer loads `.env`.** `prisma.config.ts` loads it with `dotenv`,
+  resolved from the config file's own directory via `import.meta.url` rather than
+  from the current one. `dotenv/config` alone would read `.env` relative to
+  wherever the command was typed, which broke `pnpm -F @machiya/db build` the
+  moment a package script invoked the CLI from its own folder.
+- **There is no Rust query engine.** The connection comes from
+  `@prisma/adapter-pg`, constructed in `packages/db/src/client.ts` from
+  `process.env.DATABASE_URL` at client construction rather than baked in at
+  generate time — which is what lets one generated client serve the compose
+  database, a testcontainer and CI's service container.
+- **The generated client is TypeScript only.** No engine binary is emitted any
+  more, so `packages/db/scripts/copy-runtime.mjs` (which existed to carry the
+  binary into `dist/`) is deleted; it was copying zero files. `tsc` compiles the
+  generated sources as part of the package, which the tsconfig already allowed
+  for.
+- **`migrate reset` no longer seeds.** The root `db:reset` script therefore
+  chains `pnpm db:seed` explicitly, so "reset" still means what a developer
+  expects. `migrations.seed` in the config keeps `prisma db seed` working, and
+  carries the `--env-file-if-exists=.env` flag for the same reason as above.
+- **The CLI refuses `migrate reset` when it detects an AI agent** and requires a
+  consent variable naming the user's own words. That is a feature, not an
+  obstacle: it is recorded here so the next person is not surprised by it.
+
+One behaviour change bit the tests rather than the build, which is the sort of
+thing a pinned version hides: the driver adapter sends query parameters to
+Postgres with different type inference than the Rust engine did, so
+`s."price" * (1 - $n)` — with an Int column on the left — now infers `$n` as
+`integer` and fails with `invalid input syntax for type integer: "0.25"`. The
+fix is to say what the parameter is: `${priceBand}::double precision`. Every
+other float that reaches raw SQL was already cast.
+
+The rest of the brief's version pins stand, because nothing forced them:
+react-router 7 (8 only drops the `react-router-dom` shim, already unused —
+imports come from `react-router` and `react-router/dom`), ESLint 9, Vite 7 rather
+than 8 because `@vitejs/plugin-react` 6 pulls in churning oxc/rolldown peers, and
+TypeScript 5.9 because `typescript-eslint` 8 targets the 5.x compiler.
+
+Also from this correction: **`pnpm typecheck` is a hard gate, and it now covers
+the whole repo.** `tsconfig.tools.json` adds `prisma.config.ts` and `scripts/` to
+the root `typecheck` script — root-level TypeScript that belonged to no workspace
+package and was therefore the one part of the tree nothing checked.
 
 ### D6. Geo services sit behind a compose `geo` profile
 
-Photon and OSRM cannot start until `scripts/bootstrap.sh` has produced the merged
-three-city OSM extract and built their indexes. Leaving them in the default
-profile would make a fresh `docker compose up` fail on a clean clone. So:
-`docker compose up -d` brings up the core stack, `docker compose --profile geo up -d`
-adds routing and geocoding once the artifacts exist.
+Nominatim and OSRM cannot start until `scripts/bootstrap.sh` has produced the
+merged three-city OSM extract and built their indexes. Leaving them in the
+default profile would make a fresh `docker compose up` fail on a clean clone.
+So: `docker compose up -d` brings up the core stack, and
+`docker compose --profile geo up -d` adds routing and geocoding once the
+artifacts exist. `osrm-init` now also refuses to start with a clear message when
+the extract is absent, rather than dying inside `osrm-extract`.
 
 ### D7. `node:22-bookworm-slim`, not Alpine, for the API and worker images
 
-Prisma's query engine ships glibc binaries by default; Alpine needs explicit
-`binaryTargets = ["linux-musl-openssl-3.0.x"]` plus `libc6-compat`, which is a
-recurring source of "works locally, broken in Docker". The size difference does
-not justify the failure mode. The web image is a different story — it is static
-files behind `nginx:alpine`.
+Native dependencies here ship glibc prebuilds and fall back to a source build
+on musl: that was Prisma's query engine at scaffold time, and since the Prisma 7
+move (D5) removed the engine entirely it is `sharp`/libvips in the worker image
+that carries the same constraint. Alpine turns both into "works locally, broken
+in Docker", and the size difference does not justify the failure mode. The web
+image is a different story — it is static files behind `nginx:alpine`.
 
 ### D8. The postgis healthcheck is a script, not an inline shell string
 
@@ -291,31 +340,59 @@ instead of sliding through a `requireRole` check.
 
 ## Step 4 — bootstrap and seed
 
-### D26. Geocoding is self-hosted Nominatim, not Photon
+### D26. Photon was evaluated and removed; geocoding is Nominatim plus a local trigram tier
 
-The brief specifies "self-hosted Photon (komoot/photon Docker image) indexed
-from the merged three-city OSM extract". Two things make that impossible as
-written, both verified rather than assumed:
+Rewritten, and this reverses the earlier version of this entry. Photon is not
+deferred behind a profile — it is gone, along with its service, its `photon`
+profile, its `photon-data` volume, and `PHOTON_URL` from every env surface. A
+service in the compose file that nothing ever starts is worse than no service at
+all: it reads as a supported option and it is not.
+
+Why it cannot work here, all of it checked rather than assumed:
 
 1. **Photon cannot read an `.osm.pbf`.** Its only import paths are
    `-nominatim-host` (a live Nominatim database) or `-import-file` (a Photon JSON
    dump). Indexing "from the merged extract" therefore requires standing up
-   Nominatim first regardless.
+   Nominatim first regardless — so Photon would be a second copy of a database
+   this project already runs.
 2. **There is no `ghcr.io/komoot/photon` image.** komoot publishes the jar only;
    `docker manifest inspect` on that reference fails. The compose file had been
-   written against it and would have failed on first `--profile geo up`.
+   written against it and would have failed on the first `--profile geo up`.
+3. **The prebuilt-index escape hatch is gone.** The per-country downloads
+   (`.../by-country-code/in/photon-db-in-latest.tar.bz2`) 404, and only the full
+   planet index remains — 101 GB.
 
-The prebuilt-index escape hatch is also gone: the per-country downloads
-(`.../by-country-code/in/photon-db-in-latest.tar.bz2`) 404, and only the full
-planet index remains — 101 GB.
+That leaves exactly one thing Photon would have bought: type-ahead latency. And
+that is better served locally, without a JVM and a duplicated index — see D39.
 
-So: **self-hosted Nominatim (`mediagis/nominatim:5.3`) is the primary geocoder.**
-It imports the merged extract directly, serves `/search` and `/reverse`, is free
-and self-hostable, and it is the provider the brief already nominated as the
-fallback — so the `GeocodeProvider` adapter shape does not change, only which URL
-is primary. Photon remains available as a type-ahead layer on top of that same
-database, behind its own `--profile photon` (unofficial `rtuszik/photon-docker`
-image), for when autocomplete latency actually matters.
+So: **self-hosted Nominatim (`mediagis/nominatim:5.3`) is the geocoder.** It
+imports the merged extract directly and serves `/search` and `/reverse`.
+`GEOCODE_PROVIDER` exists with `nominatim` as its only value, so the adapter's
+provider selection stays explicit and swappable instead of hardcoded — adding a
+second provider means adding an enum value and an adapter, not rewriting the
+call sites.
+
+Two things about the Nominatim service were verified while removing Photon,
+because both fail slowly and invisibly:
+
+- the Postgres cluster inside the image is **16**
+  (`docker run --rm --entrypoint sh mediagis/nominatim:5.3 -c 'ls -d
+/var/lib/postgresql/*/main'`), so `nominatim-data:/var/lib/postgresql/16/main`
+  really is the right mount. Mounted anywhere else, the volume holds nothing and
+  the whole import repeats on every recreate.
+- the `nominatim-flatnode` volume was mounted at `/nominatim/flatnode` while
+  `FLATNODE_FILE` was never set, so it was inert — a knob that looked configured
+  and was not. Deleted; three city extracts are nowhere near large enough to
+  need a flatnode file.
+
+The OSRM services were pinned to `platform: linux/amd64` at the same time.
+`docker manifest inspect --verbose osrm/osrm-backend:v5.25.0` returns a single
+manifest, not a manifest list, for `linux/amd64` — there is no arm64 variant, so
+without the pin Docker Desktop on Apple silicon fails or silently emulates.
+`OSRM_CAR_PORT` also moved off 5000, which is AirPlay Receiver on macOS, and the
+bike healthcheck stopped using `/route/v1/bike/...`: `osrm-routed` ignores the
+profile segment entirely — the graph it was given decides the profile — so that
+URL implied a distinction that does not exist.
 
 ### D27. Geofabrik publishes India by zone, not by state
 

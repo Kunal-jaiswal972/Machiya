@@ -59,6 +59,31 @@ const envSchema = z.object({
     .transform((value) => value === 'true'),
   /** Public base URL objects are served from, for building image URLs. */
   S3_PUBLIC_BASE_URL: z.string().url().default('http://localhost:9000/machiya-listings'),
+
+  // --- Geocoding -----------------------------------------------------------
+  /**
+   * Which geocoder the adapter selects. `nominatim` is the only value today —
+   * the variable exists so the choice is explicit and swappable rather than
+   * hardcoded in the adapter. Photon was evaluated and removed; see D26.
+   */
+  GEOCODE_PROVIDER: z.enum(['nominatim']).default('nominatim'),
+  NOMINATIM_URL: z.string().url().default('http://localhost:7070'),
+  /** Sent to the public instance, which rejects requests without a real one. */
+  NOMINATIM_USER_AGENT: z.string().min(1).default('Machiya/0.1 (contact@example.com)'),
+
+  // --- Routing (OSRM) ------------------------------------------------------
+  OSRM_CAR_URL: z.string().url().default('http://localhost:5100'),
+  OSRM_BIKE_URL: z.string().url().default('http://localhost:5001'),
+  /** Local escape hatch when the self-hosted graphs are not built yet. */
+  ALLOW_PUBLIC_OSRM: z
+    .string()
+    .default('false')
+    .transform((value) => value === 'true'),
+  PUBLIC_OSRM_URL: z.string().url().default('https://router.project-osrm.org'),
+
+  // --- POIs (Overpass) -----------------------------------------------------
+  OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
+  OVERPASS_TIMEOUT_MS: z.coerce.number().int().min(1000).max(180_000).default(25_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

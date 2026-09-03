@@ -393,7 +393,8 @@ export async function findSimilarListings(input: {
       AND (
         s."price" IS NULL
         OR (CASE WHEN l."listingType" = 'RENT' THEN l."rentAmount" ELSE l."salePrice" END)
-             BETWEEN s."price" * (1 - ${priceBand}) AND s."price" * (1 + ${priceBand})
+             BETWEEN s."price" * (1 - ${priceBand}::double precision)
+                 AND s."price" * (1 + ${priceBand}::double precision)
       )
     ORDER BY l."location" <-> s."location"
     LIMIT ${limit}

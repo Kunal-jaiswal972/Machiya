@@ -9,7 +9,7 @@ RUN corepack enable && apt-get update \
 WORKDIR /app
 
 FROM base AS build
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json prisma.config.ts ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/db/package.json packages/db/
 COPY apps/api/package.json apps/api/
@@ -19,6 +19,11 @@ RUN pnpm install --frozen-lockfile --filter @machiya/worker...
 COPY packages/shared packages/shared
 COPY packages/db packages/db
 COPY apps/worker apps/worker
+# `prisma generate` loads prisma.config.ts, which refuses to run without a
+# connection string — correctly, since every other command needs one. Generating
+# a client does not touch a database, so a placeholder is enough and keeps the
+# real error message intact for humans. Nothing at runtime reads this.
+ENV DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build?schema=public
 RUN pnpm -F @machiya/shared build \
   && pnpm -F @machiya/db build \
   && pnpm -F @machiya/worker build

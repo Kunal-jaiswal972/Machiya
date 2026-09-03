@@ -9,6 +9,21 @@ const envSchema = z.object({
   /** Cron expression for the hourly fuel price scrape. */
   FUEL_SCRAPE_CRON: z.string().min(1).default('0 * * * *'),
 
+  // --- Outbound mail -------------------------------------------------------
+  // The worker sends the enquiry notification, so it needs its own transport
+  // rather than reaching through the API for one.
+  SMTP_HOST: z.string().min(1).default('localhost'),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(1025),
+  SMTP_SECURE: z
+    .string()
+    .default('false')
+    .transform((value) => value === 'true'),
+  SMTP_USER: z.string().default(''),
+  SMTP_PASSWORD: z.string().default(''),
+  MAIL_FROM: z.string().min(1).default('Machiya <no-reply@machiya.local>'),
+  /** Where notification links point. */
+  WEB_APP_URL: z.string().url().default('http://localhost:5173'),
+
   // --- Object storage ------------------------------------------------------
   S3_ENDPOINT: z.string().url().default('http://localhost:9000'),
   S3_REGION: z.string().min(1).default('us-east-1'),

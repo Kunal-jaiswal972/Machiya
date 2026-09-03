@@ -1,0 +1,205 @@
+/**
+ * The three geo provider interfaces every feature codes against.
+ *
+ * Nothing in this file knows about Nominatim, OSRM or Overpass. That is the
+ * point: the concrete clients live in `apps/api/src/geo/`, so swapping one out
+ * (self-hosted to hosted, Overpass to a vendor POI API) touches one adapter and
+ * no feature code. The result shapes are Zod schemas rather than bare types
+ * because they cross a network boundary in both directions — the API parses what
+ * a provider returned, and the browser parses what the API returned.
+ *
+ * Every provider is allowed to degrade. A geocoder that is still importing, a
+ * routing graph that has not been built, an Overpass mirror answering 429 — all
+ * of those are ordinary states, so the interfaces return "no answer" or a
+ * `degraded` flag rather than throwing. A rental search must not 500 because a
+ * free tier said no.
+ */
+import { z } from 'zod';
+import { cityBboxSchema, type Coordinate } from './schemas.js';
+
+// --- geocoding --------------------------------------------------------------
+
+/**
+ * What a suggestion is. Kept coarse on purpose: the UI groups by it and the
+ * ranking weights it, and a finer taxonomy would just be Nominatim's `class`
+ * leaking into the client.
+ */
+export const geocodeResultKindSchema = z.enum(['city', 'locality', 'listing', 'address', 'poi']);
+
+export type GeocodeResultKind = z.infer<typeof geocodeResultKindSchema>;
+
+/** Which tier answered. Shown per row, so a user can tell local from remote. */
+export const geocodeSourceSchema = z.enum(['local', 'nominatim']);
+
+export type GeocodeSource = z.infer<typeof geocodeSourceSchema>;
+
+export const geocodeResultSchema = z.object({
+  /** Stable within a source, so React keys and de-duplication both work. */
+  id: z.string().min(1),
+  /** The bold line: "Koramangala", "Ashoka Grand, Boring Road". */
+  label: z.string().min(1),
+  /** The quiet line under it: "Bengaluru, Karnataka". Absent when redundant. */
+  context: z.string().optional(),
+  lat: z.number(),
+  lng: z.number(),
+  kind: geocodeResultKindSchema,
+  source: geocodeSourceSchema,
+  /** 0-1, comparable ACROSS sources — that is what lets the tiers merge. */
+  score: z.number().min(0).max(1),
+  /** Present for cities, so selecting one can fit the map to it. */
+  bbox: cityBboxSchema.optional(),
+  /** Set when the suggestion is one of our own published listings. */
+  listingSlug: z.string().min(1).optional(),
+  citySlug: z.string().min(1).optional(),
+});
+
+export type GeocodeResult = z.infer<typeof geocodeResultSchema>;
+
+export interface GeocodeSearchOptions {
+  /** Bias and, for the local tier, restrict results to one city. */
+  citySlug?: string;
+  limit?: number;
+  /** Aborts an in-flight upstream request when the user keeps typing. */
+  signal?: AbortSignal;
+}
+
+export interface GeocodeProvider {
+  /** Used in logs and in the `source` field of every result it returns. */
+  readonly name: GeocodeSource;
+  search(query: string, options?: GeocodeSearchOptions): Promise<GeocodeResult[]>;
+  /** Null rather than throwing when the point is over water or unmapped. */
+  reverse(
+    coordinate: Coordinate,
+    options?: { signal?: AbortSignal },
+  ): Promise<GeocodeResult | null>;
+}
+
+// --- routing ----------------------------------------------------------------
+
+export const routeProfileSchema = z.enum(['car', 'bike']);
+
+export type RouteProfile = z.infer<typeof routeProfileSchema>;
+
+export const routeGeometrySchema = z.object({
+  type: z.literal('LineString'),
+  /** [lng, lat] pairs, GeoJSON order. */
+  coordinates: z.array(z.tuple([z.number(), z.number()])),
+});
+
+export const routeResultSchema = z.object({
+  profile: routeProfileSchema,
+  /** Real road distance. Never a straight line — that is `ST_Distance`'s job. */
+  distanceMeters: z.number().nonnegative(),
+  durationSeconds: z.number().nonnegative(),
+  geometry: routeGeometrySchema.nullable(),
+  /**
+   * True when this came from a fallback rather than the configured graph — a
+   * cached copy served while the router is down, or the public OSRM demo server.
+   * The UI labels it rather than presenting an estimate as measured fact.
+   */
+  degraded: z.boolean().default(false),
+});
+
+export type RouteResult = z.infer<typeof routeResultSchema>;
+
+export interface RoutingProvider {
+  readonly name: string;
+  /** Null when no route exists between the points on that graph. */
+  route(input: {
+    from: Coordinate;
+    to: Coordinate;
+    profile: RouteProfile;
+    signal?: AbortSignal;
+  }): Promise<RouteResult | null>;
+}
+
+// --- POIs -------------------------------------------------------------------
+
+/**
+ * The seven categories the detail sidebar shows. Fixed rather than open: they
+ * are one batched Overpass query, a legend, and a set of icon layers, and each
+ * of those has to know the full set up front.
+ */
+export const poiCategorySchema = z.enum([
+  'hospital',
+  'police',
+  'school',
+  'pharmacy',
+  'atm',
+  'supermarket',
+  'transit',
+]);
+
+export type PoiCategory = z.infer<typeof poiCategorySchema>;
+
+export const POI_CATEGORIES = poiCategorySchema.options;
+
+export const poiSchema = z.object({
+  id: z.string().min(1),
+  category: poiCategorySchema,
+  /** Unnamed features are common in OSM; the UI falls back to the category. */
+  name: z.string().nullable(),
+  lat: z.number(),
+  lng: z.number(),
+  /** Straight-line metres from the subject listing. */
+  distanceMeters: z.number().nonnegative(),
+});
+
+export type Poi = z.infer<typeof poiSchema>;
+
+export const poiLookupResultSchema = z.object({
+  pois: z.array(poiSchema),
+  /**
+   * True when the answer is a stale cache entry or an empty set served because
+   * the upstream refused — a 429 from a free Overpass mirror must degrade the
+   * panel, not fail the page. The UI says "couldn't refresh" instead of "none
+   * nearby", because those mean opposite things to someone choosing a home.
+   */
+  degraded: z.boolean().default(false),
+  fetchedAt: z.string(),
+});
+
+export type PoiLookupResult = z.infer<typeof poiLookupResultSchema>;
+
+export interface PoiProvider {
+  readonly name: string;
+  nearby(input: {
+    center: Coordinate;
+    radiusMeters: number;
+    categories?: readonly PoiCategory[];
+    signal?: AbortSignal;
+  }): Promise<PoiLookupResult>;
+}
+
+// --- the autocomplete envelope ---------------------------------------------
+
+/**
+ * One endpoint, one ranked list, a `source` per row. The client never knows
+ * which tier answered, only that some rows came from our own data — see D39.
+ */
+export const placeSuggestionsSchema = z.object({
+  suggestions: z.array(geocodeResultSchema),
+  /** Which tiers contributed, for the dev-only debug line and for tests. */
+  sources: z.array(geocodeSourceSchema),
+  /** True when tier 2 was skipped or refused; the local rows still stand. */
+  degraded: z.boolean(),
+});
+
+export type PlaceSuggestions = z.infer<typeof placeSuggestionsSchema>;
+
+export const placeSearchQuerySchema = z.object({
+  q: z.string().min(1).max(120),
+  citySlug: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(20).default(8),
+});
+
+export type PlaceSearchQuery = z.infer<typeof placeSearchQuerySchema>;
+
+/** Below this, only the local tier runs — see D39 for why. */
+export const AUTOCOMPLETE_MIN_REMOTE_CHARS = 3;
+
+/** Tier 2 runs only when tier 1 returned fewer than this. */
+export const AUTOCOMPLETE_LOCAL_SUFFICIENT_COUNT = 5;
+
+/** Client-side debounce before tier 2 can be reached, in milliseconds. */
+export const AUTOCOMPLETE_DEBOUNCE_MS = 250;

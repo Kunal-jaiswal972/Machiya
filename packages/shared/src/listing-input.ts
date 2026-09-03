@@ -5,7 +5,7 @@ import {
   listingTypeSchema,
   propertyTypeSchema,
 } from './enums.js';
-import { latitudeSchema, longitudeSchema } from './geo.js';
+import { latitudeSchema, longitudeSchema } from './geo/index.js';
 
 /**
  * What a lister may send when creating or editing a listing.

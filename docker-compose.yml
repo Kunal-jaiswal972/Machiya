@@ -1,11 +1,19 @@
 # Machiya / RentNear local environment.
 #
 #   docker compose up -d                  core stack: db, cache, storage, mail, apps
-#   docker compose --profile geo up -d    adds Photon and OSRM
+#   docker compose --profile geo up -d    adds Nominatim and OSRM
 #
 # The geo services sit behind a profile on purpose: they cannot start until
 # scripts/bootstrap.sh has produced the merged OSM extract and built their
 # indexes, and the core stack has to be usable before that happens.
+#
+# The OSRM images are published for linux/amd64 only, hence the platform pins.
+# On Apple silicon they run under emulation and the graph build is slow.
+#
+# `api`, `worker` and `web` declare no `healthcheck:` here on purpose: each of
+# their Dockerfiles ends with a HEALTHCHECK, and compose's `service_healthy`
+# reads the container's health status regardless of which layer declared it.
+# Duplicating them here would mean two definitions to keep in step.
 
 name: machiya
 
@@ -133,8 +141,8 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:4000}
       AUTH_TRUSTED_ORIGINS: ${AUTH_TRUSTED_ORIGINS:-http://localhost:5173}
+      GEOCODE_PROVIDER: ${GEOCODE_PROVIDER:-nominatim}
       NOMINATIM_URL: http://nominatim:8080
-      PHOTON_URL: http://photon:2322
       OSRM_CAR_URL: http://osrm-car:5000
       OSRM_BIKE_URL: http://osrm-bike:5000
       OVERPASS_URL: ${OVERPASS_URL:-https://overpass-api.de/api/interpreter}
@@ -153,6 +161,15 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-machiya}:${POSTGRES_PASSWORD:-machiya}@postgis:5432/${POSTGRES_DB:-machiya}?schema=public
       REDIS_URL: redis://redis:6379
       FUEL_SCRAPE_CRON: ${FUEL_SCRAPE_CRON:-0 * * * *}
+      # The worker sends the enquiry notification mail, so it needs its own SMTP
+      # credentials and a link target — the API's copy is not shared with it.
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_SECURE: 'false'
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-Machiya <no-reply@machiya.local>}
+      WEB_APP_URL: ${WEB_APP_URL:-http://localhost:5173}
       # The worker is the only process that reads image bytes, so it is the only
       # one that needs access to the private originals prefix.
       S3_ENDPOINT: http://minio:9000
@@ -209,8 +226,13 @@ services:
       THREADS: ${NOMINATIM_THREADS:-4}
     volumes:
       - ./osm-data:/osm:ro
+      # Verified against the image: `ls -d /var/lib/postgresql/*/main` inside
+      # mediagis/nominatim:5.3 is 16, so this really is the cluster directory.
+      # Mount it anywhere else and the multi-minute import repeats on every
+      # `docker compose up`. There is deliberately no flatnode volume: that is a
+      # file path set through FLATNODE_FILE, and three city extracts are far too
+      # small to need one.
       - nominatim-data:/var/lib/postgresql/16/main
-      - nominatim-flatnode:/nominatim/flatnode
     shm_size: 1gb
     ports:
       - '${NOMINATIM_PORT:-7070}:8080'
@@ -222,35 +244,9 @@ services:
       # A cold import must not be mistaken for a wedged container.
       start_period: 45m
 
-  # Optional type-ahead layer on top of Nominatim. Photon cannot read an
-  # .osm.pbf: it imports from a Nominatim database, so it only makes sense once
-  # the service above has finished importing. Opt in with --profile photon after
-  # building an index. See DECISIONS.md D26.
-  photon:
-    image: rtuszik/photon-docker:2.4.0
-    profiles: ['photon']
-    restart: unless-stopped
-    depends_on:
-      nominatim:
-        condition: service_healthy
-    environment:
-      NOMINATIM_HOST: nominatim
-      NOMINATIM_USER: nominatim
-      NOMINATIM_PASSWORD: ${NOMINATIM_PASSWORD:-nominatim}
-      UPDATE_STRATEGY: DISABLED
-    volumes:
-      - photon-data:/photon/photon_data
-    ports:
-      - '${PHOTON_PORT:-2322}:2322'
-    healthcheck:
-      test: ['CMD-SHELL', 'wget -q --spider http://127.0.0.1:2322/status || exit 1']
-      interval: 30s
-      timeout: 5s
-      retries: 20
-      start_period: 30m
-
   osrm-init:
     image: osrm/osrm-backend:v5.25.0
+    platform: linux/amd64
     profiles: ['geo']
     volumes:
       - ./osm-data:/data:ro
@@ -259,6 +255,12 @@ services:
     command:
       - >
         set -e;
+        if [ ! -f /data/merged.osm.pbf ]; then
+        echo "osrm-init: /data/merged.osm.pbf is missing.";
+        echo "Run 'pnpm bootstrap' first — it downloads the Geofabrik zones, cuts the";
+        echo "three city bboxes and merges them into ./osm-data/merged.osm.pbf.";
+        exit 1;
+        fi;
         for profile in car bicycle; do
         if [ -f "/graph/$$profile/merged.osrm.mldgr" ]; then
         echo "$$profile graph already built, skipping";
@@ -276,6 +278,7 @@ services:
 
   osrm-car:
     image: osrm/osrm-backend:v5.25.0
+    platform: linux/amd64
     profiles: ['geo']
     restart: unless-stopped
     depends_on:
@@ -285,7 +288,8 @@ services:
       - osrm-data:/graph
     command: ['osrm-routed', '--algorithm', 'mld', '/graph/car/merged.osrm']
     ports:
-      - '${OSRM_CAR_PORT:-5000}:5000'
+      # 5000 is AirPlay Receiver on macOS, so the default is out of its way.
+      - '${OSRM_CAR_PORT:-5100}:5000'
     healthcheck:
       test:
         [
@@ -299,6 +303,7 @@ services:
 
   osrm-bike:
     image: osrm/osrm-backend:v5.25.0
+    platform: linux/amd64
     profiles: ['geo']
     restart: unless-stopped
     depends_on:
@@ -313,7 +318,7 @@ services:
       test:
         [
           'CMD-SHELL',
-          'curl -fsS "http://127.0.0.1:5000/route/v1/bike/85.13,25.59;85.14,25.60?overview=false" >/dev/null',
+          'curl -fsS "http://127.0.0.1:5000/route/v1/driving/85.13,25.59;85.14,25.60?overview=false" >/dev/null',
         ]
       interval: 20s
       timeout: 5s
@@ -326,5 +331,3 @@ volumes:
   minio-data:
   osrm-data:
   nominatim-data:
-  nominatim-flatnode:
-  photon-data:

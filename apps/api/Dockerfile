@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-# Debian slim rather than Alpine: Prisma's default engine binary targets glibc,
-# and chasing linux-musl binaryTargets buys nothing here.
+# Debian slim rather than Alpine: the native dependencies in this tree ship
+# glibc prebuilds and build from source on musl. See DECISIONS.md D7.
 FROM node:22-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
@@ -12,7 +12,7 @@ WORKDIR /app
 
 FROM base AS build
 # Manifests first so a source-only change reuses the install layer.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig.base.json prisma.config.ts ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/db/package.json packages/db/
 COPY apps/api/package.json apps/api/
@@ -22,6 +22,11 @@ RUN pnpm install --frozen-lockfile --filter @machiya/api...
 COPY packages/shared packages/shared
 COPY packages/db packages/db
 COPY apps/api apps/api
+# `prisma generate` loads prisma.config.ts, which refuses to run without a
+# connection string — correctly, since every other command needs one. Generating
+# a client does not touch a database, so a placeholder is enough and keeps the
+# real error message intact for humans. Nothing at runtime reads this.
+ENV DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build?schema=public
 RUN pnpm -F @machiya/shared build \
   && pnpm -F @machiya/db build \
   && pnpm -F @machiya/api build

@@ -21,15 +21,16 @@
 // hand-written migration. See DECISIONS.md D13.
 
 generator client {
-  provider        = "prisma-client"
-  output          = "../generated/prisma"
-  previewFeatures = ["postgresqlExtensions"]
+  provider = "prisma-client"
+  output   = "../generated/prisma"
 }
 
+// No `url` here: Prisma 7 moved the connection string into `prisma.config.ts`
+// at the repo root. No `extensions` either — the `postgresqlExtensions` preview
+// feature is gone in 7, so `postgis` and `pg_trgm` are created by plain SQL in
+// the init migration and Prisma no longer tracks them. See DECISIONS.md D5.
 datasource db {
-  provider   = "postgresql"
-  url        = env("DATABASE_URL")
-  extensions = [postgis, pg_trgm]
+  provider = "postgresql"
 }
 
 enum UserRole {
