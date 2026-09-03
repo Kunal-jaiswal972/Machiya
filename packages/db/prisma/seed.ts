@@ -391,24 +391,33 @@ interface PlannedListing {
 /** 17 listings per city: 51 in total, spread across every enum value. */
 function planListings(city: CityConfig, index: number): PlannedListing[] {
   const planned: PlannedListing[] = [];
-  const perCity = 17;
+  const perCity = 40;
 
   // Localities sit 5-20 km apart, so spreading listings evenly across all of
   // them leaves only three or four inside any 3 km office radius — which is the
-  // one view this whole app is built around. Two thirds are therefore clustered
-  // on the first two localities (where seedUsers puts each dev office) and the
-  // rest spread over the others, so the ring view has something to show AND the
-  // wider city is still populated.
-  const nearOffice = Math.round(perCity * 0.65);
+  // one view this whole app is built around. Seventy percent are therefore
+  // clustered on the first two localities (where seedUsers puts each dev office)
+  // and the rest spread over the others, so the ring view has something real to
+  // show AND the wider city is still populated for a different office.
+  //
+  // 40 per city rather than a token handful for two reasons: a product whose
+  // argument is "look how many homes are near your office" cannot make it with
+  // five pins, and the design's own performance bar — 60 markers on screen at
+  // 60fps while dragging the office pin — needs 60 markers to exist.
+  const nearOffice = Math.round(perCity * 0.7);
 
   for (let n = 0; n < perCity; n += 1) {
     const locality = (
       n < nearOffice
-        ? city.localities[n % 2]
+        ? // Two thirds of the near-office cluster on the office's OWN locality
+          // and a third on the neighbouring one, rather than an even split: the
+          // second locality is 3-5 km away, so an even split puts half the
+          // cluster outside the radius it exists to fill.
+          city.localities[n % 3 === 2 ? 1 : 0]
         : city.localities[2 + ((n - nearOffice) % Math.max(1, city.localities.length - 2))]
     ) as Locality;
 
-    const point = jitterWithin(locality, n < nearOffice ? 1_800 : 1_400);
+    const point = jitterWithin(locality, n < nearOffice ? 2_200 : 1_400);
 
     const bedrooms = 1 + (n % 4);
     const bathrooms = Math.max(1, bedrooms - (n % 2));

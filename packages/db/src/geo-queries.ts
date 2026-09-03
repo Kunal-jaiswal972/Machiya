@@ -240,13 +240,12 @@ export async function searchListingsInRadius(
       l."salePrice",
       l."maintenanceMonthly",
       l."isVerified",
-      (
-        SELECT li."objectKey"
-        FROM "ListingImage" li
-        WHERE li."listingId" = l."id"
-        ORDER BY li."isCover" DESC, li."sortOrder" ASC
-        LIMIT 1
-      ) AS "coverImageKey",
+      -- READY only, and the VARIANT prefix rather than the original's key: the
+      -- original is deleted once derivation succeeds, so selecting it gave every
+      -- processed listing a null cover.
+      cover."variantBaseKey" AS "coverVariantBase",
+      cover."lqip" AS "coverLqip",
+      cover."dominantColor" AS "coverDominantColor",
       ${distanceExpr} AS "distanceMeters",
       (CASE
         WHEN ${distanceExpr} <= ${RING_1} THEN 1
@@ -255,6 +254,13 @@ export async function searchListingsInRadius(
       END) AS "ring",
       ${plan.keyExpr} AS "sortKey"
     FROM "Listing" l
+    LEFT JOIN LATERAL (
+      SELECT li."variantBaseKey", li."lqip", li."dominantColor"
+      FROM "ListingImage" li
+      WHERE li."listingId" = l."id" AND li."status" = 'READY'
+      ORDER BY li."isCover" DESC, li."sortOrder" ASC
+      LIMIT 1
+    ) cover ON true
     WHERE ${Prisma.join(conditions, ' AND ')}
   `;
 
@@ -376,16 +382,22 @@ export async function findSimilarListings(input: {
       l."salePrice",
       l."maintenanceMonthly",
       l."isVerified",
-      (
-        SELECT li."objectKey"
-        FROM "ListingImage" li
-        WHERE li."listingId" = l."id"
-        ORDER BY li."isCover" DESC, li."sortOrder" ASC
-        LIMIT 1
-      ) AS "coverImageKey",
+      -- READY only, and the VARIANT prefix rather than the original's key: the
+      -- original is deleted once derivation succeeds, so selecting it gave every
+      -- processed listing a null cover.
+      cover."variantBaseKey" AS "coverVariantBase",
+      cover."lqip" AS "coverLqip",
+      cover."dominantColor" AS "coverDominantColor",
       ST_Distance(l."location", s."location") AS "distanceMeters"
     FROM "Listing" l
     CROSS JOIN subject s
+    LEFT JOIN LATERAL (
+      SELECT li."variantBaseKey", li."lqip", li."dominantColor"
+      FROM "ListingImage" li
+      WHERE li."listingId" = l."id" AND li."status" = 'READY'
+      ORDER BY li."isCover" DESC, li."sortOrder" ASC
+      LIMIT 1
+    ) cover ON true
     WHERE l."id" <> s."id"
       AND l."status" = 'PUBLISHED'
       AND l."listingType" = s."listingType"

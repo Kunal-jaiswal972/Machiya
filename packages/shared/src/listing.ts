@@ -94,13 +94,39 @@ export const listingSummarySchema = z.object({
   salePrice: z.number().int().nullable(),
   maintenanceMonthly: z.number().int().nullable(),
   isVerified: z.boolean(),
-  coverImageKey: z.string().nullable(),
+
+  /**
+   * The cover photo's variant prefix — NOT the original's object key, which is
+   * nulled once the worker has derived the variants and would therefore be null
+   * for every processed image. Only READY images are considered, so a listing
+   * whose photos are still being decoded has no cover rather than a broken one.
+   *
+   * Turning this into a URL is the API's job, not the database's: the public
+   * base URL is deployment configuration and `packages/db` has no business
+   * knowing it. See `listingCardSchema` below.
+   */
+  coverVariantBase: z.string().nullable(),
+  /** Inline base64 preview, so a card never flashes empty. */
+  coverLqip: z.string().nullable(),
+  /** Average colour of the cover, for the block behind a loading photo. */
+  coverDominantColor: z.string().nullable(),
+
   /** Straight-line metres from the office. Road distance comes from OSRM. */
   distanceMeters: z.number().nonnegative(),
   ring: ringSchema,
 });
 
 export type ListingSummary = z.infer<typeof listingSummarySchema>;
+
+/**
+ * What the API actually sends for a result card: the same row with the cover
+ * resolved to a fetchable URL.
+ */
+export const listingCardSchema = listingSummarySchema
+  .omit({ coverVariantBase: true })
+  .extend({ coverUrl: z.string().nullable() });
+
+export type ListingCard = z.infer<typeof listingCardSchema>;
 
 export const listingSearchResultSchema = z.object({
   listings: z.array(listingSummarySchema),
@@ -111,3 +137,10 @@ export const listingSearchResultSchema = z.object({
 });
 
 export type ListingSearchResult = z.infer<typeof listingSearchResultSchema>;
+
+/** The search response as it leaves the API. */
+export const listingSearchResponseSchema = listingSearchResultSchema
+  .omit({ listings: true })
+  .extend({ listings: z.array(listingCardSchema) });
+
+export type ListingSearchResponse = z.infer<typeof listingSearchResponseSchema>;

@@ -15,7 +15,9 @@ import { healthRouter, type HealthProbes } from './routes/health.js';
 import { helloRouter } from './routes/hello.js';
 import { listingsRouter } from './routes/listings.js';
 import { meRouter } from './routes/me.js';
+import { officesRouter } from './routes/offices.js';
 import { placesRouter } from './routes/places.js';
+import { searchRouter } from './routes/search.js';
 
 export interface CreateAppOptions {
   /** Injectable so tests can exercise routes without live infrastructure. */
@@ -107,10 +109,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
   // Public: picking an office is the product's first interaction and happens
   // before anyone signs in.
   app.use('/api', placesRouter());
+  app.use('/api', searchRouter());
 
   if (sessionResolver) {
     app.use('/api', meRouter(sessionResolver));
     app.use('/api', listingsRouter(sessionResolver));
+    app.use('/api', officesRouter(sessionResolver));
   }
 
   app.use(notFoundHandler);
