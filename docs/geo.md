@@ -157,11 +157,63 @@ transit. Fixed rather than open because they are one batched query, one legend
 and one set of icon layers, and each of those has to know the whole set up front.
 
 **One batched query per listing**, not one per category — a free Overpass mirror
-will rate-limit seven sequential requests where it tolerates one. Cached 24 h.
+will rate-limit seven sequential requests where it tolerates one. Cached 24 h,
+with a second two-week copy so a later refusal has something to serve.
+
+### The query is too slow to be on a request path
+
+Measured against `overpass.kumi.systems`, inside 1.5 km of a Koramangala
+address:
+
+| Query                         | Result                   |
+| ----------------------------- | ------------------------ |
+| `out center tags qt;`         | 200 in 38s, 343 elements |
+| the same, without `qt`        | still running at 60s     |
+| `qt` again, later in the day  | 200 in 85s               |
+| radius cut to 1 km, with `qt` | still running at 90s     |
+
+Two conclusions. **`qt` is load-bearing** — quadtile ordering is the difference
+between an answer and a timeout. And the narrower query timing out while the
+wider one succeeded means the variance is the mirror queueing us, not the
+query's cost, so no version of this is reliably fast.
+
+So **a request never waits for Overpass**. A cold read returns
+`{ pois: [], degraded: true }` immediately and starts a background warm; the
+client polls every 8 seconds while the answer is degraded and empty. Every later
+viewer is served from cache. An in-flight key set means ten simultaneous viewers
+produce one upstream query.
+
+`OVERPASS_TIMEOUT_MS` (default 90s) bounds that background job and the
+`[timeout:]` inside the query — never anything a user waits for.
+
+### Which mirror, and why not the main one
+
+**`overpass-api.de` answers 406 Not Acceptable to every User-Agent tried except
+curl's own.** Verified across four UAs with the identical query: no UA,
+`Machiya/0.1 (contact@example.com)`, `Mozilla/5.0 machiya/0.1` and
+`curl/8.0.1` — only the last got a 200. Spoofing curl to get past a mirror's own
+policy is not a fix, so the default is:
+
+```
+OVERPASS_URL=https://overpass.kumi.systems/api/interpreter
+```
+
+Others, if that one is unavailable: `https://overpass.private.coffee/api/interpreter`
+(504'd under the same load here), `https://overpass.osm.jp/api/interpreter`, or
+self-hosting `wiktorn/overpass-api` against the same merged extract the other geo
+services use — which is the real answer for anything beyond development.
 
 On a 429 or a timeout the lookup returns cached-or-empty with `degraded: true`
 rather than failing the request. The sidebar then says "couldn't refresh nearby
 places" instead of "none nearby", because those mean opposite things.
+
+### The abort-signal trap
+
+All three geo providers pass `AbortSignal.any([caller, AbortSignal.timeout(ms)])`.
+Passing only the caller's signal — which is the request-close signal — silently
+**removes** the timeout, and a slow mirror then held a request open past 45
+seconds instead of degrading at 25. If you add a fourth provider, combine the
+signals.
 
 ## OSM data pipeline
 

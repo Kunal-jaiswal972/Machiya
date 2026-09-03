@@ -790,3 +790,121 @@ The migration is hand-edited: Prisma's generated version added a NOT NULL column
 with no default to a populated table, which cannot run. The value is derivable
 for every existing row — it is exactly what the old code computed — so it is
 backfilled in place and only then constrained.
+
+## Step 7 — the detail view
+
+### D42. Overpass is warmed in the background; a request never waits for it
+
+The brief asks for a single batched Overpass query per listing, cached 24h,
+degrading on 429 rather than failing. All of that stands. What measurement
+added is that **the query is far too slow to be on a request path at all**.
+
+Measured against `overpass.kumi.systems`, the batched seven-category query
+inside 1.5 km of a Koramangala address:
+
+| Attempt                           | Result                   |
+| --------------------------------- | ------------------------ |
+| `out center tags qt;`             | 200 in 38s, 343 elements |
+| same query, `out center tags;`    | still running at 60s     |
+| `qt`, later in the day            | 200 in 85s               |
+| radius reduced to 1 km, with `qt` | still running at 90s     |
+
+Two things follow. First, **`qt` is not a nicety** — sorting by quadtile index
+rather than by id is the difference between an answer and a timeout, and it is
+now in the query. Second, the narrower query timing out while the wider one
+succeeded means the variance is the mirror queueing us, not the query's cost, so
+there is no version of this that is reliably fast.
+
+So the POI lookup **never blocks**: a cold read returns
+`{ pois: [], degraded: true }` immediately and starts a background warm; the
+client polls every 8 seconds while the answer is degraded and empty, and picks
+up the real one when it lands. Every later viewer of that listing is served from
+cache for 24 hours, and a second key holds a two-week copy so a later refusal
+has something to serve. An in-flight key set means ten simultaneous viewers
+produce one upstream query.
+
+`degraded` already meant "could not refresh, not necessarily empty", so this is
+exactly the state it exists for — and the panel says "checking" while warming
+and "could not refresh" afterwards, never "none nearby".
+
+`OVERPASS_TIMEOUT_MS` therefore defaults to **90 seconds**. That is not a request
+timeout: it bounds a background job and the `[timeout:]` inside the Overpass
+query, and nothing waits on either.
+
+**The default mirror is NOT `overpass-api.de`.** It answers **406 Not
+Acceptable** to every User-Agent tried except curl's own — verified across four:
+no UA, `Machiya/0.1 (contact@example.com)`, `Mozilla/5.0 machiya/0.1`, and
+`curl/8.0.1`, of which only the last got a 200, with the identical query and
+parameters. Spoofing curl to get past a mirror's own policy is not a fix, so the
+default is the Kumi Systems mirror, which accepts a descriptive UA. Alternatives
+and the self-host path are in `docs/geo.md`.
+
+One smaller bug the same work exposed, now fixed in all three geo providers:
+passing only the caller's `AbortSignal` — which is the request-close signal —
+**silently removed the timeout**, and a slow mirror held a request open past 45
+seconds instead of degrading at 25. They now pass
+`AbortSignal.any([caller, AbortSignal.timeout(ms)])`, so the ceiling holds
+whether or not a caller supplies one.
+
+### D43. A route we could not measure is labelled, not hidden
+
+When OSRM has no answer — the graphs are not built, the container is down, or
+there is genuinely no route — the commute panel shows a straight-line estimate
+(a 1.35 detour factor, 22 km/h by car and 18 by bike) with `degraded: true`,
+and the UI says so in words next to it.
+
+The alternative was showing nothing, and it is worse. The commute number is the
+entire argument of this product; a blank panel reads as "this listing has no
+commute" rather than "we could not measure it". But presenting an estimate as a
+measurement would be worse still, so the flag travels with the number all the
+way to the sentence under it.
+
+`osrm-routed` **ignores the profile segment in the route URL** — the graph it was
+given decides the profile — so the profile selects the base URL and the path
+segment is the literal `driving` for both. Writing `bike` there would produce
+plausible car answers labelled as bike ones, which is the sort of wrong that
+never surfaces as an error.
+
+### D44. A view is one viewer per window, and the owner is not a viewer
+
+`ListingView` rows are what the analytics chart aggregates; `Listing.viewCount`
+is what the search query reads. Both are written in **one transaction**, so they
+cannot disagree — and a seed that disagreed with itself would look like a bug in
+whichever one you checked second.
+
+Three rules make the number mean something:
+
+- **Deduplicated per viewer per 30 minutes**, keyed on the signed-in user id
+  when there is one. Without it the count measures refreshes.
+- **Anonymous viewers are keyed on a SHA-256 of IP + user-agent**, truncated.
+  Hashed because a raw IP in Redis is personal data this product has no use for,
+  and a one-way digest keys a counter just as well.
+- **The owner reading their own listing does not count.** This is the single
+  biggest source of nonsense in a small site's numbers.
+
+A failed write is swallowed with a log line. Telemetry must never fail a page
+render, and there is nothing the user could do about it anyway.
+
+### D45. The detail view is a child route of the search, not a sibling
+
+`/listings/:slug` renders as a panel inside the search page's map column,
+through an `<Outlet />`. Making it a sibling route would unmount the search on
+every navigation — which means tearing down a WebGL context, refetching every
+tile, losing the camera and the scroll position, and paying for all of it again
+on the way back.
+
+Two consequences worth knowing:
+
+- **What the panel wants drawn on the map arrives through a store**
+  (`stores/detail-overlay.ts`), not props: the panel is below the map in the
+  tree, so the route geometry and the POIs would otherwise have to be lifted
+  into the search page, which would then re-render on every POI arrival.
+- **Closing is `navigate(-1)`** when there is history, so the search returns
+  exactly as it was rather than being rebuilt from the URL.
+
+The panel renders as a springing sidebar on desktop and a drag-dismissable
+bottom sheet on mobile, and it renders **one or the other** — chosen by a
+`matchMedia` hook rather than by rendering both and hiding one with `lg:hidden`.
+That was not a preference: hiding one put the entire listing in the DOM twice,
+with two `aria-label="Listing detail"` landmarks and every control duplicated,
+which a Playwright strict-mode violation caught before a person had to.

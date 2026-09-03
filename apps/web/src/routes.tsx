@@ -4,6 +4,7 @@ import { RequireAuth } from './components/RequireAuth';
 import { RouteError } from './components/RouteError';
 import { AccountPage } from './pages/AccountPage';
 import { ForbiddenPage } from './pages/ForbiddenPage';
+import { ListingDetailRoute } from './pages/ListingDetailRoute';
 import { SearchPage } from './pages/SearchPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
@@ -20,7 +21,21 @@ export const router = createBrowserRouter([
     // than reloading the page — reloading would throw away the search state.
     errorElement: <RouteError />,
     children: [
-      { index: true, element: <SearchPage />, errorElement: <RouteError /> },
+      // The detail view is a CHILD of the search page, not a sibling: that is
+      // what keeps the WebGL map mounted across the navigation instead of
+      // tearing it down, refetching every tile and losing the camera.
+      {
+        element: <SearchPage />,
+        errorElement: <RouteError />,
+        children: [
+          { index: true, element: null },
+          {
+            path: 'listings/:slug',
+            element: <ListingDetailRoute />,
+            errorElement: <RouteError />,
+          },
+        ],
+      },
 
       { path: 'auth/sign-in', element: <SignInPage /> },
       { path: 'auth/sign-up', element: <SignUpPage /> },

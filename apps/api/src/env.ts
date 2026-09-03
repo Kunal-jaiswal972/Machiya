@@ -82,8 +82,22 @@ const envSchema = z.object({
   PUBLIC_OSRM_URL: z.string().url().default('https://router.project-osrm.org'),
 
   // --- POIs (Overpass) -----------------------------------------------------
-  OVERPASS_URL: z.string().url().default('https://overpass-api.de/api/interpreter'),
-  OVERPASS_TIMEOUT_MS: z.coerce.number().int().min(1000).max(180_000).default(25_000),
+  /**
+   * Defaults to the Kumi Systems mirror, NOT overpass-api.de. The main instance
+   * answers 406 Not Acceptable to every User-Agent tried except curl's own —
+   * verified against four candidate UAs — and spoofing curl to get past a
+   * mirror's own policy is not a fix. Kumi accepts the descriptive UA this app
+   * sends. See docs/geo.md for the other mirrors and the self-host path.
+   */
+  OVERPASS_URL: z.string().url().default('https://overpass.kumi.systems/api/interpreter'),
+  /**
+   * Deliberately long, because this is the ceiling on a BACKGROUND warm and on
+   * the `[timeout:]` inside the Overpass query itself — never on anything a
+   * user waits for. Measured against a healthy public mirror, the batched
+   * seven-category query takes 38 seconds on a good run and exceeds 50 on a
+   * throttled one. See apps/api/src/geo/overpass.ts.
+   */
+  OVERPASS_TIMEOUT_MS: z.coerce.number().int().min(1000).max(180_000).default(90_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

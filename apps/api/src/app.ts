@@ -13,6 +13,7 @@ import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import type { SessionResolver } from './middleware/require-auth.js';
 import { healthRouter, type HealthProbes } from './routes/health.js';
 import { helloRouter } from './routes/hello.js';
+import { listingDetailRouter } from './routes/listing-detail.js';
 import { listingsRouter } from './routes/listings.js';
 import { meRouter } from './routes/me.js';
 import { officesRouter } from './routes/offices.js';
@@ -114,6 +115,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
   if (sessionResolver) {
     app.use('/api', meRouter(sessionResolver));
     app.use('/api', listingsRouter(sessionResolver));
+    app.use('/api', listingDetailRouter(sessionResolver));
     app.use('/api', officesRouter(sessionResolver));
   }
 

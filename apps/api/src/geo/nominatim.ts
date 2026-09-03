@@ -114,7 +114,9 @@ async function requestJson(url: URL, signal?: AbortSignal): Promise<unknown> {
   // NOMINATIM_URL at the public host.
   const response = await fetch(url, {
     headers: { 'user-agent': env.NOMINATIM_USER_AGENT, accept: 'application/json' },
-    signal: signal ?? AbortSignal.timeout(5_000),
+    // Both signals: the caller's abort AND a ceiling. Passing only the
+    // caller's would leave a hung upstream holding the request open.
+    signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(5_000)]),
   });
 
   if (!response.ok) {

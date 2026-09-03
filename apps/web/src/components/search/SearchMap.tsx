@@ -1,6 +1,6 @@
 import { RING_RADII_METERS, type ListingCard } from '@machiya/shared';
 import { bbox as turfBbox, circle } from '@turf/turf';
-import type { Feature, FeatureCollection, Point, Polygon } from 'geojson';
+import type { Feature, FeatureCollection, LineString, Point, Polygon } from 'geojson';
 
 import type { MapRef } from 'react-map-gl/maplibre';
 import Map, {
@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { env } from '../../env';
 import { useMapPalette } from '../../hooks/use-map-palette';
 import { formatRupeesCompact } from '../../lib/format';
+import { useDetailOverlay } from '../../stores/detail-overlay';
 import { useSearchUi } from '../../stores/search-ui';
 
 /**
@@ -44,6 +45,8 @@ export interface SearchMapProps {
 }
 
 const RINGS_SOURCE = 'machiya-rings';
+const ROUTE_SOURCE = 'machiya-route';
+const POI_SOURCE = 'machiya-pois';
 const LISTINGS_SOURCE = 'machiya-listings';
 const RING_LAYERS = ['ring-3-fill', 'ring-2-fill', 'ring-1-fill'] as const;
 const RING_LINE_LAYERS = ['ring-3-line', 'ring-2-line', 'ring-1-line'] as const;
@@ -108,13 +111,53 @@ export function SearchMap({
   const setHoveredId = useSearchUi((state) => state.setHoveredId);
   const lastHovered = useRef<string | null>(null);
   const ringAnimation = useRef<number | null>(null);
+  const routeAnimation = useRef<number | null>(null);
   const everLoaded = useRef(false);
+
+  // The detail panel is a child route rendered through an Outlet, so what it
+  // wants drawn arrives through a store rather than props. See
+  // stores/detail-overlay.ts.
+  const routeGeometry = useDetailOverlay((state) => state.routeGeometry);
+  const pois = useDetailOverlay((state) => state.pois);
+  const visibleCategories = useDetailOverlay((state) => state.visibleCategories);
 
   const rings = useMemo(
     () => (office ? ringsFeatureCollection(office, radiusMeters) : null),
     [office, radiusMeters],
   );
   const points = useMemo(() => listingsFeatureCollection(listings), [listings]);
+
+  const routeLine = useMemo<FeatureCollection<LineString> | null>(() => {
+    if (!routeGeometry) return null;
+    return {
+      type: 'FeatureCollection',
+      features: [{ type: 'Feature', geometry: routeGeometry, properties: {} }],
+    };
+  }, [routeGeometry]);
+
+  const poiPoints = useMemo<FeatureCollection<Point>>(
+    () => ({
+      type: 'FeatureCollection',
+      features: pois
+        .filter((poi) => visibleCategories.has(poi.category))
+        .map((poi) => ({
+          type: 'Feature' as const,
+          id: poi.id,
+          geometry: { type: 'Point' as const, coordinates: [poi.lng, poi.lat] },
+          // The colour rides on the FEATURE rather than a `match` expression in
+          // the paint spec. Two reasons: the tokens are CSS variables maplibre
+          // cannot parse, so they have to be resolved on the client anyway, and
+          // a data-driven `['get', 'color']` stays one layer for seven
+          // categories instead of seven layers being added and removed.
+          properties: {
+            category: poi.category,
+            name: poi.name ?? '',
+            color: palette.poi[poi.category],
+          },
+        })),
+    }),
+    [pois, visibleCategories, palette.poi],
+  );
 
   // --- camera: the map's own easing, never React view state -----------------
   // Read out as a primitive, deliberately: `office` is a fresh object on every
@@ -224,6 +267,46 @@ export function SearchMap({
 
     lastHovered.current = hoveredId;
   }, [hoveredId, styleReady, points]);
+
+  // --- the route draws from office to listing --------------------------------
+  useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (!map || !styleReady || !routeLine || !map.getLayer('route-line')) return;
+
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (reduced) {
+      map.setPaintProperty('route-line', 'line-dasharray', [1, 0]);
+      return;
+    }
+
+    // Drawn with a stroke-dashoffset-style trick: the dash pattern starts as
+    // one long gap and closes up, so the line appears to travel from the office
+    // to the listing. Direction is information — it is YOUR commute, one way —
+    // and this is written through setPaintProperty from rAF rather than from
+    // React state, per the motion discipline in docs/design.md.
+    const start = performance.now();
+    const duration = 700;
+
+    const step = (now: number): void => {
+      const progress = Math.min(1, (now - start) / duration);
+      const eased = 1 - (1 - progress) ** 3;
+
+      // A 400-unit pattern: the drawn part grows and the gap shrinks.
+      map.setPaintProperty('route-line', 'line-dasharray', [
+        Math.max(0.01, eased * 400),
+        Math.max(0.01, (1 - eased) * 400),
+      ]);
+
+      if (progress < 1) routeAnimation.current = requestAnimationFrame(step);
+    };
+
+    routeAnimation.current = requestAnimationFrame(step);
+
+    return () => {
+      if (routeAnimation.current !== null) cancelAnimationFrame(routeAnimation.current);
+    };
+  }, [routeLine, styleReady]);
 
   const onClick = useCallback(
     (event: MapLayerMouseEvent) => {
@@ -428,6 +511,69 @@ export function SearchMap({
               }}
             />
           </Source>
+
+          {routeLine ? (
+            <Source id={ROUTE_SOURCE} type="geojson" data={routeLine}>
+              {/* A casing under the line, so it stays readable over a yellow
+                  arterial road — the map's own colour for a motorway. */}
+              <Layer
+                id="route-casing"
+                type="line"
+                paint={{
+                  'line-color': palette.markerBg,
+                  'line-width': 7,
+                  'line-opacity': 0.85,
+                }}
+                layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+              />
+              <Layer
+                id="route-line"
+                type="line"
+                paint={{
+                  'line-color': palette.route,
+                  'line-width': 3.5,
+                  'line-dasharray': [0.01, 400],
+                }}
+                layout={{ 'line-cap': 'butt', 'line-join': 'round' }}
+              />
+            </Source>
+          ) : null}
+
+          {poiPoints.features.length > 0 ? (
+            <Source id={POI_SOURCE} type="geojson" data={poiPoints}>
+              {/* One layer, coloured by category through a match expression, so
+                  toggling a category is a source update rather than seven
+                  layers being added and removed. */}
+              <Layer
+                id="poi-dot"
+                type="circle"
+                paint={{
+                  'circle-radius': 5,
+                  'circle-stroke-width': 1.5,
+                  'circle-stroke-color': palette.markerBg,
+                  'circle-color': ['get', 'color'],
+                }}
+              />
+              <Layer
+                id="poi-label"
+                type="symbol"
+                minzoom={14}
+                layout={{
+                  'text-field': ['get', 'name'],
+                  'text-font': ['Noto Sans Regular'],
+                  'text-size': 10,
+                  'text-offset': [0, 1],
+                  'text-anchor': 'top',
+                  'text-allow-overlap': false,
+                }}
+                paint={{
+                  'text-color': palette.markerFg,
+                  'text-halo-color': palette.markerBg,
+                  'text-halo-width': 1.2,
+                }}
+              />
+            </Source>
+          ) : null}
 
           {office ? (
             <Marker

@@ -1,5 +1,20 @@
+import { POI_CATEGORIES, type PoiCategory } from '@machiya/shared';
 import { useEffect, useState } from 'react';
 import { useUiStore } from '../stores/ui';
+
+/**
+ * Which token each POI category is drawn in. The same mapping the legend
+ * renders from, so a colour cannot differ between the map and the key beside it.
+ */
+const POI_TOKENS: Record<PoiCategory, string> = {
+  hospital: '--clay',
+  police: '--water',
+  school: '--verdant',
+  pharmacy: '--clay',
+  atm: '--ink-soft',
+  supermarket: '--verdant',
+  transit: '--water',
+};
 
 /**
  * The design tokens, as literal colours maplibre can use.
@@ -23,6 +38,8 @@ export interface MapPalette {
   markerPriceBg: string;
   markerPriceFg: string;
   route: string;
+  /** Per POI category, resolved. Keyed by the same categories the legend uses. */
+  poi: Record<PoiCategory, string>;
 }
 
 /**
@@ -92,6 +109,12 @@ function readPalette(): MapPalette {
     markerPriceBg: readToken(styles, '--signal', '#e8b13a'),
     markerPriceFg: readToken(styles, '--signal-ink', '#3b2c08'),
     route: readToken(styles, '--water', '#3f74c0'),
+    poi: Object.fromEntries(
+      POI_CATEGORIES.map((category) => [
+        category,
+        readToken(styles, POI_TOKENS[category], '#6b7280'),
+      ]),
+    ) as Record<PoiCategory, string>,
   };
 }
 

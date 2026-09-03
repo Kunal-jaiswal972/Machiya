@@ -126,6 +126,8 @@ export const listingCardSchema = listingSummarySchema
   .omit({ coverVariantBase: true })
   .extend({ coverUrl: z.string().nullable() });
 
+export const listingCardListSchema = z.object({ listings: z.array(listingCardSchema) });
+
 export type ListingCard = z.infer<typeof listingCardSchema>;
 
 export const listingSearchResultSchema = z.object({

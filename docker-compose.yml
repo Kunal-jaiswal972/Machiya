@@ -145,7 +145,7 @@ services:
       NOMINATIM_URL: http://nominatim:8080
       OSRM_CAR_URL: http://osrm-car:5000
       OSRM_BIKE_URL: http://osrm-bike:5000
-      OVERPASS_URL: ${OVERPASS_URL:-https://overpass-api.de/api/interpreter}
+      OVERPASS_URL: ${OVERPASS_URL:-https://overpass.kumi.systems/api/interpreter}
     ports:
       - '${API_PORT:-4000}:4000'
 

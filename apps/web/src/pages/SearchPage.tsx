@@ -2,7 +2,7 @@ import { cityBboxSchema, type GeocodeResult, type ListingCard } from '@machiya/s
 import { useMutation } from '@tanstack/react-query';
 import { List, Map as MapIcon, Star } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router';
+import { Outlet, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { EmptyState } from '../components/EmptyState';
 import { FilterBar } from '../components/search/FilterBar';
@@ -260,7 +260,9 @@ export function SearchPage() {
           )}
         </div>
 
-        <div className={cn('min-h-0 flex-1', view === 'list' ? 'hidden lg:block' : 'block')}>
+        <div
+          className={cn('relative min-h-0 flex-1', view === 'list' ? 'hidden lg:block' : 'block')}
+        >
           <SearchMap
             office={office}
             radiusMeters={radiusMeters}
@@ -269,6 +271,10 @@ export function SearchPage() {
             onPickOffice={pickOffice}
             onSelectListing={onSelectListing}
           />
+
+          {/* The detail panel renders over the map, inside its stacking
+              context, so it springs in from the map's own right edge. */}
+          <Outlet />
         </div>
       </div>
     </div>
