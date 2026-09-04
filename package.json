@@ -41,6 +41,9 @@
     "compose:logs": "docker compose logs -f",
     "bootstrap": "bash scripts/bootstrap.sh",
     "geo:manifest": "tsx --env-file-if-exists=.env scripts/geo-manifest.ts write",
+    "cities:validate": "tsx --env-file-if-exists=.env scripts/validate-cities.ts",
+    "cities:boundaries": "tsx --env-file-if-exists=.env scripts/fetch-city-boundaries.ts",
+    "geo:status": "tsx --env-file-if-exists=.env scripts/geo-status.ts",
     "prepare": "husky",
     "seed:photos": "tsx --env-file-if-exists=.env scripts/fetch-seed-photos.ts"
   },

@@ -1,9 +1,12 @@
 import { Router } from 'express';
 import type { DependencyStatus, HealthResponse } from '@machiya/shared';
+import { geoArtifactStatus, type GeoArtifactStatus } from '../geo/manifest.js';
 
 export interface HealthProbes {
   database(): Promise<{ ok: boolean; postgisVersion?: string }>;
   redis(): Promise<{ ok: boolean; detail?: string }>;
+  /** Injected so the test can drive every state without a manifest on disk. */
+  geoArtifacts?(): GeoArtifactStatus;
 }
 
 const VERSION = process.env.APP_VERSION ?? '0.1.0';
@@ -61,6 +64,31 @@ export function healthRouter(probes: HealthProbes): Router {
     };
 
     res.status(body.status === 'ok' ? 200 : 503).json(body);
+  });
+
+  /**
+   * Whether the OSM artifacts on this machine describe the city config this
+   * process is running.
+   *
+   * A **separate** endpoint, deliberately. Rolling this into `/health` would
+   * make a fresh clone unhealthy until someone ran `pnpm bootstrap`, and `web`
+   * depends on `api: service_healthy` — so the core stack would refuse to come
+   * up on a checkout with no artifacts, which D6 exists to prevent. What must
+   * not happen is a newly added city serving empty results while everything
+   * reports healthy, and that is exactly what a 503 here says.
+   */
+  router.get('/health/geo', (_req, res) => {
+    const status = (probes.geoArtifacts ?? geoArtifactStatus)();
+
+    res.status(status.ok ? 200 : 503).json({
+      status: status.ok ? 'ok' : 'degraded',
+      service: 'api',
+      artifacts: status.state,
+      reason: status.reason,
+      epoch: status.epoch,
+      configHash: status.configHash,
+      timestamp: new Date().toISOString(),
+    });
   });
 
   router.get('/health/live', (_req, res) => {

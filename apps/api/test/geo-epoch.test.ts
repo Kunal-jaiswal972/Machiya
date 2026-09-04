@@ -24,6 +24,7 @@ function manifestWithEpoch(epoch: string): GeoManifest {
     epoch,
     configHash: 'testconfig',
     generatedAt: new Date().toISOString(),
+    downloadStrategy: 'zones',
     cities: [
       {
         slug: 'patna',

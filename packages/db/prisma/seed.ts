@@ -16,7 +16,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { hashPassword } from 'better-auth/crypto';
 import { fixtureVariantBaseKey, validateAndDerive, variantObjectKey } from '@machiya/shared/images';
-import { CITIES, type CityConfig, type Locality } from '../../../scripts/cities.js';
+import { CITIES, type CityConfig, type Locality } from '@machiya/shared/cities';
 import {
   photoFilePath,
   readPhotoManifest,
@@ -257,6 +257,36 @@ async function seedCities(): Promise<Map<string, string>> {
       update: data,
     });
     ids.set(city.slug, row.id);
+
+    // The boundary polygon needs raw SQL twice over: Prisma can neither write
+    // nor read an `Unsupported()` column, and the value is GeoJSON that has to
+    // go through ST_GeomFromGeoJSON. `ST_Multi` because the schema column is a
+    // MultiPolygon while Nominatim returns whichever of the two the relation
+    // happens to be — normalising here means the containment query never has
+    // to care. `ST_MakeValid` because a simplified ring can self-intersect, and
+    // PostGIS would accept the geometry and then silently never match it.
+    if (city.boundary) {
+      // Only `type` and `coordinates` — the record also carries provenance
+      // (source, osmId, point counts), and ST_GeomFromGeoJSON is entitled to
+      // reject members it does not recognise.
+      const geojson = JSON.stringify({
+        type: city.boundary.type,
+        coordinates: city.boundary.coordinates,
+      });
+
+      await prisma.$executeRaw`
+        UPDATE "City"
+        SET "boundary" = ST_Multi(
+          ST_MakeValid(ST_GeomFromGeoJSON(${geojson}::json))
+        )::geography
+        WHERE "id" = ${row.id}
+      `;
+    } else {
+      // Not a warning here: `pnpm cities:validate` reports it per city with the
+      // command that fixes it, and repeating it on every seed would train
+      // people to ignore seed output.
+      await prisma.$executeRaw`UPDATE "City" SET "boundary" = NULL WHERE "id" = ${row.id}`;
+    }
 
     // Localities are a table, not just literals in scripts/cities.ts, because
     // tier 1 of the autocomplete has to query them. This is the one place the

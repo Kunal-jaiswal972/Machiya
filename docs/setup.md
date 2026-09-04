@@ -22,11 +22,19 @@ compose profile is not behaving.
 pnpm install
 cp .env.example .env
 docker compose up -d postgis redis minio minio-init mailhog
-pnpm seed:photos         # fetches the seed photographs (see below)
-pnpm db:deploy           # apply migrations
-pnpm db:seed             # 3 cities, 51 listings, 3 dev accounts
-pnpm dev                 # api :4000, worker :4100, web :5173
+pnpm bootstrap                       # OSM cuts, OSRM graphs, Nominatim + Overpass
+docker compose --profile geo up -d   # osrm-car, osrm-bike, nominatim, overpass
+pnpm seed:photos                     # fetches the seed photographs (see below)
+pnpm db:deploy                       # apply migrations
+pnpm cities:boundaries               # city polygons, from the local Nominatim
+pnpm db:seed                         # 3 cities, 51 listings, 3 dev accounts
+pnpm dev                             # api :4000, worker :4100, web :5173
 ```
+
+`pnpm bootstrap` is the long one — roughly 1 GB of cached downloads plus the
+graph builds and two imports. Everything else runs in seconds. Skip it and the
+core stack still works: routing, geocoding and POIs degrade with a label rather
+than failing (D43, D48), and `pnpm geo:status` will tell you what is missing.
 
 Use `pnpm db:deploy` rather than `pnpm db:migrate` for setup: `deploy` applies
 migrations with no drift check, which is what a fresh database wants.
@@ -37,11 +45,11 @@ To run everything in containers instead of on the host:
 docker compose up -d     # adds api, worker and web
 ```
 
-…then open http://localhost:8080. `api`, `worker` and `web` declare no
-`healthcheck:` in `docker-compose.yml` because each of their Dockerfiles ends
-with a `HEALTHCHECK`; compose's `service_healthy` reads container health
-whichever layer declared it, and duplicating them would mean two definitions to
-keep in step.
+…then open http://localhost:8080. `api` and `worker` declare their
+`healthcheck:` in `docker-compose.yml`, next to the `depends_on` that reads it —
+compose does honour a Dockerfile `HEALTHCHECK`, but a condition defined in a
+different file is one that silently stops being satisfiable if the image is
+rebuilt or retagged without that layer.
 
 ## Seed photos
 

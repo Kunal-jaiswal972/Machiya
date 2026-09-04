@@ -97,3 +97,50 @@ describe('unknown routes', () => {
     expect(body.error.code).toBe('not_found');
   });
 });
+
+describe('GET /health/geo', () => {
+  // A separate endpoint from /health on purpose: a fresh clone has no
+  // artifacts, and `web` waits on `api: service_healthy`, so folding this into
+  // /health would stop the core stack coming up on a checkout (D6, D51).
+  const withArtifacts = (
+    state: 'ok' | 'stale' | 'unbuilt',
+    reason: string,
+    epoch = 'abc123abc123',
+  ): HealthProbes => ({
+    ...healthyProbes,
+    geoArtifacts: () => ({ ok: state === 'ok', state, reason, epoch, configHash: 'cfg' }),
+  });
+
+  it('is 200 when the artifacts describe the running city config', async () => {
+    const response = await request(await app(withArtifacts('ok', '3 cities'))).get('/health/geo');
+
+    expect(response.status).toBe(200);
+    expect(response.body.artifacts).toBe('ok');
+  });
+
+  it('is 503 when a city has been added since the artifacts were built', async () => {
+    const probes = withArtifacts('stale', 'cities added since the build: hyderabad');
+    const response = await request(await app(probes)).get('/health/geo');
+
+    // The point of the 503: hyderabad would otherwise geocode and route to
+    // nowhere while every other probe passed.
+    expect(response.status).toBe(503);
+    expect(response.body.artifacts).toBe('stale');
+    expect(response.body.reason).toContain('hyderabad');
+  });
+
+  it('is 503, not a crash, when the artifacts were never built here', async () => {
+    const probes = withArtifacts('unbuilt', 'no artifact manifest', 'unbuilt');
+    const response = await request(await app(probes)).get('/health/geo');
+
+    expect(response.status).toBe(503);
+    expect(response.body.epoch).toBe('unbuilt');
+  });
+
+  it('leaves /health itself alone, so the core stack still starts', async () => {
+    const probes = withArtifacts('unbuilt', 'never built', 'unbuilt');
+    const response = await request(await app(probes)).get('/health');
+
+    expect(response.status).toBe(200);
+  });
+});

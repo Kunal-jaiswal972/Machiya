@@ -83,6 +83,13 @@ jobs:
       - name: Build workspace packages
         run: pnpm -r --sequential build
 
+      # The city config is the source of truth for the seed, the OSM artifacts
+      # and the fuel scrapers. A missing field there fails as a city that
+      # geocodes and routes to nowhere while every page looks healthy, so it is
+      # checked before anything reads it. See DECISIONS.md D49.
+      - name: Validate the city config
+        run: pnpm cities:validate
+
       - name: Typecheck
         run: pnpm typecheck
 

@@ -580,3 +580,71 @@ export async function straightLineDistanceMeters(
   }
   return Number(meters);
 }
+
+/**
+ * Which city a point belongs to.
+ *
+ * `ST_Covers` against `City.boundary` first, nearest centroid second **with a
+ * logged warning**. Nearest centroid alone was what step 5 did, and it misfiles
+ * listings as cities multiply: with three cities 1,000 km apart the nearest
+ * centroid is always right, and with a fourth city 150 km from an existing one
+ * it stops being. Padded bboxes widen the ambiguous zone further (D47), which
+ * is why the boundary is the primary test and the centroid only the fallback.
+ *
+ * `ST_Covers` rather than the `ST_Contains` the brief names: `ST_Contains` is
+ * geometry-only, so it would mean casting a geography column and losing the
+ * spheroidal semantics the rest of this file relies on. `ST_Covers` is the
+ * geography-native equivalent and additionally treats a point exactly ON the
+ * boundary as inside — which is the answer you want for an address on a
+ * municipal border.
+ *
+ * The `method` in the result is not decoration: a `nearest` answer is a guess,
+ * and every caller logs it so a systematically misfiled city shows up as a
+ * pattern in the logs rather than as a support ticket. See DECISIONS.md D50.
+ */
+const cityMatchSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  method: z.enum(['covers', 'nearest']),
+  distanceMeters: z.number(),
+});
+
+export type CityMatch = z.infer<typeof cityMatchSchema>;
+
+export async function resolveCityForPoint(coordinate: Coordinate): Promise<CityMatch | null> {
+  const covered = await prisma.$queryRaw<unknown[]>(Prisma.sql`
+    SELECT
+      c."id",
+      c."slug",
+      'covers' AS "method",
+      0::double precision AS "distanceMeters"
+    FROM "City" c
+    WHERE c."boundary" IS NOT NULL
+      AND ST_Covers(c."boundary", ${point(coordinate)})
+    -- A point in two boundaries at once means overlapping municipal polygons,
+    -- which the city validator's overlap check exists to prevent. Take the
+    -- smallest: the more specific polygon is the better answer.
+    ORDER BY ST_Area(c."boundary"::geometry) ASC
+    LIMIT 1
+  `);
+
+  const hit = covered[0];
+  if (hit) return cityMatchSchema.parse(hit);
+
+  const nearest = await prisma.$queryRaw<unknown[]>(Prisma.sql`
+    SELECT
+      c."id",
+      c."slug",
+      'nearest' AS "method",
+      ST_Distance(
+        ST_SetSRID(ST_MakePoint(c."centroidLng"::double precision, c."centroidLat"::double precision), 4326)::geography,
+        ${point(coordinate)}
+      ) AS "distanceMeters"
+    FROM "City" c
+    ORDER BY "distanceMeters" ASC
+    LIMIT 1
+  `);
+
+  const fallback = nearest[0];
+  return fallback ? cityMatchSchema.parse(fallback) : null;
+}

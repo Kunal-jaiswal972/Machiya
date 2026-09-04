@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { prisma } from '@machiya/db';
+import { prisma, resolveCityForPoint } from '@machiya/db';
 import {
   listingDraftSchema,
   listingPatchSchema,
@@ -43,6 +43,62 @@ async function resolveCityId(citySlug: string): Promise<string> {
   }
 
   return city.id;
+}
+
+/**
+ * Which city a listing belongs to, decided by its COORDINATES.
+ *
+ * The client sends a `citySlug` and it is treated as a hint, not as the
+ * answer: a wizard's city dropdown and a map pin can disagree, and when they
+ * do the pin is the fact. `resolveCityForPoint` tests containment against
+ * `City.boundary` first and falls back to the nearest centroid (D50).
+ *
+ * Both disagreements are logged rather than swallowed. A `nearest` match is a
+ * guess, and a pin whose city differs from the one the client claimed is
+ * either a user error or a boundary that needs re-deriving — either way, a
+ * pattern in the logs is how it gets noticed before it becomes a support
+ * ticket about a listing that will not show up in its own city.
+ */
+async function resolveCityForListing(input: {
+  citySlug: string;
+  lat: number;
+  lng: number;
+}): Promise<{ id: string; slug: string }> {
+  // The claimed slug still has to EXIST, even though it does not decide the
+  // answer: a request naming a city this deployment does not serve is a client
+  // bug, and letting the coordinates quietly paper over it would hide the one
+  // case where the client and the server disagree about the world.
+  await resolveCityId(input.citySlug);
+
+  const match = await resolveCityForPoint({ lat: input.lat, lng: input.lng });
+
+  if (!match) {
+    // No cities at all: a configuration problem, not a user one. Fall back to
+    // the claimed slug so the 400 names the real issue.
+    return { id: await resolveCityId(input.citySlug), slug: input.citySlug };
+  }
+
+  if (match.method === 'nearest') {
+    logger.warn(
+      {
+        lat: input.lat,
+        lng: input.lng,
+        assigned: match.slug,
+        distanceMeters: Math.round(match.distanceMeters),
+        claimed: input.citySlug,
+      },
+      'listing point is inside no city boundary; assigned by nearest centroid',
+    );
+  }
+
+  if (match.slug !== input.citySlug) {
+    logger.warn(
+      { claimed: input.citySlug, assigned: match.slug, method: match.method },
+      'listing coordinates fall in a different city than the one submitted; the coordinates win',
+    );
+  }
+
+  return { id: match.id, slug: match.slug };
 }
 
 async function resolveAmenityIds(slugs: string[]): Promise<string[]> {
@@ -146,14 +202,17 @@ export async function createDraft(
   body: unknown,
 ): Promise<{ id: string; slug: string }> {
   const input = listingDraftSchema.parse(body);
-  const cityId = await resolveCityId(input.citySlug);
+  const city = await resolveCityForListing(input);
   const amenityIds = await resolveAmenityIds(input.amenitySlugs);
 
   const listing = await prisma.listing.create({
     data: {
-      slug: buildSlug(input.citySlug, input.title),
+      // The RESOLVED city in the slug, not the claimed one: a listing whose URL
+      // says one city and whose row says another is the kind of inconsistency
+      // that surfaces months later as a broken filter.
+      slug: buildSlug(city.slug, input.title),
       ownerId: session.userId,
-      cityId,
+      cityId: city.id,
       status: 'DRAFT',
       ...toCreateData(input),
       amenities: { create: amenityIds.map((amenityId) => ({ amenityId })) },
@@ -173,8 +232,30 @@ export async function patchListing(
   await loadForMutation(session, listingId);
 
   const input = listingPatchSchema.parse(body);
-  const cityId = input.citySlug ? await resolveCityId(input.citySlug) : undefined;
   const amenityIds = input.amenitySlugs ? await resolveAmenityIds(input.amenitySlugs) : undefined;
+
+  // Re-resolve whenever the PIN moves, not only when the city dropdown does:
+  // dragging a marker across a municipal border is exactly the edit that
+  // silently leaves a listing filed under the wrong city.
+  const moved = input.lat !== undefined && input.lng !== undefined;
+  const cityId =
+    moved || input.citySlug
+      ? await (async () => {
+          if (moved) {
+            const existing = await prisma.listing.findUniqueOrThrow({
+              where: { id: listingId },
+              select: { city: { select: { slug: true } } },
+            });
+            const resolved = await resolveCityForListing({
+              citySlug: input.citySlug ?? existing.city.slug,
+              lat: input.lat as number,
+              lng: input.lng as number,
+            });
+            return resolved.id;
+          }
+          return resolveCityId(input.citySlug as string);
+        })()
+      : undefined;
 
   await prisma.$transaction(async (tx) => {
     await tx.listing.update({

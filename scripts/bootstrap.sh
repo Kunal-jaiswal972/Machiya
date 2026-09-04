@@ -90,30 +90,37 @@ mkdir -p "$CACHE_DIR" "$OUT_DIR"
 info "building @machiya/shared (the manifest schema and epoch hash live there)"
 pnpm -s -F @machiya/shared build
 
-ZONES=$(pnpm -s tsx scripts/cities.ts zones)
+DOWNLOADS=$(pnpm -s tsx scripts/cities.ts downloads)
 EXTRACTS=$(pnpm -s tsx scripts/cities.ts extracts)
 info "cities: $(pnpm -s tsx scripts/cities.ts slugs | tr '\n' ' ')"
 
-# --- 1. download the zone extracts ----------------------------------------
+# --- 1. download the source extracts --------------------------------------
 
-step "Downloading Geofabrik zone extracts"
-for zone in $ZONES; do
-  target="$CACHE_DIR/$zone-latest.osm.pbf"
+step "Downloading Geofabrik extracts"
+# Per-zone extracts up to three zones, one whole-country file beyond that: the
+# summed zone downloads pass india-latest.osm.pbf at four (D51). The choice is
+# automatic because the arithmetic is not a preference, and logged because a
+# silent switch from three 200 MB files to one 1.4 GB file reads as a bug in a
+# slow-network report.
+info "strategy: $(pnpm -s tsx scripts/cities.ts plan)"
+
+for file in $DOWNLOADS; do
+  target="$CACHE_DIR/$file"
 
   if [ -s "$target" ]; then
-    skip "$zone-latest.osm.pbf already cached ($(file_size "$target"))"
+    skip "$file already cached ($(file_size "$target"))"
     continue
   fi
 
-  info "fetching $zone (this is the slow part; it is cached afterwards)"
+  info "fetching $file (this is the slow part; it is cached afterwards)"
   # -C - resumes a partial download; write to .part so an interrupted run never
   # leaves a truncated file that later steps would treat as complete.
   # -# is the compact progress bar: the default meter writes a line per update,
   # which turns a piped log into thousands of lines.
   curl -fL -# --retry 3 --retry-delay 2 -C - \
-    -o "$target.part" "$GEOFABRIK_BASE/$zone-latest.osm.pbf"
+    -o "$target.part" "$GEOFABRIK_BASE/$file"
   mv "$target.part" "$target"
-  info "$zone: $(file_size "$target")"
+  info "$file: $(file_size "$target")"
 done
 
 # --- 2. cut each city out by bounding box ---------------------------------
@@ -128,7 +135,7 @@ step "Extracting cities by bounding box"
 # and the pipeline silently kept serving geometry from the old bounds.
 CITY_FILES=()
 RECUT=0
-while read -r slug zone min_lng min_lat max_lng max_lat; do
+while read -r slug source min_lng min_lat max_lng max_lat; do
   [ -n "${slug:-}" ] || continue
   target="$CACHE_DIR/$slug.osm.pbf"
   stamp="$CACHE_DIR/$slug.bbox"
@@ -144,13 +151,16 @@ while read -r slug zone min_lng min_lat max_lng max_lat; do
     info "$slug bounds changed ($(cat "$stamp" 2>/dev/null || printf 'unstamped') -> $want)"
   fi
 
-  info "cutting $slug from $zone at $want"
+  # `source` is resolved by cities.ts, not here: it is the city's zone extract
+  # under the zone strategy and india-latest.osm.pbf under the country one, and
+  # this loop should not have to know which is in force.
+  info "cutting $slug from $source at $want"
   osmium extract \
     --bbox "$want" \
     --set-bounds \
     --overwrite \
     -o "/cache/$slug.osm.pbf" \
-    "/cache/$zone-latest.osm.pbf"
+    "/cache/$source"
   printf '%s' "$want" > "$stamp"
   RECUT=1
   info "$slug: $(file_size "$target")"
@@ -223,6 +233,17 @@ for attempt in $(seq 1 240); do
   sleep 15
 done
 
+# Stamp what each service actually imported.
+#
+# Neither can be asked which extract it holds, and both import on FIRST BOOT
+# only — so without a stamp there is no way to tell a Nominatim serving the
+# current extract from one serving last month's, and `pnpm geo:status` would
+# have to shrug at the two artifacts most likely to be stale. Written only
+# after the service answered, so a stamp never claims an import that failed.
+MERGED_SHA=$(sha256sum "$MERGED" | cut -d' ' -f1)
+[ "$nominatim_up" -eq 1 ] && printf '%s' "$MERGED_SHA" > "$OUT_DIR/.imported-nominatim"
+[ "$overpass_up" -eq 1 ] && printf '%s' "$MERGED_SHA" > "$OUT_DIR/.imported-overpass"
+
 # --- 6. the artifact manifest ---------------------------------------------
 
 step "Writing the artifact manifest"
@@ -238,8 +259,8 @@ pnpm -s tsx scripts/geo-manifest.ts write
 step "Done in $(elapsed)"
 printf '    %-38s %s\n' "artifact" "size"
 printf '    %-38s %s\n' "--------" "----"
-for zone in $ZONES; do
-  printf '    %-38s %s\n' "$CACHE_DIR/$zone-latest.osm.pbf" "$(file_size "$CACHE_DIR/$zone-latest.osm.pbf")"
+for file in $DOWNLOADS; do
+  printf '    %-38s %s\n' "$CACHE_DIR/$file" "$(file_size "$CACHE_DIR/$file")"
 done
 while read -r slug _rest; do
   [ -n "${slug:-}" ] || continue
@@ -251,5 +272,7 @@ cat <<'SUMMARY'
 
 Next:
   docker compose --profile geo up -d     # osrm-car, osrm-bike, nominatim, overpass
+  pnpm cities:boundaries                 # city polygons, from the local Nominatim
   pnpm db:deploy && pnpm db:seed         # schema + three cities of listings
+  pnpm geo:status                        # what is stale, and how to rebuild it
 SUMMARY

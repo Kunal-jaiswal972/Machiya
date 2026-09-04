@@ -1,5 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { GEO_EPOCH_UNBUILT, geoManifestSchema, type GeoManifest } from '@machiya/shared/cities';
+import {
+  CITIES,
+  GEO_EPOCH_UNBUILT,
+  computeGeoConfigHash,
+  geoManifestSchema,
+  type GeoManifest,
+} from '@machiya/shared/cities';
 import { env } from '../env.js';
 import { logger } from '../logger.js';
 
@@ -55,6 +61,92 @@ const manifest = load();
 /** The manifest, or null when the artifacts have never been built here. */
 export function geoManifest(): GeoManifest | null {
   return manifest;
+}
+
+export type GeoArtifactState = 'ok' | 'unbuilt' | 'stale';
+
+export interface GeoArtifactStatus {
+  ok: boolean;
+  state: GeoArtifactState;
+  reason: string;
+  epoch: string;
+  /** What the running config hashes to, whatever the manifest says. */
+  configHash: string;
+}
+
+/**
+ * Whether the artifacts on this machine describe the city config this process
+ * is running.
+ *
+ * The failure it exists for: a fourth city added to `CITIES` while the OSRM
+ * graphs, the Nominatim database and the Overpass database still hold three.
+ * Every page then renders, every probe passes, and the new city geocodes and
+ * routes to nowhere. So the divergence is loud at boot and it fails
+ * `/health/geo` — which is deliberately NOT `/health`: a fresh clone has no
+ * artifacts at all (D6), and making the core stack unhealthy until someone
+ * runs `pnpm bootstrap` would be worse than the bug. See DECISIONS.md D51.
+ */
+export function geoArtifactStatus(): GeoArtifactStatus {
+  const configHash = computeGeoConfigHash(CITIES);
+
+  if (!manifest) {
+    return {
+      ok: false,
+      state: 'unbuilt',
+      reason: `no artifact manifest at ${env.GEO_MANIFEST_PATH} — run pnpm bootstrap`,
+      epoch: GEO_EPOCH_UNBUILT,
+      configHash,
+    };
+  }
+
+  if (manifest.configHash !== configHash) {
+    const described = manifest.cities.map((city) => city.slug);
+    const configured = CITIES.map((city) => city.slug);
+    const added = configured.filter((slug) => !described.includes(slug));
+    const removed = described.filter((slug) => !configured.includes(slug));
+
+    return {
+      ok: false,
+      state: 'stale',
+      reason: [
+        `artifacts describe config ${manifest.configHash} but this process is running ${configHash}`,
+        added.length > 0 ? `cities added since the build: ${added.join(', ')}` : '',
+        removed.length > 0 ? `cities removed since the build: ${removed.join(', ')}` : '',
+        'run pnpm geo:status for what to rebuild',
+      ]
+        .filter(Boolean)
+        .join('; '),
+      epoch: manifest.epoch,
+      configHash,
+    };
+  }
+
+  return {
+    ok: true,
+    state: 'ok',
+    reason: `${String(manifest.cities.length)} cities, built ${manifest.generatedAt}`,
+    epoch: manifest.epoch,
+    configHash,
+  };
+}
+
+/**
+ * Said once, at boot, at a level that matches the consequence. A stale artifact
+ * set is not a warning about tidiness — it is a city that will silently return
+ * nothing.
+ */
+const bootStatus = geoArtifactStatus();
+
+if (bootStatus.state === 'stale') {
+  logger.error(
+    { state: bootStatus.state, reason: bootStatus.reason, epoch: bootStatus.epoch },
+    'OSM ARTIFACTS ARE STALE: a configured city may geocode and route to nowhere while looking healthy',
+  );
+} else if (bootStatus.state === 'unbuilt') {
+  logger.warn(
+    { reason: bootStatus.reason },
+    'OSM artifacts have never been built here; routing, geocoding and POIs will all degrade',
+  );
 }
 
 export function geoEpoch(): string {

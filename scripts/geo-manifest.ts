@@ -29,8 +29,9 @@ import {
   geoManifestSchema,
   type GeoManifest,
   type GeoSource,
+  CITIES,
+  planDownloads,
 } from '@machiya/shared/cities';
-import { CITIES, ZONES } from './cities.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CACHE_DIR = join(REPO_ROOT, '.osm-cache');
@@ -60,9 +61,12 @@ async function describe(path: string): Promise<GeoSource> {
 export async function buildManifest(): Promise<GeoManifest> {
   const mergedPath = join(OUT_DIR, 'merged.osm.pbf');
 
+  // Whatever the download plan actually fetched — per-zone extracts below the
+  // whole-country threshold, one india-latest.osm.pbf above it (D51).
+  const plan = planDownloads(CITIES);
   const sources: GeoSource[] = [];
-  for (const zone of ZONES) {
-    sources.push(await describe(join(CACHE_DIR, `${zone}-latest.osm.pbf`)));
+  for (const file of plan.files) {
+    sources.push(await describe(join(CACHE_DIR, file)));
   }
 
   const merged = await describe(mergedPath);
@@ -73,6 +77,7 @@ export async function buildManifest(): Promise<GeoManifest> {
     epoch: computeGeoEpoch({ configHash, sources }),
     configHash,
     generatedAt: new Date().toISOString(),
+    downloadStrategy: plan.strategy,
     cities: CITIES.map((city) => ({
       slug: city.slug,
       zone: city.zone,
@@ -105,7 +110,8 @@ async function write(): Promise<void> {
   console.log(`  epoch       ${manifest.epoch}`);
   console.log(`  configHash  ${manifest.configHash}`);
   console.log(`  cities      ${manifest.cities.map((city) => city.slug).join(', ')}`);
-  console.log(`  sources     ${String(manifest.sources.length)} zone extracts`);
+  console.log(`  strategy    ${manifest.downloadStrategy}`);
+  console.log(`  sources     ${manifest.sources.map((source) => source.name).join(', ')}`);
 }
 
 async function main(command: string | undefined): Promise<void> {

@@ -98,8 +98,20 @@ model City {
   centroidLat Float
   centroidLng Float
 
-  /// [CityBbox] — { minLng, minLat, maxLng, maxLat }, the extract bounds.
+  /// [CityBbox] — { minLng, minLat, maxLng, maxLat }, the ADMINISTRATIVE bounds.
+  /// The padded box the artifacts are cut from is derived in the city config
+  /// and deliberately not stored: nothing in the database queries it. See D47.
   bbox Json
+
+  /// The administrative boundary, used to assign a listing to a city by
+  /// containment rather than by nearest centroid (D50).
+  ///
+  /// Optional here for the same reason every `location` column is: a REQUIRED
+  /// `Unsupported()` field makes Prisma drop the model's `create` operation
+  /// entirely (D15). Well-formedness is the `city_boundary_has_area` CHECK in
+  /// the migration, and every read goes through `packages/db/src/geo-queries.ts`
+  /// because Prisma cannot SELECT this column at all.
+  boundary Unsupported("geography(MultiPolygon, 4326)")?
 
   defaultFuelType FuelType @default(PETROL)
 
@@ -116,6 +128,10 @@ model City {
 
   /// Tier 1 of the autocomplete matches city names by trigram. See D39.
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+  /// Declared here rather than hand-written, like every other spatial index:
+  /// Prisma introspects them and would emit a DROP on the next migrate dev
+  /// otherwise (D13). This is what makes the ST_Contains lookup index-assisted.
+  @@index([boundary], map: "city_boundary_gix", type: Gist)
 }
 
 /// A named neighbourhood inside a city.

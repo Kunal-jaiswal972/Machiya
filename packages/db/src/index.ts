@@ -8,7 +8,9 @@ export {
   findSimilarListings,
   searchPlacesLocally,
   straightLineDistanceMeters,
+  resolveCityForPoint,
   decodeCursor,
+  type CityMatch,
   type SimilarListing,
   type LocalPlaceRow,
 } from './geo-queries.js';

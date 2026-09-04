@@ -14,9 +14,20 @@ import { env } from '../src/env.js';
  * Every coordinate pair below straddles a boundary the OLD unpadded boxes had,
  * so each assertion is about geometry that used to be missing entirely.
  */
-const OLD_BENGALURU_MAX_LNG = 77.78;
+/**
+ * The old box's northern edge, and the POI probe sits on it.
+ *
+ * Not the eastern edge: the first version of this test probed 77.78 and found
+ * two POIs, because that stretch towards Hoskote is genuinely empty in OSM. A
+ * test that cannot tell "we cut the map here" from "nothing is here" proves
+ * nothing, so the probe moved to an edge with real density on both sides —
+ * Jakkur/Singanayakanahalli, where 39 places sit within 1.5 km and 9 of them
+ * are north of the old cut.
+ */
+const OLD_BENGALURU_MAX_LAT = 13.14;
+const POI_PROBE = { lat: OLD_BENGALURU_MAX_LAT, lng: 77.57 };
 
-/** Inside the old box, in Whitefield. */
+/** Inside the old box (its eastern edge was 77.78), in Whitefield. */
 const INSIDE = { lat: 12.9698, lng: 77.77 };
 /** Outside the old box, inside the padded one: towards Hoskote. */
 const OUTSIDE = { lat: 12.9698, lng: 77.83 };
@@ -82,7 +93,7 @@ describe.skipIf(!overpassUp)('POIs near a former cut edge', () => {
   it('returns places on BOTH sides of the old boundary', async () => {
     const { OverpassPoiProvider } = await import('../src/geo/overpass.js');
     const provider = new OverpassPoiProvider();
-    const center = { lat: 12.9698, lng: OLD_BENGALURU_MAX_LNG };
+    const center = POI_PROBE;
 
     // The provider answers degraded-and-empty on a cold key and warms in the
     // background (D42), so poll for the warm rather than asserting on the
@@ -98,12 +109,12 @@ describe.skipIf(!overpassUp)('POIs near a former cut edge', () => {
     // A count alone is a weak assertion — a truncated half-circle still has
     // places in it. What proves the cut is padded is places on the far side
     // of the old edge, which by definition did not exist in the old extract.
-    const beyond = result.pois.filter((poi) => poi.lng > OLD_BENGALURU_MAX_LNG);
+    const beyond = result.pois.filter((poi) => poi.lat > OLD_BENGALURU_MAX_LAT);
 
-    expect(result.pois.length).toBeGreaterThan(5);
+    expect(result.pois.length).toBeGreaterThan(3);
     expect(
       beyond.length,
-      'no POIs east of the old cut edge — the extract is still truncated',
+      'no POIs north of the old cut edge — the extract is still truncated',
     ).toBeGreaterThan(0);
   }, 60_000);
 });

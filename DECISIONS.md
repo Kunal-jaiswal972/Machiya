@@ -1135,3 +1135,219 @@ warm still lands afterwards, and a refusing upstream serves the `:stale` copy
 marked degraded rather than an empty list. The live-service assertions are in
 `apps/api/test/geo-boundary.test.ts` and the measured import numbers are in
 `docs/audit-2026-09.md`.
+
+## Correction 8 — adding a city is a tested path
+
+### D49. One city record, in `@machiya/shared/cities`, validated in CI
+
+The brief asserts a new city is a one-entry change to `scripts/cities.ts`. That
+was true of the code and **false of the data**. Four things were per-city and
+none of them lived in the city record:
+
+- fuel scraper slugs per source (not written yet, but step 8's adapters key off
+  them, and two of the three sources still index Bengaluru as `bangalore`);
+- transit fare tables (in the record already);
+- localities with coordinates (in the record already, but nothing checked them);
+- every geo artifact — none rebuilding incrementally, none detecting that the
+  config had changed.
+
+The failure mode is the nasty kind: a fourth city that geocodes and routes to
+nowhere while every page renders and every probe passes.
+
+**Chosen: the record holds everything, and it moved to
+`@machiya/shared/cities`.** Slug, display name, state, Geofabrik zone,
+centroid, unpadded bbox, padded bbox, boundary polygon, localities with
+coordinates, transit fare table, and a per-source fuel slug map. Nothing
+city-specific is hardcoded anywhere else.
+
+The move out of `scripts/` was forced, not cosmetic: the API has to read the
+city list to notice that the artifacts predate the running config (D51), and
+`apps/api` cannot import from `scripts/` — it is built to `dist` and deployed
+through `pnpm deploy --prod`, which does not include the root scripts
+directory. A copy would have meant two lists. `scripts/cities.ts` remains as
+the shell-facing CLI, because `bootstrap.sh` shells out to it, and re-exports
+the config so the old import path still resolves.
+
+Why a **subpath** (`@machiya/shared/cities`) rather than the package index: the
+module graph reaches `node:crypto` for the config hash, and pulling that into
+the browser app breaks the Vite build. Same reasoning as
+`@machiya/shared/images` and sharp (D34). Nothing in the web app needs the city
+config — it reads `/api/cities`.
+
+Two fields are **derived rather than written**, so they cannot drift from their
+sources: `paddedBbox` from `bbox` (D47) and `boundary` from the generated
+module (D50). Two hand-maintained copies of the same fact drift, and the drift
+reads as a data bug in whichever one you check second.
+
+**`scripts/validate-cities.ts` runs in CI** and fails on: a missing or
+nonsensical record field, a fuel source with no slug for a configured city, a
+locality with no coordinates, a locality outside its city's **unpadded** bbox,
+and two **padded** bboxes overlapping by more than 25 km². Note which box each
+of the last two uses — localities are validated against the administrative box
+because that is what "in this city" means, and overlap against the padded box
+because that is what is actually cut. Conflating them makes one of the two
+checks meaningless.
+
+The 25 km² tolerance is not zero on purpose: two cities 60 km apart with 9 km
+of padding each can have a thin overlap between their extracts, and a point in
+it is assigned by containment against the boundaries rather than by the box
+(D50). What the threshold catches is an overlap large enough that the
+nearest-centroid **fallback** would have to arbitrate a meaningful area — and
+that fallback is a guess.
+
+The rules live in `packages/shared/src/cities/validate.ts` rather than in the
+script, so they can be unit-tested against deliberately broken configs. A
+validator with no tests is one nobody trusts when it fires, and worse, one
+nobody notices when it stops firing. 12 tests in
+`packages/shared/test/validate-cities.test.ts`, each a way a city has actually
+been added wrong: Koramangala's coordinates under a Patna record, a source
+added to the registry with one city not updated, a slug with a space in it, an
+inverted bbox, two extracts 11 km apart.
+
+`Locality` is also a database table and the seed prunes it against this config
+(D39). Those are two different jobs, deliberately: the validator checks the
+source of truth, the seed keeps the table honest about it.
+
+**A missing boundary is a warning, not an error.** The polygons are derived
+from a local Nominatim, so a clone that has never run `pnpm bootstrap` has
+none — and the app still works, through the nearest-centroid fallback. Failing
+CI on it would mean CI could only pass on a machine with 3 GB of OSM artifacts.
+
+### D50. City assignment is containment first, nearest centroid second — and says which
+
+Nearest centroid alone is what step 5 did, and it is right for exactly as long
+as the cities are far apart. With Patna, Bengaluru and Pune 1,000 km from each
+other the nearest centroid is never wrong; add a fourth city 150 km from an
+existing one and it starts misfiling listings, silently, in a way that surfaces
+as "my listing does not appear in its own city". Padded bboxes widen the
+ambiguous strip further (D47).
+
+**Chosen: `City.boundary`, tested with `ST_Covers`, falling back to the nearest
+centroid with a logged warning.** `resolveCityForPoint` in `geo-queries.ts` is
+the only place that decides, and it returns a `method` — `covers` or `nearest`
+— which every caller logs. A `nearest` answer is a guess, and the point of
+labelling it is that a systematically misfiled city shows up as a pattern in
+the logs rather than as a support ticket.
+
+**`ST_Covers`, not the `ST_Contains` the brief names.** `ST_Contains` is
+geometry-only, so using it would mean casting the geography column and losing
+the spheroidal semantics the rest of that file depends on. `ST_Covers` is the
+geography-native equivalent and additionally treats a point exactly ON the
+boundary as inside — which is the answer you want for an address on a
+municipal border, and a case the tests cover explicitly.
+
+**Sourcing the polygon: the local Nominatim, not `osmium` during bootstrap.**
+Both were on the table. Extracting the `admin_level=8` relation with osmium
+means relation assembly, multipolygon repair and a new step in a shell script;
+querying the freshly-imported Nominatim once with `polygon_geojson=1` is a
+fetch and a parse, and it reuses a service that now runs locally anyway — which
+also means re-deriving costs nothing. `pnpm cities:boundaries` writes
+`packages/shared/src/cities/boundaries.generated.ts`, and **the generated file
+is committed**: same split as the seed photographs (D31), a live derivation step
+and a committed artifact that is the real source of truth, so seeding needs no
+service and every machine gets identical geometry.
+
+The polygons are **simplified before being written** — Douglas-Peucker at
+0.0005° (roughly 50 m), written out in the script rather than pulled in as a
+dependency. A raw OSM city boundary is tens of thousands of points, and the
+only question ever asked of it is containment, where metre-level fidelity buys
+nothing and a megabyte of committed coordinates costs review and memory.
+
+**The column is optional and the CHECK is about area, not presence**, and both
+halves are deliberate:
+
+- Optional for the reason every geography column here is: a REQUIRED
+  `Unsupported()` field makes Prisma drop the model's `create` operation
+  entirely (D15).
+- `city_boundary_has_area` rather than a NOT NULL check, because a NOT NULL
+  boundary would make `pnpm db:seed` fail on a clone that has never run
+  `pnpm bootstrap` — and the core stack has to be usable before the geo profile
+  exists (D6). Presence is enforced where it costs nothing: `cities:validate`
+  warns per city and `/health/geo` reports it.
+- The check is about **area** because that is the failure that is otherwise
+  silent. `MULTIPOLYGON EMPTY` and a ring whose four points are collinear are
+  both accepted by PostGIS, both store happily, and both then match nothing —
+  every listing in that city quietly falls through to the centroid guess with
+  the column looking populated. A point-count check, by contrast, can never
+  fire: PostGIS refuses a ring with fewer than four points at parse time. A
+  constraint that cannot fire is worse than none, because it reads as
+  protection.
+
+The GiST index is declared in `schema.prisma` (`city_boundary_gix`) like every
+other spatial index, because Prisma introspects them and would otherwise emit a
+DROP on the next `migrate dev` (D13).
+
+**The client's `citySlug` is a hint, not the answer.** A wizard's city dropdown
+and a map pin can disagree, and when they do the pin is the fact — so
+`createDraft` resolves the city from the coordinates and uses the **resolved**
+slug in the listing's URL slug too, because a listing whose URL says one city
+and whose row says another is an inconsistency that surfaces months later as a
+broken filter. A patch re-resolves whenever the pin moves, not only when the
+dropdown changes: dragging a marker across a municipal border is exactly the
+edit that would otherwise leave a listing filed under the wrong city.
+
+Verified with 8 tests in `packages/db/test/city-assignment.test.ts` against real
+PostGIS — a mocked client would assert nothing about `ST_Covers` on a column
+Prisma cannot even SELECT. Two square boundaries 0.6° apart, and the strip
+between them probed: a point inside resolves by `covers`; a point just inside
+the far edge resolves to the containing city rather than the nearer centroid; a
+point exactly on the boundary resolves (which `ST_Contains` would not); a point
+in neither falls back and is labelled `nearest`; a city whose boundary is NULL
+falls back too; overlapping polygons resolve to the smaller one; and both the
+zero-area and the empty boundary are refused by the constraint.
+
+### D51. Artifact staleness is detectable, and the download strategy switches itself
+
+Two related holes, both of which fail the same way: everything reports healthy
+and one city returns nothing.
+
+**Staleness.** The manifest from D46 already carried the epoch and the source
+checksums; it now also carries the full city list, both bounding boxes per city
+and the download strategy. Three things read it:
+
+- **The API, at boot.** It hashes the running city config and compares. A
+  divergence is logged at `error` with the cities added or removed, because a
+  stale artifact set is not untidiness — it is a configured city that will
+  geocode and route to nowhere.
+- **`GET /health/geo`**, which answers 503 on divergence. Deliberately **not**
+  `/health`: `web` declares `depends_on: api: service_healthy`, so folding this
+  in would stop the core stack coming up on a clone with no artifacts, which is
+  the thing D6 exists to prevent. A fresh clone reports `unbuilt` here and 200
+  there, which is exactly the truth.
+- **`pnpm geo:status`**, which prints every artifact with its state and the
+  exact command that rebuilds it — not "rebuild", the command. It detects three
+  kinds of staleness three different ways, because the artifacts are three
+  different kinds of thing:
+  - files on disk (the city cuts, the merged extract) against the config's
+    padded bboxes and the manifest's checksums;
+  - the OSRM graphs, by reading the sha256 of the extract each was built from
+    out of the named volume through a throwaway container — the same stamp
+    `osrm-init` writes and compares, so a re-cut rebuilds instead of being
+    skipped;
+  - the Nominatim and Overpass imports, from a stamp `bootstrap.sh` writes
+    **after** each service answers. Neither service can be asked which extract
+    it holds, and both import on first boot only — so without the stamp the two
+    artifacts most likely to be stale would be the two nothing could vouch for.
+    Their fix is three commands rather than one, because re-importing means
+    dropping a volume.
+
+`geo:status` exits non-zero when anything is not `ok`, `unknown` included: an
+artifact nobody can vouch for is not one to build on.
+
+**The download strategy.** Below four Geofabrik zones, per-zone extracts are
+smaller; at four they are not. The zones covering the seed cities are 236 MB
+(eastern), 533 MB (southern) and 210 MB (western) — about 1 GB — against
+roughly 1.4 GB for `india-latest.osm.pbf`, so the fourth zone is where the sum
+crosses. `planDownloads()` picks automatically, because the arithmetic is not a
+preference, and **logs which it picked and why**, because a silent switch from
+three 200 MB files to one 1.4 GB file reads as a bug in a slow-network report.
+`bootstrap.sh` prints it, the manifest records it, and `cities.ts extracts`
+resolves each city's source file so the shell never has to know which strategy
+is in force.
+
+Past that point the binding constraint stops being download size and becomes
+**OSRM graph RAM**: `osrm-extract` and `osrm-customize` hold their working set
+in memory, and the whole-country extract needs far more than a laptop has, so
+the answer beyond a handful of cities is a build host rather than a bigger
+download. That is stated in `docs/adding-a-city.md` rather than left to be
+discovered.

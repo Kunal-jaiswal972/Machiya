@@ -300,6 +300,20 @@ services:
     image: wiktorn/overpass-api:v0.7.62.11
     profiles: ['geo']
     restart: unless-stopped
+    # `chmod 0755 /db` before the image's own entrypoint, and it is load-bearing.
+    #
+    # `/db` inside the image is the `overpass` user's home directory, mode 0700.
+    # A NAMED VOLUME inherits that mode when Docker seeds it from the image —
+    # and `fcgiwrap`, which executes every query, runs as `nginx`, not as
+    # `overpass`. So the query process cannot traverse into `/db` to open the
+    # dispatcher socket, and **every** query fails with
+    # `runtime error: open64: 13 Permission denied /db/db//osm3s_osm_base`
+    # while the container reports healthy, the import log says it finished, and
+    # the 2 GB database sits there intact. A bind mount does not show this
+    # because host directories are 0755.
+    #
+    # `exec` so PID 1 stays the real entrypoint and signals still reach it.
+    command: ['/bin/sh', '-c', 'chmod 0755 /db && exec /app/docker-entrypoint.sh']
     environment:
       OVERPASS_MODE: init
       # curl handles file://, so this really is the local extract rather than a

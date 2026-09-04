@@ -66,6 +66,12 @@ export const geoManifestSchema = z.object({
   /** Short hash of the city config alone, so config and source drift are separable. */
   configHash: z.string().min(1),
   generatedAt: z.string(),
+  /**
+   * Whether the sources are per-zone extracts or one whole-country file. Chosen
+   * automatically past four zones (D51) and recorded because it changes what a
+   * rebuild costs and what "sources" below means.
+   */
+  downloadStrategy: z.enum(['zones', 'country']),
   cities: z.array(geoManifestCitySchema).min(1),
   sources: z.array(geoSourceSchema),
   /** The merged extract every downstream service is built from. */
