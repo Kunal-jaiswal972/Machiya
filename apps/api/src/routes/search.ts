@@ -36,7 +36,16 @@ export function searchRouter(): Router {
         // Not cacheable by a shared cache: the result set changes as listings
         // are published, and a stale count on a shared link is worse than a
         // round trip.
-        res.set('cache-control', 'private, max-age=15');
+        //
+        // Out of coverage is the exception and is cached an order of magnitude
+        // longer — it changes only when a city is added, which changes the geo
+        // epoch and every artifact with it. Still 200: "we do not serve that
+        // city yet" is a complete answer, and the response is a discriminated
+        // union so no caller can mistake it for an empty result set.
+        res.set(
+          'cache-control',
+          result.status === 'ok' ? 'private, max-age=15' : 'public, max-age=600',
+        );
         res.json(result);
       })
       .catch(next);

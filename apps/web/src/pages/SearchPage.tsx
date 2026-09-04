@@ -1,17 +1,17 @@
-import { cityBboxSchema, type GeocodeResult, type ListingCard } from '@machiya/shared';
+import type { GeocodeResult, ListingCard, OutOfCoverage } from '@machiya/shared';
 import { useMutation } from '@tanstack/react-query';
 import { List, Map as MapIcon, Star } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Outlet, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { EmptyState } from '../components/EmptyState';
+import { CoverageNotice } from '../components/search/CoverageNotice';
 import { FilterBar } from '../components/search/FilterBar';
 import { OfficeField } from '../components/search/OfficeField';
 import { ResultList } from '../components/search/ResultList';
 import { SearchMap } from '../components/search/SearchMap';
 import { Button } from '../components/ui/button';
-import { env } from '../env';
-import { useCities } from '../hooks/use-cities';
+import { useCoverage, nearestCoveredCity } from '../hooks/use-coverage';
 import { useListingSearch } from '../hooks/use-listing-search';
 import { useOffices, useSaveOffice } from '../hooks/use-offices';
 import { useSearchState } from '../hooks/use-search-state';
@@ -36,7 +36,7 @@ export function SearchPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isSignedIn } = useAuth();
-  const { cities } = useCities();
+  const { cities, maxBounds } = useCoverage();
   const { offices, defaultOffice } = useOffices();
   const saveOffice = useSaveOffice();
   const view = useSearchUi((state) => state.view);
@@ -44,8 +44,22 @@ export function SearchPage() {
 
   const [officeLabel, setOfficeLabel] = useState('');
   const [isLocating, setIsLocating] = useState(false);
+  /**
+   * The out-of-coverage state from a REVERSE geocode — a pin dropped outside
+   * coverage — as opposed to the one the search itself returns.
+   *
+   * Held separately because it arrives first: the pin moves immediately and the
+   * naming request answers before the search does, so this is what lets the
+   * panel switch to the coverage state without a flash of "no listings".
+   */
+  const [pinCoverage, setPinCoverage] = useState<OutOfCoverage | null>(null);
 
   const search = useListingSearch(query);
+
+  // One value for the two ways a point can be out of coverage. The pin's answer
+  // wins because it lands first, and because the search is not even run for a
+  // point the reverse geocode has already refused.
+  const coverage = pinCoverage ?? search.outOfCoverage;
 
   // Everything the detail view needs to come back to this exact search.
   const searchSuffix = useMemo(() => {
@@ -53,16 +67,28 @@ export function SearchPage() {
     return params.size > 0 ? `?${params.toString()}` : '';
   }, [searchParams]);
 
-  const city = useMemo(
-    () => cities.find((candidate) => candidate.slug === (query.city ?? env.VITE_DEFAULT_CITY)),
-    [cities, query.city],
-  );
+  /**
+   * Which covered city the map opens on.
+   *
+   * The one named in the URL, otherwise the one NEAREST the visitor's own
+   * timezone-free best guess — which here is simply the first covered city,
+   * because a browser that has not been asked for geolocation has nothing
+   * better to offer and asking on page load would be rude. `VITE_DEFAULT_CITY`
+   * is gone: the served set comes from `/api/coverage`, so a build-time default
+   * could name a city the deployment does not cover.
+   */
+  const city = useMemo(() => {
+    if (query.city) {
+      const named = cities.find((candidate) => candidate.slug === query.city);
+      if (named) return named;
+    }
+    if (office) return nearestCoveredCity(cities, office);
+    return cities[0];
+  }, [cities, query.city, office]);
 
   const initialBounds = useMemo<[number, number, number, number] | undefined>(() => {
     if (!city) return undefined;
-    const bbox = cityBboxSchema.safeParse(city.bbox);
-    if (!bbox.success) return undefined;
-    return [bbox.data.minLng, bbox.data.minLat, bbox.data.maxLng, bbox.data.maxLat];
+    return [city.bbox.minLng, city.bbox.minLat, city.bbox.maxLng, city.bbox.maxLat];
   }, [city]);
 
   // A signed-in user with a default office starts there rather than at a city
@@ -84,7 +110,11 @@ export function SearchPage() {
    */
   const nameOffice = useMutation({
     mutationFn: (point: { lat: number; lng: number }) => reverseGeocode(point),
-    onSuccess: (place, point) => {
+    onSuccess: ({ place, coverage }, point) => {
+      // `coverage` present means the pin is somewhere the product does not
+      // reach. That is a different answer from "no address here", which is what
+      // a bare null used to conflate it with.
+      setPinCoverage(coverage ?? null);
       setOfficeLabel(
         place?.label
           ? [place.label, place.context].filter(Boolean).join(', ')
@@ -92,6 +122,7 @@ export function SearchPage() {
       );
     },
     onError: (_error, point) => {
+      setPinCoverage(null);
       setOfficeLabel(describeCoordinate(point));
     },
   });
@@ -106,6 +137,10 @@ export function SearchPage() {
 
   const onSelectSuggestion = useCallback(
     (result: GeocodeResult) => {
+      // A suggestion always came from inside coverage: tier 1 only holds our
+      // own rows and tier 2's Nominatim imported only the covered extracts. So
+      // any pin-coverage state from a previous click is stale here.
+      setPinCoverage(null);
       setOfficeLabel([result.label, result.context].filter(Boolean).join(', '));
       setOffice({ lat: result.lat, lng: result.lng });
       if (result.citySlug && result.citySlug !== query.city) {
@@ -113,6 +148,23 @@ export function SearchPage() {
       }
     },
     [setOffice, update, query.city],
+  );
+
+  /**
+   * Move the whole search to a covered city.
+   *
+   * The one-tap action on every coverage message. The office moves to the
+   * city's centroid rather than being cleared, because "show me Bengaluru" is
+   * what someone means when they tap Bengaluru, and an empty office field is
+   * one more thing to fill in.
+   */
+  const onPickCoveredCity = useCallback(
+    (picked: OutOfCoverage['supportedCities'][number]) => {
+      setPinCoverage(null);
+      setOfficeLabel(picked.name);
+      update({ city: picked.slug, lat: picked.centroid.lat, lng: picked.centroid.lng });
+    },
+    [update],
   );
 
   const onSelectListing = useCallback(
@@ -178,6 +230,7 @@ export function SearchPage() {
             onUseMyLocation={useMyLocation}
             isLocating={isLocating}
             {...(query.city ? { citySlug: query.city } : {})}
+            onPickCity={onPickCoveredCity}
             className="max-w-lg flex-1"
           />
 
@@ -219,7 +272,7 @@ export function SearchPage() {
           </div>
         </div>
 
-        {office ? (
+        {office && !coverage ? (
           <FilterBar
             query={query}
             radiusMeters={radiusMeters}
@@ -239,7 +292,14 @@ export function SearchPage() {
             view === 'map' ? 'hidden lg:block' : 'block',
           )}
         >
-          {office ? (
+          {/* Order matters. Coverage is checked BEFORE the result list, because
+              out of coverage the list is empty and would read as "this product
+              has no listings" — which is the whole confusion correction 9
+              removes. `pinCoverage` comes first because it arrives first: the
+              reverse geocode answers before the search does. */}
+          {coverage ? (
+            <CoverageNotice coverage={coverage} onPickCity={onPickCoveredCity} />
+          ) : office ? (
             <ResultList
               listings={search.listings}
               total={search.total}
@@ -255,7 +315,7 @@ export function SearchPage() {
             <EmptyState
               illustration="search"
               title="Start with where you work."
-              detail="Search for your office, or click anywhere on the map to drop a pin. Everything is measured from there."
+              detail="Search a landmark, locality or area near your office — or drop a pin anywhere on the map. Everything is measured from there."
             />
           )}
         </div>
@@ -268,6 +328,7 @@ export function SearchPage() {
             radiusMeters={radiusMeters}
             listings={search.listings}
             initialBounds={initialBounds}
+            maxBounds={maxBounds}
             onPickOffice={pickOffice}
             onSelectListing={onSelectListing}
           />

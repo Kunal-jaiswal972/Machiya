@@ -1,4 +1,4 @@
-import type { GeocodeResult } from '@machiya/shared';
+import { coverageMessage, type GeocodeResult, type OutOfCoverage } from '@machiya/shared';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Building2, Crosshair, Loader2, MapPin, Search, Star } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
@@ -29,6 +29,11 @@ export interface OfficeFieldProps {
   onUseMyLocation?: () => void;
   isLocating?: boolean;
   citySlug?: string;
+  /**
+   * Jump to a covered city from the out-of-coverage message. Optional so the
+   * field still works where there is nowhere to jump to.
+   */
+  onPickCity?: (city: OutOfCoverage['supportedCities'][number]) => void;
   className?: string;
 }
 
@@ -48,6 +53,7 @@ export function OfficeField({
   onUseMyLocation,
   isLocating = false,
   citySlug,
+  onPickCity,
   className,
 }: OfficeFieldProps) {
   const listId = useId();
@@ -57,7 +63,7 @@ export function OfficeField({
   const [activeIndex, setActiveIndex] = useState(0);
   const reduced = useReducedMotion();
 
-  const { suggestions, isLoading, isDegraded } = usePlaceSuggestions({
+  const { suggestions, isLoading, state, coverage } = usePlaceSuggestions({
     query: term,
     ...(citySlug ? { citySlug } : {}),
     enabled: open,
@@ -241,14 +247,43 @@ export function OfficeField({
                     );
                   })}
 
+              {/* Three empty cases, three messages, chosen by ONE state value
+                  so two can never render at once. Before correction 9 the
+                  first two shared a flag, so a query for a city we do not
+                  serve read as “the wider search is unavailable” — which
+                  invites a retry that can never work. */}
               {rowCount === 0 && term.trim().length >= 2 && !isLoading ? (
                 <li className="px-2.5 py-3 text-sm text-ink-soft">
-                  Nothing matched “{term.trim()}”. Try a locality, or click the map to drop a pin.
+                  {state === 'out_of_coverage' && coverage ? (
+                    <>
+                      <span className="block">{coverageMessage(coverage)}</span>
+                      <span className="mt-1.5 flex flex-wrap gap-1">
+                        {coverage.supportedCities.map((city) => (
+                          <button
+                            key={city.slug}
+                            type="button"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => onPickCity?.(city)}
+                            className="rounded-inset border border-edge px-1.5 py-0.5 text-label hover:bg-accent"
+                          >
+                            {city.name}
+                          </button>
+                        ))}
+                      </span>
+                    </>
+                  ) : state === 'degraded' ? (
+                    <>
+                      Nothing local matched “{term.trim()}”, and the wider search is unavailable
+                      right now.
+                    </>
+                  ) : (
+                    <>Nothing matched “{term.trim()}”. Try a locality, or drop a pin on the map.</>
+                  )}
                 </li>
               ) : null}
             </ul>
 
-            {isDegraded && rowCount > 0 ? (
+            {state === 'degraded' && rowCount > 0 ? (
               // Degraded means the wider geocoder could not answer — NOT that
               // there is nothing there. Those are opposite messages.
               <p className="border-t border-edge px-2.5 py-1.5 text-data text-ink-faint">

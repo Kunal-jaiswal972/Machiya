@@ -1,4 +1,10 @@
-import { AUTOCOMPLETE_DEBOUNCE_MS, CACHE_TTL_SECONDS, type GeocodeResult } from '@machiya/shared';
+import {
+  AUTOCOMPLETE_DEBOUNCE_MS,
+  CACHE_TTL_SECONDS,
+  type GeocodeResult,
+  type OutOfCoverage,
+  type PlaceSuggestionState,
+} from '@machiya/shared';
 import { useQuery } from '@tanstack/react-query';
 import { fetchPlaceSuggestions } from '../lib/places';
 import { useDebouncedValue } from './use-debounced-value';
@@ -24,8 +30,16 @@ import { useDebouncedValue } from './use-debounced-value';
 export interface PlaceSuggestionsState {
   suggestions: GeocodeResult[];
   isLoading: boolean;
-  /** The remote tier was needed and could not answer. Worth saying out loud. */
-  isDegraded: boolean;
+  /**
+   * One of three, never a pair of booleans — see `placeSuggestionStateSchema`.
+   * `degraded` means the remote tier could not answer; `out_of_coverage` means
+   * both tiers answered and the place is somewhere we do not serve. The old
+   * code had one flag for both, which is how "we don't cover Mumbai" got
+   * rendered as "the wider search is unavailable".
+   */
+  state: PlaceSuggestionState;
+  /** Present only when `state` is `out_of_coverage`. */
+  coverage: OutOfCoverage | null;
 }
 
 export function usePlaceSuggestions(input: {
@@ -59,6 +73,9 @@ export function usePlaceSuggestions(input: {
   return {
     suggestions: enabled ? (query.data?.suggestions ?? []) : [],
     isLoading: enabled && query.isFetching,
-    isDegraded: query.data?.degraded ?? false,
+    // `ok` while disabled or in flight: a message about coverage or a degraded
+    // tier must not flash up for a query that has not been answered yet.
+    state: enabled && !query.isFetching ? (query.data?.state ?? 'ok') : 'ok',
+    coverage: query.data?.coverage ?? null,
   };
 }

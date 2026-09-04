@@ -11,6 +11,7 @@ import { logger } from './logger.js';
 import { probeRedis } from './lib/redis.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import type { SessionResolver } from './middleware/require-auth.js';
+import { coverageRouter } from './routes/coverage.js';
 import { healthRouter, type HealthProbes } from './routes/health.js';
 import { helloRouter } from './routes/hello.js';
 import { listingDetailRouter } from './routes/listing-detail.js';
@@ -108,7 +109,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
   app.use(healthRouter(probes));
   app.use('/api', helloRouter());
   // Public: picking an office is the product's first interaction and happens
-  // before anyone signs in.
+  // before anyone signs in — and it starts with knowing which cities exist,
+  // which is why the coverage set is public and mounted first.
+  app.use('/api', coverageRouter());
   app.use('/api', placesRouter());
   app.use('/api', searchRouter());
 

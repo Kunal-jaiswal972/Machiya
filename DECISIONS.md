@@ -1351,3 +1351,216 @@ in memory, and the whole-country extract needs far more than a laptop has, so
 the answer beyond a handful of cities is a build host rather than a bigger
 download. That is stated in `docs/adding-a-city.md` rather than left to be
 discovered.
+
+## Correction 9 — out-of-coverage is an explicit state
+
+### D52. The coverage frontier is the union of the PADDED bboxes, read from the manifest
+
+Coverage is one question — _is this a point we can answer anything about?_ — and
+it has exactly one right answer boundary: the region the OSM artifacts were cut
+from. That is the union of the **padded** boxes (D47), not the administrative
+ones. An office 4 km outside Patna's administrative box is inside the extract,
+has a road graph around it, and must work.
+
+Two things about that union are easy to get wrong, and both are asserted in
+tests rather than left to comments:
+
+- **It is a union of rectangles, not the bounding rectangle of the union.** The
+  bounding rectangle of Patna, Bengaluru and Pune covers most of India. Nagpur
+  sits inside it and inside none of the three cities. Verified:
+  `isInsideBbox(nagpur, bboxUnion([...]))` is `true` while
+  `isInsideAnyBbox(nagpur, [...])` is `false`
+  (`packages/shared/test/bbox.test.ts`), and `checkCoverage(nagpur)` returns
+  `covered: false` against the real config (`apps/api/test/coverage.test.ts`).
+  The rectangle is used for exactly one thing — the map's `maxBounds`, which
+  only has to stop someone panning to Europe.
+- **It comes from `osm-data/manifest.json`, not from `CITIES`.** The manifest
+  records what `osmium extract` actually cut. A fourth city added to the config
+  but not yet built is precisely the divergence D51 shouts about at boot; it
+  must not also silently start claiming coverage of a city with no road graph,
+  no geocoder index and no POI database. When there is no manifest at all — a
+  clone that has never run `pnpm bootstrap` — the config's boxes are the
+  fallback, because the core stack is usable in that state (D6) and refusing
+  every point would break more than it protects.
+
+The check is **one SQL statement** in `packages/db/src/geo-queries.ts`
+(`resolveCoverage`), answering three things in one round trip: inside any padded
+envelope, which boundary covers the point, and which centroid is nearest with
+its distance. `ST_Collect(ARRAY[ST_MakeEnvelope(...), ...])` with every
+coordinate a bound parameter; planar geometry rather than geography for the
+envelope test, because a bbox test _is_ a degree-space rectangle test.
+`ST_Covers` rather than the `ST_Contains` the brief names, for the reason
+already recorded in D50.
+
+### D53. Out of coverage is a 200 for a read and a 422 for a write
+
+The same fact wants two different responses, and the split is not arbitrary.
+
+**Reads answer 200 with a distinct shape.** "We do not serve that city yet" is a
+complete, correct answer to a well-formed question, so it is not an error. But
+it must be impossible to mistake for an empty result set, which is what it was:
+a radius search around a Mumbai office returned `total: 0` and no error, a
+manually-dropped pin produced no POIs and no route, and a user concluded the
+product had no listings rather than that it did not reach them. So
+`GET /api/listings/search` returns a **discriminated union** on `status`, not an
+extra field — there is no `total: 0` sitting next to a coverage payload for a
+caller to read by accident, and TypeScript refuses to touch `listings` without
+checking `status` first. Asserted directly: the out-of-coverage response has no
+`total` and no `listings` property at all.
+
+**Writes are refused with a 422 that carries the served cities.** A listing at a
+Mumbai coordinate used to be accepted and filed under Pune by the
+nearest-centroid fallback — 120 km of "nearest". The row existed, was invisible
+in every search anyone would run for it, and looked perfectly healthy in the
+database. The test asserts the refusal and `prisma.listing.count() === 0`,
+because the point is the absence of the row. The error body carries the
+`coverage` payload rather than only an English sentence, so the wizard renders
+the supported cities as one-tap actions instead of regexing a city list out of
+prose. It is the only error in the API that carries a payload; generalising that
+is a decision for the second one.
+
+**Nearest-centroid keeps working inside coverage.** This is the whole correction
+in one line: for a point in a gap between a municipal polygon and the edge of
+the extract, nearest centroid is the right answer and stays — labelled `nearest`
+and logged, so a boundary that needs re-deriving shows up as a pattern (D50).
+Across the coverage frontier the identical arithmetic is silent data corruption.
+Both halves are tested against the real config.
+
+### D54. "Degraded" and "out of coverage" are separate autocomplete states, because they were the same bug
+
+`suggestPlaces` reported `degraded: remote.length === 0`. That conflated two
+opposite conditions: Nominatim being down, and Nominatim correctly answering
+that Mumbai is not in a three-city extract. A user searching an uncovered city
+was told "the wider search is unavailable" — which invites a retry that can
+never work.
+
+The fix is at the adapter, not at the call site. `GeocodeProvider.search` now
+returns `{ results, refused }`: `refused: true` for a failure, timeout, rate
+limit or abort; `refused: false` with an empty list for a real empty answer. The
+service then has three mutually exclusive states in **one enum field** rather
+than two booleans, so the UI cannot render two messages or the wrong one:
+
+| state             | meaning                                                   | what the UI says                      |
+| ----------------- | --------------------------------------------------------- | ------------------------------------- |
+| `ok`              | the list is the answer, empty or not                      | the list, or "nothing matched"        |
+| `degraded`        | tier 2 was needed and could not answer                    | "showing local matches only"          |
+| `out_of_coverage` | both tiers answered, both empty, query reads like a place | the coverage message and city buttons |
+
+An aborted request counts as `refused`, deliberately: an abandoned keystroke
+must not produce a coverage message for a query that was never actually asked.
+
+**How often the third state actually fires, measured against the local
+Nominatim rather than assumed.** Much less often than "search Mumbai"
+suggests, because Indian city names are everywhere in the covered extracts as
+road and business names: `mumbai` returns 7 results (top: Old Pune-Mumbai
+Highway), `chennai` 6 (Bengaluru - Chennai Expressway), `hyderabad` 8 (Ancient
+Hyderabad), `jaipur` 2, `kolkata` 1. Of the uncovered metros tried, only
+`ahmedabad` came back `out_of_coverage`.
+
+Those `ok` answers are correct rather than a hole in the feature: the matches
+are real features inside coverage, and their context lines say "Pune" or
+"Bengaluru", so someone who typed "mumbai" and is offered a Pune highway can
+see what happened. It does mean the coverage message's real home is the
+**coordinate** paths — a dropped pin, a shared URL, a saved office, a listing
+create — which is where an out-of-coverage point did actual damage. The
+autocomplete state is a genuine case and a narrower one, and saying so here is
+better than leaving the Mumbai example to imply otherwise.
+
+The place-name gate is crude on purpose — a word of three or more characters and
+at most a quarter digits. The cost of a false positive is one extra sentence in
+a dropdown, so the tests pin both sides of it, including that "zzzqqq" does get
+the coverage message. One real bug came out of writing them: `\p{L}{3,}` rejects
+"कोलकाता", because Indic vowel signs are `\p{Mn}` rather than letters, so the
+longest run of pure letters in it is two. A heuristic that silently excluded
+every Devanagari and Kannada query from the coverage message would have failed
+exactly the users this product is for; the pattern is now
+`\p{L}[\p{L}\p{M}]{2,}`.
+
+### D55. `CoverageRequest` is the point of the out-of-coverage state, not decoration
+
+A refusal with a next action is worth building; a dead end is not. The table
+holds an email, the requested coordinates and the resolved place label if there
+was one, and it is the real signal for which city to add fourth.
+
+Three details keep that signal honest:
+
+- **Coordinates are rounded to 3 dp (about 110 m) before storage, and the unique
+  constraint is on the rounded pair.** One person tapping "tell me" on three
+  slightly different pins is otherwise three rows, and the count that decides
+  the fourth city becomes a count of taps. Repeat asks increment `asks` instead.
+- **The count reported back is spatial, not exact-match**: distinct emails
+  within 50 km (`COVERAGE_REQUEST_CLUSTER_METERS`). Two people asking for Mumbai
+  will not have dropped pins on the same building, and Thane and Colaba are
+  40 km apart. Verified: a second ask from the same person leaves the count at 1;
+  an ask from a different person 30 km away takes it to 2.
+- **A request for a covered point is a 409.** A row here is a vote for a new
+  city, and votes for cities that already exist would quietly poison the one
+  number the table is for.
+
+It carries a geography column and a GiST index like every other geo model, and
+its `location` comes from the same `machiya_sync_location` trigger (D2). That is
+not reflex: "which city next" is a spatial clustering question, and forty
+requests spread across Maharashtra are not the same signal as forty within 20 km
+of Nariman Point.
+
+The endpoint sends no mail. It is an unauthenticated write with an email address
+in it — the shape of thing that gets used as a mail relay — so it is rate
+limited to 10 per hour per IP, an order of magnitude harder than the rest of the
+API, before it ever does.
+
+### D56. `maxBounds` is the cheapest fix in this correction, so it is applied first
+
+Most of the confusion never has to be explained. The map is bounded to the
+coverage rectangle from the first paint, so panning to a city the product does
+not serve is never offered, and the initial camera sits on a covered city. Both
+come from `GET /api/coverage` rather than from a build-time constant, which is
+what makes correction 8's "adding a city is one record" claim true of the
+frontend too — and is why `VITE_DEFAULT_CITY` is now deleted. It named a city the
+deployment might not cover, and it was read in exactly one place that now reads
+the served set instead.
+
+`maxBounds` is set imperatively through `map.setMaxBounds()` in an effect, not as
+a `<Map maxBounds>` prop. The value arrives from an async fetch, and handing
+react-map-gl a changing bounds prop makes it re-derive view state on a component
+that is otherwise camera-authoritative — the same reason the camera itself is
+animated with the map's own `fitBounds` rather than from React state.
+
+### D57. The API was pointed at the PUBLIC Nominatim, which 403s the placeholder contact
+
+Found while verifying correction 9 against the running stack rather than
+against the tests, which stub tier 2 and therefore could never have caught it.
+
+`.env` carried `NOMINATIM_URL=https://nominatim.openstreetmap.org`. The public
+instance rejects `Machiya/0.1 (contact@example.com)` — the placeholder the file
+itself tells you to replace — with a flat **403 on every `/search` and
+`/reverse`**. Exactly what was observed:
+
+```
+WARN: nominatim search failed
+  "message": "nominatim 403 for /search"
+```
+
+Which then degraded silently, because degrading silently is what the adapter is
+built to do: tier 2 refused, the endpoint fell back to tier 1, and every
+landmark query in development returned an empty dropdown. `/health/geo` was
+green throughout — it checks the artifacts, not whether the API can reach the
+service that reads them.
+
+Three things came out of it, and none of them is the 403:
+
+- **`.env` now points at `http://localhost:7070`**, the local instance from the
+  `geo` profile, matching `.env.example` and compose. A public endpoint is a
+  fallback, never a default — this was the default.
+- **`PUBLIC_NOMINATIM_URL` is deleted from `.env.example`.** It was declared
+  there and read by nothing: the adapter only ever reads `NOMINATIM_URL`. Same
+  dead knob, same reasoning, and same fix as the `ALLOW_PUBLIC_OSRM` pair.
+- **Every geo claim in this session was re-verified against the local instance
+  afterwards.** The first round of measurements was taken against a 403ing
+  upstream and was worthless; two of them are in D54's table and would have
+  been recorded as fact.
+
+The operational lesson is smaller but cost more time: **two `pnpm dev:api`
+processes were running**, and the stale one held port 4000 while the fresh one's
+log looked healthy. Its 403s went to a log file that had already been deleted,
+so the symptom was a route that returned `degraded` with nothing logged
+anywhere. Check what owns the port before believing a log.

@@ -1,7 +1,8 @@
 import {
   buildSearchParams,
-  listingSearchResponseSchema,
+  searchResponseSchema,
   type ListingCard,
+  type OutOfCoverage,
   type SearchQuery,
 } from '@machiya/shared';
 import { useInfiniteQuery, type InfiniteData } from '@tanstack/react-query';
@@ -30,13 +31,22 @@ export interface ListingSearchState {
   hasNextPage: boolean;
   fetchNextPage: () => void;
   error: Error | null;
+  /**
+   * Set when the office is somewhere the product does not reach.
+   *
+   * Read this BEFORE `listings` and `total`: they are zero and empty in this
+   * state, and rendering them would say "no listings near you" about a city
+   * that was never searched. The response is a discriminated union server-side
+   * for exactly that reason; this is the client half of it.
+   */
+  outOfCoverage: OutOfCoverage | null;
 }
 
 async function fetchPage(query: SearchQuery, signal: AbortSignal) {
   const params = buildSearchParams(query);
   params.set('limit', String(LIST_PAGE_SIZE));
 
-  return apiFetch(`/api/listings/search?${params.toString()}`, listingSearchResponseSchema, {
+  return apiFetch(`/api/listings/search?${params.toString()}`, searchResponseSchema, {
     signal,
   });
 }
@@ -55,7 +65,10 @@ export function useListingSearch(query: SearchQuery): ListingSearchState {
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) =>
       fetchPage({ ...query, ...(pageParam ? { cursor: pageParam } : {}) }, signal),
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    // No next page out of coverage: there is nothing to page through, and
+    // asking for one would loop on the same refusal.
+    getNextPageParam: (lastPage) =>
+      lastPage.status === 'ok' ? (lastPage.nextCursor ?? undefined) : undefined,
     // A search is cheap to re-run and listings do get published, but re-running
     // it on every remount would refetch while the user is reading a card.
     staleTime: 30_000,
@@ -64,15 +77,23 @@ export function useListingSearch(query: SearchQuery): ListingSearchState {
   });
 
   const pages = result.data?.pages ?? [];
-  const last = pages.at(-1);
+  const ok = pages.filter(
+    (page): page is Extract<typeof page, { status: 'ok' }> => page.status === 'ok',
+  );
+  const last = ok.at(-1);
+
+  // Only the FIRST page can be out of coverage — the office does not move
+  // between pages — so this reads page one rather than the latest.
+  const refused = pages[0]?.status === 'out_of_coverage' ? pages[0].coverage : null;
 
   return {
-    listings: pages.flatMap((page) => page.listings),
+    listings: ok.flatMap((page) => page.listings),
     // Totals and ring counts describe the whole filtered set, so any page's
     // copy is the same answer. The latest is used in case a page arrived after
     // a listing was published.
     total: last?.total ?? 0,
     ringCounts: last?.ringCounts ?? { 1: 0, 2: 0, 3: 0 },
+    outOfCoverage: refused,
     isLoading: hasOffice && result.isPending,
     isFetchingNextPage: result.isFetchingNextPage,
     hasNextPage: result.hasNextPage,

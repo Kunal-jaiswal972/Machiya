@@ -7,7 +7,6 @@ import { z } from 'zod';
 const envSchema = z.object({
   VITE_API_BASE_URL: z.string().url().default('http://localhost:4000'),
   VITE_MAP_STYLE_URL: z.string().url().default('https://tiles.openfreemap.org/styles/liberty'),
-  VITE_DEFAULT_CITY: z.string().min(1).default('patna'),
   /**
    * Which sign-in methods to render. Must match the API's
    * AUTH_ENABLED_PROVIDERS: a button for a provider the server has not

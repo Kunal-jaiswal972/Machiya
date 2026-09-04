@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { prisma, resolveCityForPoint } from '@machiya/db';
+import { prisma } from '@machiya/db';
 import {
   listingDraftSchema,
   listingPatchSchema,
@@ -11,6 +11,7 @@ import { logger } from '../logger.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { deleteObjects } from '../lib/storage.js';
 import { assertOwnership, type RequestSession } from '../middleware/require-auth.js';
+import { assertCovered } from './coverage.js';
 import { listingObjectKeys, toImageView } from './listing-images.js';
 
 function slugify(value: string): string {
@@ -46,18 +47,26 @@ async function resolveCityId(citySlug: string): Promise<string> {
 }
 
 /**
- * Which city a listing belongs to, decided by its COORDINATES.
+ * Which city a listing belongs to, decided by its COORDINATES — and refused
+ * outright when those coordinates are outside coverage.
  *
  * The client sends a `citySlug` and it is treated as a hint, not as the
  * answer: a wizard's city dropdown and a map pin can disagree, and when they
- * do the pin is the fact. `resolveCityForPoint` tests containment against
- * `City.boundary` first and falls back to the nearest centroid (D50).
+ * do the pin is the fact.
  *
- * Both disagreements are logged rather than swallowed. A `nearest` match is a
- * guess, and a pin whose city differs from the one the client claimed is
- * either a user error or a boundary that needs re-deriving — either way, a
- * pattern in the logs is how it gets noticed before it becomes a support
- * ticket about a listing that will not show up in its own city.
+ * `assertCovered` is the gate correction 9 added, and it is the difference
+ * between a bad row and no row. Before it, a pin dropped in Mumbai was accepted
+ * and filed under Pune by the nearest-centroid fallback — 1,300 km of "nearest"
+ * — so the listing existed, was invisible in every search anyone would run for
+ * it, and looked perfectly healthy in the database. **Inside** coverage the
+ * same fallback is correct for a point in a gap between two boundaries and it
+ * stays; across the coverage frontier it is silent data corruption. See
+ * DECISIONS.md D53.
+ *
+ * The remaining disagreement — a covered pin in a different city than the one
+ * claimed — is logged rather than refused: it is either a user error or a
+ * boundary that needs re-deriving, and a pattern in the logs is how that gets
+ * noticed before it becomes a support ticket.
  */
 async function resolveCityForListing(input: {
   citySlug: string;
@@ -70,35 +79,16 @@ async function resolveCityForListing(input: {
   // case where the client and the server disagree about the world.
   await resolveCityId(input.citySlug);
 
-  const match = await resolveCityForPoint({ lat: input.lat, lng: input.lng });
+  const city = await assertCovered({ lat: input.lat, lng: input.lng });
 
-  if (!match) {
-    // No cities at all: a configuration problem, not a user one. Fall back to
-    // the claimed slug so the 400 names the real issue.
-    return { id: await resolveCityId(input.citySlug), slug: input.citySlug };
-  }
-
-  if (match.method === 'nearest') {
+  if (city.slug !== input.citySlug) {
     logger.warn(
-      {
-        lat: input.lat,
-        lng: input.lng,
-        assigned: match.slug,
-        distanceMeters: Math.round(match.distanceMeters),
-        claimed: input.citySlug,
-      },
-      'listing point is inside no city boundary; assigned by nearest centroid',
-    );
-  }
-
-  if (match.slug !== input.citySlug) {
-    logger.warn(
-      { claimed: input.citySlug, assigned: match.slug, method: match.method },
+      { claimed: input.citySlug, assigned: city.slug, method: city.method },
       'listing coordinates fall in a different city than the one submitted; the coordinates win',
     );
   }
 
-  return { id: match.id, slug: match.slug };
+  return { id: city.id, slug: city.slug };
 }
 
 async function resolveAmenityIds(slugs: string[]): Promise<string[]> {

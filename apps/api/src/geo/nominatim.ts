@@ -4,6 +4,7 @@ import {
   type GeocodeProvider,
   type GeocodeResult,
   type GeocodeSearchOptions,
+  type GeocodeSearchOutcome,
 } from '@machiya/shared';
 import { z } from 'zod';
 import { env } from '../env.js';
@@ -132,9 +133,9 @@ export class NominatimGeocodeProvider implements GeocodeProvider {
 
   constructor(private readonly baseUrl: string = env.NOMINATIM_URL) {}
 
-  async search(query: string, options: GeocodeSearchOptions = {}): Promise<GeocodeResult[]> {
+  async search(query: string, options: GeocodeSearchOptions = {}): Promise<GeocodeSearchOutcome> {
     const term = normalizeQueryKey(query);
-    if (term.length === 0) return [];
+    if (term.length === 0) return { results: [], refused: false };
 
     const limit = options.limit ?? 8;
     // Epoch-prefixed like the others: Nominatim's answers come from the
@@ -162,17 +163,24 @@ export class NominatimGeocodeProvider implements GeocodeProvider {
         },
       });
 
-      return value;
+      // An EMPTY list here is an answer, not a failure: the extract holds three
+      // cities and this instance was asked about a fourth. `refused: false` is
+      // what lets the caller reach for the coverage message instead of the
+      // degraded one — see `GeocodeSearchOutcome`.
+      return { results: value, refused: false };
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        // The user kept typing. Not a failure; the newer request answers.
-        return [];
+        // The user kept typing. Not a failure, but not an answer either — a
+        // newer request will answer, and calling this `refused: false` would
+        // let an aborted keystroke produce a coverage message for a query that
+        // was never actually asked.
+        return { results: [], refused: true };
       }
 
       // Tier 2 refusing is an ordinary state — an import still running, a rate
       // limit, no network. The endpoint degrades to the local tier.
       logger.warn({ err: error, term }, 'nominatim search failed');
-      return [];
+      return { results: [], refused: true };
     }
   }
 

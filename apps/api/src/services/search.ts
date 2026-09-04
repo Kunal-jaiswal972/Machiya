@@ -1,13 +1,15 @@
 import { prisma, searchListingsInRadius } from '@machiya/db';
 import {
+  OUT_OF_COVERAGE_CODE,
   listingSearchInputSchema,
   type ListingCard,
   type ListingSearchInput,
-  type ListingSearchResponse,
   type ListingSummary,
+  type SearchResponse,
 } from '@machiya/shared';
 import { variantObjectKey } from '@machiya/shared/images';
 import { publicVariantUrl } from '../lib/storage.js';
+import { checkCoverage, outOfCoverageFor } from './coverage.js';
 
 /**
  * Radius search, as the API sends it.
@@ -30,14 +32,28 @@ function toCard(listing: ListingSummary): ListingCard {
   };
 }
 
-export async function searchListings(input: ListingSearchInput): Promise<ListingSearchResponse> {
+export async function searchListings(input: ListingSearchInput): Promise<SearchResponse> {
   // `statuses` is never read from the client. A search is a public surface, so
   // PUBLISHED is the only set it can produce — the lister dashboard and the
   // admin queue have their own endpoints with their own guards.
   const options = listingSearchInputSchema.parse({ ...input, statuses: ['PUBLISHED'] });
+
+  // Coverage BEFORE the query, not after an empty result. A radius search
+  // around a Mumbai office returns zero rows and no error, which reads as "this
+  // product has no listings" rather than "this product does not reach Mumbai
+  // yet" — the exact confusion correction 9 removes. See DECISIONS.md D53.
+  const coverage = await checkCoverage(options.office);
+
+  if (!coverage.covered) {
+    return {
+      status: OUT_OF_COVERAGE_CODE,
+      coverage: outOfCoverageFor({ coordinate: options.office, nearest: coverage.nearest }),
+    };
+  }
+
   const result = await searchListingsInRadius(options);
 
-  return { ...result, listings: result.listings.map(toCard) };
+  return { status: 'ok', ...result, listings: result.listings.map(toCard) };
 }
 
 /**

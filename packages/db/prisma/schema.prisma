@@ -456,6 +456,40 @@ model FuelPrice {
   @@index([cityId, fuelType, fetchedAt(sort: Desc)])
 }
 
+/// Somebody asking for a city the product does not serve yet.
+///
+/// This table is the reason the out-of-coverage state is worth building rather
+/// than just refusing: it is the real signal for which city to add fourth, and
+/// a signal is worth more than a dead end. See DECISIONS.md D53.
+///
+/// `lat`/`lng` are rounded to `COVERAGE_REQUEST_PRECISION` (3 dp, about 110 m)
+/// before they are written, and the unique constraint is on the rounded pair —
+/// otherwise one person tapping "tell me" on three slightly different pins
+/// becomes three rows and the count that decides the fourth city is a count of
+/// taps. `location` is derived by the same trigger as every other geo model.
+model CoverageRequest {
+  id    String @id @default(cuid())
+  email String
+  lat   Float
+  lng   Float
+
+  location Unsupported("geography(Point, 4326)")?
+
+  /// What the geocoder called the point, when anything could. Null for a pin
+  /// dropped somewhere unmapped, which is still a perfectly good request.
+  placeLabel String?
+
+  /// How many times this person has asked about this point.
+  asks Int @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([email, lat, lng])
+  @@index([createdAt])
+  @@index([location], map: "coverage_request_location_gix", type: Gist)
+}
+
 model ListingView {
   id        String   @id @default(cuid())
   listingId String

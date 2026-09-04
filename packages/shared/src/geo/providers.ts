@@ -15,6 +15,7 @@
  * free tier said no.
  */
 import { z } from 'zod';
+import { outOfCoverageSchema } from './coverage.js';
 import { cityBboxSchema, type Coordinate } from './schemas.js';
 
 // --- geocoding --------------------------------------------------------------
@@ -63,10 +64,30 @@ export interface GeocodeSearchOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * What a geocoder search returned, and whether it was able to answer at all.
+ *
+ * The two are different and the code used to conflate them: `results.length ===
+ * 0` was read as "the provider is degraded", so Nominatim correctly answering
+ * "there is no Mumbai in this extract" looked identical to Nominatim being
+ * down. One of those is a fact about the data and the other is a fault, they
+ * want opposite messages, and correction 9 needs to tell them apart to decide
+ * between the coverage message and the degraded one.
+ */
+export interface GeocodeSearchOutcome {
+  results: GeocodeResult[];
+  /**
+   * True when the provider could not answer — down, still importing, rate
+   * limited, timed out, or the request was aborted. **False** when it answered
+   * with an empty list, which is a real answer.
+   */
+  refused: boolean;
+}
+
 export interface GeocodeProvider {
   /** Used in logs and in the `source` field of every result it returns. */
   readonly name: GeocodeSource;
-  search(query: string, options?: GeocodeSearchOptions): Promise<GeocodeResult[]>;
+  search(query: string, options?: GeocodeSearchOptions): Promise<GeocodeSearchOutcome>;
   /** Null rather than throwing when the point is over water or unmapped. */
   reverse(
     coordinate: Coordinate,
@@ -174,6 +195,26 @@ export interface PoiProvider {
 // --- the autocomplete envelope ---------------------------------------------
 
 /**
+ * Which of the three autocomplete outcomes this is.
+ *
+ * One enum rather than a pair of booleans, because the states are mutually
+ * exclusive and a boolean pair lets the UI show two messages at once — or the
+ * wrong one. Correction 9 exists because two of these used to be the same
+ * value:
+ *
+ *  - `ok` — the list is the answer, empty or not. An empty `ok` inside a
+ *    covered city means the query genuinely matched nothing there.
+ *  - `degraded` — tier 2 was needed and **could not answer**: importing, rate
+ *    limited, down. The local rows still stand and the fix is upstream.
+ *  - `out_of_coverage` — both tiers answered, both empty, and the query reads
+ *    like a place name. Almost always a city we do not serve, and the fix is
+ *    to say which cities we do.
+ */
+export const placeSuggestionStateSchema = z.enum(['ok', 'degraded', 'out_of_coverage']);
+
+export type PlaceSuggestionState = z.infer<typeof placeSuggestionStateSchema>;
+
+/**
  * One endpoint, one ranked list, a `source` per row. The client never knows
  * which tier answered, only that some rows came from our own data — see D39.
  */
@@ -181,11 +222,34 @@ export const placeSuggestionsSchema = z.object({
   suggestions: z.array(geocodeResultSchema),
   /** Which tiers contributed, for the dev-only debug line and for tests. */
   sources: z.array(geocodeSourceSchema),
-  /** True when tier 2 was skipped or refused; the local rows still stand. */
-  degraded: z.boolean(),
+  state: placeSuggestionStateSchema,
+  /**
+   * Present only when `state` is `out_of_coverage`, so the dropdown can name
+   * the served cities without a second fetch. Declared here rather than as a
+   * separate response shape because the suggestions array is still meaningful:
+   * a query can match one of our own listings and still be out of coverage.
+   */
+  coverage: outOfCoverageSchema.optional(),
 });
 
 export type PlaceSuggestions = z.infer<typeof placeSuggestionsSchema>;
+
+/**
+ * The reverse-geocode envelope.
+ *
+ * `place: null` with no `coverage` means "there is no address at that point",
+ * which is a legitimate answer about a legitimate coordinate — a new campus on
+ * the edge of town is exactly that, and the UI shows the coordinates. `place:
+ * null` WITH `coverage` means the point is somewhere the product does not
+ * reach, which wants the coverage state instead. Conflating the two is what
+ * made a Mumbai pin look like an unmapped field.
+ */
+export const reversePlaceResponseSchema = z.object({
+  place: geocodeResultSchema.nullable(),
+  coverage: outOfCoverageSchema.optional(),
+});
+
+export type ReversePlaceResponse = z.infer<typeof reversePlaceResponseSchema>;
 
 export const placeSearchQuerySchema = z.object({
   q: z.string().min(1).max(120),

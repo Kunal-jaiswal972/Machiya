@@ -40,6 +40,16 @@ export interface SearchMapProps {
   listings: ListingCard[];
   /** Fit the view to this city's bounds when there is no office yet. */
   initialBounds?: [number, number, number, number] | undefined;
+  /**
+   * The hard pan limit: the bounding rectangle of every covered city's padded
+   * bbox, from `/api/coverage`.
+   *
+   * The cheapest fix in correction 9 and the one that prevents most of the
+   * confusion before any message is needed — panning to a city the product does
+   * not serve is simply never offered. Derived from the manifest server-side, so
+   * a fourth city widens it with nothing to change here.
+   */
+  maxBounds?: [number, number, number, number] | undefined;
   onPickOffice: (point: { lat: number; lng: number }) => void;
   onSelectListing: (listing: ListingCard) => void;
 }
@@ -100,6 +110,7 @@ export function SearchMap({
   radiusMeters,
   listings,
   initialBounds,
+  maxBounds,
   onPickOffice,
   onSelectListing,
 }: SearchMapProps) {
@@ -194,6 +205,22 @@ export function SearchMap({
 
     map.fitBounds(initialBounds, { padding: 48, duration: 0 });
   }, [initialBounds, officeLat, styleReady]);
+
+  // Applied imperatively rather than as a `<Map maxBounds>` prop, for the same
+  // reason the camera is: the value arrives from an async fetch, and handing a
+  // changing bounds prop to react-map-gl re-derives view state on a component
+  // that is otherwise camera-authoritative. Setting it once, when it lands,
+  // keeps one owner of the camera.
+  useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (!map || !styleReady || !maxBounds) return;
+
+    const [minLng, minLat, maxLng, maxLat] = maxBounds;
+    map.setMaxBounds([
+      [minLng, minLat],
+      [maxLng, maxLat],
+    ]);
+  }, [maxBounds, styleReady]);
 
   // --- rings draw outward in sequence ---------------------------------------
   useEffect(() => {

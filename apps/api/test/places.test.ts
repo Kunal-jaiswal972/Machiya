@@ -1,5 +1,5 @@
 import { prisma } from '@machiya/db';
-import type { GeocodeProvider, GeocodeResult } from '@machiya/shared';
+import { coverageMessage, type GeocodeProvider, type GeocodeResult } from '@machiya/shared';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -11,6 +11,16 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
  * here is the gating (when is it reached at all) and the merge, not Nominatim.
  */
 const remoteResults: GeocodeResult[] = [];
+/**
+ * Whether the stubbed tier 2 is DOWN as opposed to merely empty.
+ *
+ * These are the two conditions correction 9 separated. `refused: true` means
+ * the provider could not answer; `refused: false` with an empty list means it
+ * answered and there is nothing there. The service picks the degraded message
+ * for the first and the coverage message for the second, so a stub that could
+ * not express both would make the distinction untestable.
+ */
+let remoteRefuses = false;
 let remoteCalls = 0;
 
 vi.mock('../src/geo/nominatim.js', () => ({
@@ -18,7 +28,9 @@ vi.mock('../src/geo/nominatim.js', () => ({
     name: 'nominatim',
     search: async () => {
       remoteCalls += 1;
-      return remoteResults;
+      return remoteRefuses
+        ? { results: [], refused: true }
+        : { results: [...remoteResults], refused: false };
     },
     reverse: async () => null,
   }),
@@ -118,6 +130,7 @@ async function seedPlaces(): Promise<void> {
 
 beforeEach(async () => {
   remoteResults.length = 0;
+  remoteRefuses = false;
   remoteCalls = 0;
   await seedPlaces();
 });
@@ -209,7 +222,9 @@ describe('tier 2 — gating', () => {
 
     expect(result.suggestions.length).toBeGreaterThanOrEqual(5);
     expect(remoteCalls).toBe(0);
-    expect(result.degraded).toBe(false);
+    // `ok`, not degraded: a locally-answered query is the fast path, and
+    // labelling it a degradation would apologise for the good case.
+    expect(result.state).toBe('ok');
   });
 
   it('runs when tier 1 came up short, and merges the two', async () => {
@@ -222,18 +237,91 @@ describe('tier 2 — gating', () => {
     expect(result.suggestions.map((s) => s.label)).toContain('Whitefield Main Road');
   });
 
-  it('reports degraded when tier 2 was needed and answered nothing', async () => {
+  it('reports degraded when tier 2 was needed and could not answer', async () => {
+    remoteRefuses = true;
+
     const result = await suggestPlaces({ q: 'whitefield', limit: 8 });
 
     expect(remoteCalls).toBe(1);
-    expect(result.degraded).toBe(true);
+    expect(result.state).toBe('degraded');
+    expect(result.coverage).toBeUndefined();
   });
 
   it('still serves the local rows when tier 2 is down', async () => {
+    remoteRefuses = true;
+
     const result = await suggestPlaces({ q: 'indira', limit: 8 });
 
-    expect(result.degraded).toBe(true);
+    expect(result.state).toBe('degraded');
     expect(result.suggestions.map((s) => s.label)).toContain('Indiranagar');
+  });
+});
+
+/**
+ * The third state, and the reason it is not folded into `degraded`.
+ *
+ * "Nominatim is down" and "Nominatim answered, and Mumbai is not in the
+ * extract" were the same response before correction 9, so a house-hunter in an
+ * uncovered city was told to retry something that can never work.
+ */
+describe('tier 2 — out of coverage', () => {
+  it('answers a place-looking query nothing matched with the coverage set', async () => {
+    const result = await suggestPlaces({ q: 'mumbai', limit: 8 });
+
+    expect(remoteCalls).toBe(1);
+    expect(result.state).toBe('out_of_coverage');
+    expect(result.suggestions).toHaveLength(0);
+    // Named from the configured cities, not from a literal list in the code.
+    expect(result.coverage?.supportedCities.map((city) => city.slug).sort()).toEqual([
+      'bengaluru',
+      'patna',
+      'pune',
+    ]);
+  });
+
+  it('has no nearest city, because a text query is not a coordinate', async () => {
+    const result = await suggestPlaces({ q: 'mumbai', limit: 8 });
+
+    expect(result.coverage?.nearest).toBeNull();
+    expect(coverageMessage(result.coverage!)).toBe('Machiya covers Patna, Bengaluru and Pune.');
+  });
+
+  it('does NOT claim out of coverage when tier 2 merely refused', async () => {
+    // Same empty list, opposite cause. Reading `results.length === 0` alone
+    // cannot tell these apart, which is why the provider reports `refused`.
+    remoteRefuses = true;
+
+    const result = await suggestPlaces({ q: 'mumbai', limit: 8 });
+
+    expect(result.state).toBe('degraded');
+  });
+
+  it('does NOT claim out of coverage for a query with no word in it', async () => {
+    // "Machiya covers Patna, Bengaluru and Pune" in answer to "#12/4b" is a
+    // non-sequitur that makes the product look like it cannot read.
+    const result = await suggestPlaces({ q: '#12/4b', limit: 8 });
+
+    expect(result.state).toBe('ok');
+    expect(result.suggestions).toHaveLength(0);
+  });
+
+  it('DOES claim out of coverage for gibberish that reads as a word', async () => {
+    // The documented limit of the heuristic, asserted rather than left to be
+    // discovered: telling someone who typed "zzzqqq" which cities we cover is
+    // mildly silly, and the alternative is a place-name classifier. The cost
+    // of the false positive is one extra sentence in a dropdown, so this is
+    // the right side to err on.
+    const result = await suggestPlaces({ q: 'zzzqqq', limit: 8 });
+
+    expect(result.state).toBe('out_of_coverage');
+  });
+
+  it('does NOT claim out of coverage when something did match', async () => {
+    remoteResults.push(remote({ label: 'Whitefield Main Road', lat: 12.97, lng: 77.75 }));
+
+    const result = await suggestPlaces({ q: 'whitefield', limit: 8 });
+
+    expect(result.state).toBe('ok');
   });
 });
 

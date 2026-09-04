@@ -3,6 +3,8 @@ import {
   BBOX_PAD_KM,
   bboxAreaSqKm,
   bboxIntersection,
+  bboxUnion,
+  isInsideAnyBbox,
   isInsideBbox,
   padBbox,
 } from '../src/cities/bbox.js';
@@ -89,5 +91,41 @@ describe('bboxIntersection', () => {
 
     expect(overlap).not.toBeNull();
     expect(overlap ? bboxAreaSqKm(overlap) : 0).toBeGreaterThan(100);
+  });
+});
+
+describe('bboxUnion and isInsideAnyBbox', () => {
+  it('encloses every input box', () => {
+    const union = bboxUnion([PATNA, BENGALURU]);
+
+    for (const box of [PATNA, BENGALURU]) {
+      expect(union.minLng).toBeLessThanOrEqual(box.minLng);
+      expect(union.minLat).toBeLessThanOrEqual(box.minLat);
+      expect(union.maxLng).toBeGreaterThanOrEqual(box.maxLng);
+      expect(union.maxLat).toBeGreaterThanOrEqual(box.maxLat);
+    }
+  });
+
+  it('is a RECTANGLE, so membership must not be tested against it', () => {
+    // The bug this pair of functions exists to prevent. Nagpur is inside the
+    // rectangle enclosing Patna and Bengaluru and inside neither city, so a
+    // coverage check written against `bboxUnion` would declare most of central
+    // India covered and then fail every route, POI and geocode from it.
+    const nagpur = { lat: 21.1458, lng: 79.0882 };
+
+    expect(isInsideBbox(nagpur, bboxUnion([PATNA, BENGALURU]))).toBe(true);
+    expect(isInsideAnyBbox(nagpur, [PATNA, BENGALURU])).toBe(false);
+  });
+
+  it('admits a point inside any one of the boxes', () => {
+    const koramangala = { lat: 12.9352, lng: 77.6245 };
+
+    expect(isInsideAnyBbox(koramangala, [PATNA, BENGALURU])).toBe(true);
+    expect(isInsideAnyBbox(koramangala, [PATNA])).toBe(false);
+  });
+
+  it('admits nothing when there are no boxes', () => {
+    expect(isInsideAnyBbox({ lat: 25.6, lng: 85.1 }, [])).toBe(false);
+    expect(() => bboxUnion([])).toThrow(/at least one box/);
   });
 });

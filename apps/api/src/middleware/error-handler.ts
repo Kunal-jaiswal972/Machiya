@@ -12,6 +12,18 @@ export class HttpError extends Error {
     super(message);
     this.name = 'HttpError';
   }
+
+  /**
+   * Extra fields this error contributes to the `error` object in the response.
+   *
+   * Empty for every ordinary `HttpError`. `OutOfCoverageError` overrides it to
+   * carry the served-city list, so the handler below stays the single place a
+   * client-facing body is assembled rather than growing a special case per
+   * error type.
+   */
+  body(): Partial<ApiError['error']> {
+    return {};
+  }
 }
 
 export const notFoundHandler: RequestHandler = (req, res) => {
@@ -42,7 +54,9 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   }
 
   if (err instanceof HttpError) {
-    const body: ApiError = { error: { code: err.code, message: err.message } };
+    const body: ApiError = {
+      error: { code: err.code, message: err.message, ...err.body() },
+    };
     res.status(err.status).json(body);
     return;
   }

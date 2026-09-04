@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { outOfCoverageSchema } from './geo/coverage.js';
 
 /** Every non-2xx API response has this shape. Nothing else is thrown at clients. */
 export const apiErrorSchema = z.object({
@@ -14,6 +15,17 @@ export const apiErrorSchema = z.object({
         }),
       )
       .optional(),
+    /**
+     * Present only on an `out_of_coverage` refusal.
+     *
+     * Structured rather than folded into `message`, because the wizard renders
+     * the supported cities as one-tap actions — and a UI that has to regex a
+     * city list out of an English sentence is a UI that breaks when the
+     * sentence changes. This is the only error in the API that carries a
+     * payload; if a second one ever needs it, that is the moment to generalise,
+     * not before.
+     */
+    coverage: outOfCoverageSchema.optional(),
   }),
 });
 

@@ -1,14 +1,11 @@
 import {
-  geocodeResultSchema,
   placeSuggestionsSchema,
+  reversePlaceResponseSchema,
   type Coordinate,
-  type GeocodeResult,
   type PlaceSuggestions,
+  type ReversePlaceResponse,
 } from '@machiya/shared';
-import { z } from 'zod';
 import { apiFetch } from './api';
-
-const reverseResponseSchema = z.object({ place: geocodeResultSchema.nullable() });
 
 export async function fetchPlaceSuggestions(
   input: { query: string; citySlug?: string; limit?: number },
@@ -21,22 +18,26 @@ export async function fetchPlaceSuggestions(
   return apiFetch(`/api/places/suggest?${params.toString()}`, placeSuggestionsSchema, { signal });
 }
 
+/**
+ * Name a point.
+ *
+ * Returns the envelope rather than the place, because a null place means two
+ * different things: no address at a legitimate coordinate, or a coordinate the
+ * product does not reach. The second carries `coverage`. See
+ * `reversePlaceResponseSchema`.
+ */
 export async function reverseGeocode(
   coordinate: Coordinate,
   signal?: AbortSignal,
-): Promise<GeocodeResult | null> {
+): Promise<ReversePlaceResponse> {
   const params = new URLSearchParams({
     lat: coordinate.lat.toFixed(6),
     lng: coordinate.lng.toFixed(6),
   });
 
-  const { place } = await apiFetch(
-    `/api/places/reverse?${params.toString()}`,
-    reverseResponseSchema,
-    { signal },
-  );
-
-  return place;
+  return apiFetch(`/api/places/reverse?${params.toString()}`, reversePlaceResponseSchema, {
+    signal,
+  });
 }
 
 /**

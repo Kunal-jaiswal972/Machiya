@@ -11,11 +11,11 @@ the browser.
 `packages/shared/src/geo/providers.ts` declares three interfaces and nothing
 else — it knows nothing about Nominatim, OSRM or Overpass:
 
-| Interface         | Contract                                                                                    |
-| ----------------- | ------------------------------------------------------------------------------------------- |
-| `GeocodeProvider` | `search(query, opts)` → ranked `GeocodeResult[]`; `reverse(coord)` → one result or **null** |
-| `RoutingProvider` | `route({from, to, profile})` → `RouteResult` or **null**                                    |
-| `PoiProvider`     | `nearby({center, radiusMeters, categories})` → `PoiLookupResult`                            |
+| Interface         | Contract                                                                                  |
+| ----------------- | ----------------------------------------------------------------------------------------- |
+| `GeocodeProvider` | `search(query, opts)` → `{ results, refused }`; `reverse(coord)` → one result or **null** |
+| `RoutingProvider` | `route({from, to, profile})` → `RouteResult` or **null**                                  |
+| `PoiProvider`     | `nearby({center, radiusMeters, categories})` → `PoiLookupResult`                          |
 
 The concrete clients live in `apps/api/src/geo/`. Feature code never imports
 them directly — it goes through a resolver (`resolveGeocodeProvider()`), selected
@@ -29,6 +29,9 @@ Two properties every provider must have:
 - **`degraded` is not `empty`.** "We could not refresh this" and "there is
   nothing here" are different answers, and to someone choosing where to live they
   are opposite ones. The result schemas carry the flag so the UI can say which.
+  `GeocodeProvider.search` states it outright with `refused`, because for a
+  geocoder the two are indistinguishable from the result array alone — an empty
+  list is a real answer about a three-city extract. See DECISIONS.md D54.
 
 ## Tiles
 
@@ -84,8 +87,10 @@ wins regardless of score** — it is the one carrying a `citySlug` and, for a
 listing, a slug, which is what the UI needs to act on a selection. Two
 Koramangalas 300 km apart still both appear.
 
-`degraded: true` means exactly one thing: tier 2 was needed and answered nothing.
-Tier 1 being sufficient is the fast path, not a degradation.
+The response carries **one** `state` of three — `ok`, `degraded`,
+`out_of_coverage` — not a pair of booleans. Tier 1 being sufficient is `ok`: the
+fast path, not a degradation. See
+[the three autocomplete states](#the-three-autocomplete-states).
 
 Reasoning and the verified numbers: DECISIONS.md D39.
 
@@ -251,6 +256,123 @@ Passing only the caller's signal — which is the request-close signal — silen
 seconds instead of degrading at 25. If you add a fourth provider, combine the
 signals.
 
+## Coverage: the three cities, as a state the code can see
+
+Every geo entry point asks one question first — **is this a point we can answer
+anything about?** — and gets it from one function.
+
+```ts
+const resolution = await checkCoverage({ lat, lng }); // apps/api/src/services/coverage.ts
+```
+
+The frontier is the **union of the padded bboxes**, taken from
+`osm-data/manifest.json` rather than from the city config, because coverage is a
+claim about the artifacts and the manifest records what was actually cut. With
+no manifest at all the config's boxes are the fallback (D6 again: the core
+stack works before `pnpm bootstrap` has ever run).
+
+It is a union **of** rectangles, not the bounding rectangle of the union.
+Nagpur is inside the box enclosing Patna, Bengaluru and Pune and inside none of
+them; `bboxUnion` is used only for the map's `maxBounds`, and `isInsideAnyBbox`
+is what decides membership.
+
+One SQL statement in `packages/db/src/geo-queries.ts` answers three questions in
+one round trip: inside any padded envelope, which `City.boundary` covers the
+point, and which centroid is nearest with its distance.
+
+### What each entry point does with the answer
+
+| Entry point                 | Inside coverage                    | Outside coverage                                  |
+| --------------------------- | ---------------------------------- | ------------------------------------------------- |
+| `/api/listings/search`      | `status: "ok"` with the result set | 200, `status: "out_of_coverage"` with the payload |
+| `/api/places/suggest`       | `state: "ok"` or `"degraded"`      | `state: "out_of_coverage"` with the payload       |
+| `/api/places/reverse`       | `{ place }`                        | `{ place: null, coverage }`                       |
+| listing create / patch      | assigned by containment            | **422** `out_of_coverage`, no row written         |
+| `/api/listings/:slug/route` | the OSRM route                     | **422** `out_of_coverage`                         |
+
+The reads are 200 because "we do not serve that city yet" is a complete answer;
+the writes are 422 because there is nothing sensible to write. The search
+response is a **discriminated union** on `status`, so a caller cannot read
+`total: 0` off an out-of-coverage response and render "no listings near you".
+
+Never fall back to nearest centroid across the frontier. Inside coverage, for a
+point in a gap between a municipal polygon and the edge of the extract, nearest
+centroid is correct and stays — labelled `nearest` and logged. Outside, the same
+arithmetic files a Mumbai listing under Pune.
+
+### The three autocomplete states
+
+`ok`, `degraded` and `out_of_coverage` are one enum field, not two booleans, and
+they mean different things with different fixes:
+
+- **`ok`** — the list is the answer. An empty `ok` inside a covered city means
+  the query matched nothing there.
+- **`degraded`** — tier 2 was needed and **could not answer**. Local rows still
+  stand; the fix is upstream. The adapter reports this as `refused: true`.
+- **`out_of_coverage`** — both tiers answered, both empty, and the query reads
+  like a place name.
+
+The middle two used to be one value, which is how "we do not cover Mumbai" got
+rendered as "the wider search is unavailable". See DECISIONS.md D54.
+
+**Measured, against the local Nominatim, not assumed.** The autocomplete
+coverage state fires much less often than "search Mumbai" suggests, because
+Indian city names appear all over the covered extracts as road and business
+names:
+
+| Query       | State             | Top match                      |
+| ----------- | ----------------- | ------------------------------ |
+| `mumbai`    | `ok` (7 results)  | Old Pune-Mumbai Highway        |
+| `chennai`   | `ok` (6)          | Bengaluru - Chennai Expressway |
+| `hyderabad` | `ok` (8)          | Ancient Hyderabad              |
+| `jaipur`    | `ok` (2)          | Cottons Jaipur                 |
+| `kolkata`   | `ok` (1)          | Kolkata                        |
+| `ahmedabad` | `out_of_coverage` | —                              |
+
+Those `ok` answers are correct: the matches are real features inside coverage,
+and their context lines say "Pune" or "Bengaluru", so a user who typed "mumbai"
+and gets a Pune highway can see that. The coverage message's real home is
+therefore the **coordinate** paths — a dropped pin, a shared URL, a saved
+office, a listing create — which is where an out-of-coverage point used to do
+actual damage. The autocomplete state is a genuine case and a narrower one.
+
+### `GET /api/coverage`
+
+Public, cached hard, ETag stamped with the geo epoch. Returns every served city
+with its centroid, both bboxes and its boundary polygon, plus the derived
+`maxBounds`.
+
+```bash
+curl -s localhost:4000/api/coverage | jq '{epoch, maxBounds, cities: [.cities[].slug]}'
+```
+
+The browser reads its city list, its initial camera and the map's `maxBounds`
+from here rather than from a build-time constant. **That is what makes "adding a
+city is one record" true of the frontend as well** — a fourth city widens the
+served set, the pan limit and every coverage message with no code change in
+`apps/web`. It is also why `VITE_DEFAULT_CITY` no longer exists.
+
+### "Tell me when you cover Mumbai"
+
+`POST /api/coverage/requests` writes a `CoverageRequest` row — email, the
+requested point rounded to about 110 m, and the resolved place label if there
+was one — and answers with how many distinct people have asked about somewhere
+within 50 km. That table is the signal for which city to add fourth:
+
+```sql
+SELECT count(DISTINCT email) AS people,
+       round(avg(lat)::numeric, 3) AS lat,
+       round(avg(lng)::numeric, 3) AS lng,
+       mode() WITHIN GROUP (ORDER BY "placeLabel") AS label
+FROM "CoverageRequest"
+GROUP BY ST_SnapToGrid("location"::geometry, 0.5)
+ORDER BY people DESC;
+```
+
+A request for a point already covered is a 409, because a row here is a vote for
+a new city. The endpoint sends no mail and is rate limited to 10 per hour per
+IP. Reasoning: DECISIONS.md D52-D56.
+
 ## Two bounding boxes per city
 
 Each city in `scripts/cities.ts` carries two boxes, and they are not
@@ -278,6 +400,12 @@ data bug in whichever you check second.
 
 `pnpm tsx scripts/cities.ts extracts` prints the **padded** boxes (bootstrap
 cuts with these); `... bboxes` prints the administrative ones.
+
+The padded boxes have a third reader now: their union is the **coverage
+frontier**, and its bounding rectangle is the map's `maxBounds`, served from
+`GET /api/coverage` and derived from the manifest. So a fourth city widens what
+the map will let you pan to at the same moment it widens what was cut — nothing
+in `apps/web` names a city or a bound.
 
 Reasoning, and what the tight cut actually broke: DECISIONS.md D47.
 

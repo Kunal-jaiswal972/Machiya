@@ -16,6 +16,7 @@ import { cacheGet, cacheSet } from '../lib/cache.js';
 import { publicVariantUrl } from '../lib/storage.js';
 import { logger } from '../logger.js';
 import { HttpError } from '../middleware/error-handler.js';
+import { assertCovered } from './coverage.js';
 
 /**
  * Everything the detail view needs beyond the listing row itself: the commute
@@ -58,6 +59,15 @@ export async function getListingRoute(input: {
 }): Promise<RouteResult> {
   const profile = routeProfileSchema.parse(input.profile);
   const { point } = await requireListingPoint(input.slug);
+
+  // The LISTING is inside coverage by construction — creation refuses anything
+  // else — but the office is a coordinate the caller chose, and it may not be.
+  // OSRM answers an out-of-graph coordinate with a 400, which the provider
+  // swallows into a straight-line estimate labelled `degraded`: a plausible
+  // number for a commute nobody could make. Refusing here means the panel says
+  // "we do not cover that yet" instead. An OSRM 400 is a symptom, not the place
+  // to catch this. See DECISIONS.md D53.
+  await assertCovered(input.from);
 
   const route = await resolveRoutingProvider().route({
     from: input.from,

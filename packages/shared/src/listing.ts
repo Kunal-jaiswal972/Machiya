@@ -5,7 +5,13 @@ import {
   listingTypeSchema,
   propertyTypeSchema,
 } from './enums.js';
-import { coordinateSchema, radiusMetersSchema, ringSchema } from './geo/index.js';
+import {
+  OUT_OF_COVERAGE_CODE,
+  coordinateSchema,
+  outOfCoverageSchema,
+  radiusMetersSchema,
+  ringSchema,
+} from './geo/index.js';
 
 /**
  * Every filter the map search accepts. All of them compose into ONE
@@ -146,3 +152,26 @@ export const listingSearchResponseSchema = listingSearchResultSchema
   .extend({ listings: z.array(listingCardSchema) });
 
 export type ListingSearchResponse = z.infer<typeof listingSearchResponseSchema>;
+
+/**
+ * What `GET /api/listings/search` actually returns, as a discriminated union.
+ *
+ * A union rather than an extra field, because the two arms have nothing in
+ * common and a shared shape would let a caller read `total: 0` off an
+ * out-of-coverage response and render "no listings near you" — which is the
+ * exact confusion correction 9 exists to remove. `status` is the discriminant,
+ * so TypeScript refuses to read `listings` without checking it first.
+ *
+ * 200, not an error status: "we do not serve that city yet" is a successful and
+ * complete answer to a well-formed question. Listing *creation* out of coverage
+ * is a 422, because that one is a refusal.
+ */
+export const searchResponseSchema = z.discriminatedUnion('status', [
+  listingSearchResponseSchema.extend({ status: z.literal('ok') }),
+  z.object({
+    status: z.literal(OUT_OF_COVERAGE_CODE),
+    coverage: outOfCoverageSchema,
+  }),
+]);
+
+export type SearchResponse = z.infer<typeof searchResponseSchema>;

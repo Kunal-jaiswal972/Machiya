@@ -648,3 +648,262 @@ export async function resolveCityForPoint(coordinate: Coordinate): Promise<CityM
   const fallback = nearest[0];
   return fallback ? cityMatchSchema.parse(fallback) : null;
 }
+
+// --- coverage ---------------------------------------------------------------
+
+/**
+ * The single question every geo entry point asks first: **is this point one we
+ * can answer anything about?**
+ *
+ * Correction 9 exists because that question was never asked. A pin dropped in
+ * Mumbai produced zero listings, a refused OSRM route, no POIs, no fuel price
+ * and a `cityId` misfiled to a city 1,300 km away — five separate symptoms of
+ * one unhandled state, none of which said "we do not serve that city yet".
+ *
+ * Three answers in one statement, because they are one round trip and the
+ * middle one is meaningless without the first:
+ *
+ *  1. **Is the point inside any PADDED bbox?** That is the coverage frontier:
+ *     the padded boxes are what `osmium extract` cut, so outside them there is
+ *     no road graph, no geocoder index and no POI database. Note it is
+ *     `isInsideAny`-shaped — a union of rectangles, not the bounding rectangle
+ *     of the union, which would put most of the Deccan "inside" coverage.
+ *  2. **Which boundary covers it?** `ST_Covers` against `City.boundary`,
+ *     smallest polygon first. See `resolveCityForPoint` for why `ST_Covers`
+ *     rather than `ST_Contains`.
+ *  3. **Which city centroid is nearest, and how far?** Two jobs: inside
+ *     coverage it is the fallback for a point in a gap between boundaries, and
+ *     outside coverage it is the "Bengaluru is nearest, 840 km away" in the
+ *     message. The distinction is the whole correction — the same number is a
+ *     legitimate assignment on one side of the frontier and silent data
+ *     corruption on the other.
+ *
+ * The padded boxes arrive as a parameter rather than being read from the city
+ * config, so this package stays free of it and the function can be tested
+ * against arbitrary boxes. Every coordinate in them is a bound parameter.
+ */
+const coverageRowSchema = z.object({
+  inside: z.boolean(),
+  boundaryCityId: z.string().nullable(),
+  boundaryCitySlug: z.string().nullable(),
+  boundaryCityName: z.string().nullable(),
+  nearestCityId: z.string().nullable(),
+  nearestCitySlug: z.string().nullable(),
+  nearestCityName: z.string().nullable(),
+  nearestDistanceMeters: z.number().nullable(),
+});
+
+export interface CoverageCity {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+export interface NearestCoverageCity extends CoverageCity {
+  distanceMeters: number;
+}
+
+export type CoverageResolution =
+  | {
+      covered: true;
+      city: CoverageCity;
+      /**
+       * `covers` is containment. `nearest` is the in-coverage fallback for a
+       * point in a gap between two boundaries — correct, and labelled so every
+       * caller can log it. It never appears with `covered: false`.
+       */
+      method: 'covers' | 'nearest';
+      /** Zero for a containment match; centroid distance for the fallback. */
+      distanceMeters: number;
+      /** The nearest city by centroid, whatever the assignment was. */
+      nearest: NearestCoverageCity | null;
+    }
+  | {
+      covered: false;
+      /** For the message. Null only when no city is configured at all. */
+      nearest: NearestCoverageCity | null;
+    };
+
+/** A bounding box as it reaches SQL. Same shape as `CityBbox`. */
+export interface CoverageBbox {
+  minLng: number;
+  minLat: number;
+  maxLng: number;
+  maxLat: number;
+}
+
+export async function resolveCoverage(
+  coordinate: Coordinate,
+  paddedBboxes: readonly CoverageBbox[],
+): Promise<CoverageResolution> {
+  if (paddedBboxes.length === 0) {
+    // No boxes means nothing was ever cut. Refusing everything is the honest
+    // answer — the alternative is claiming coverage of a region with no
+    // artifacts behind it, which is the failure D51 makes loud at boot.
+    return { covered: false, nearest: null };
+  }
+
+  const envelopes = Prisma.join(
+    paddedBboxes.map(
+      (box) => Prisma.sql`ST_MakeEnvelope(
+        ${box.minLng}::double precision,
+        ${box.minLat}::double precision,
+        ${box.maxLng}::double precision,
+        ${box.maxLat}::double precision,
+        4326
+      )`,
+    ),
+    ', ',
+  );
+
+  const origin = point(coordinate);
+
+  const rows = await prisma.$queryRaw<unknown[]>(Prisma.sql`
+    WITH origin AS (SELECT ${origin} AS geog),
+    frontier AS (
+      -- ST_Collect, not ST_Union: the boxes are disjoint for the seed cities
+      -- and a collection answers ST_Intersects identically at a fraction of
+      -- the cost. Planar geometry on purpose — a bbox test IS a degree-space
+      -- rectangle test, and casting to geography here would buy spheroidal
+      -- semantics nobody asked for.
+      SELECT ST_Intersects(
+        ST_Collect(ARRAY[${envelopes}]),
+        (SELECT geog::geometry FROM origin)
+      ) AS "inside"
+    ),
+    boundary_hit AS (
+      SELECT c."id", c."slug", c."name"
+      FROM "City" c, origin o
+      WHERE c."boundary" IS NOT NULL
+        AND ST_Covers(c."boundary", o.geog)
+      ORDER BY ST_Area(c."boundary"::geometry) ASC
+      LIMIT 1
+    ),
+    nearest AS (
+      SELECT
+        c."id",
+        c."slug",
+        c."name",
+        ST_Distance(
+          ST_SetSRID(
+            ST_MakePoint(c."centroidLng"::double precision, c."centroidLat"::double precision),
+            4326
+          )::geography,
+          o.geog
+        ) AS "meters"
+      FROM "City" c, origin o
+      ORDER BY "meters" ASC
+      LIMIT 1
+    )
+    SELECT
+      (SELECT "inside" FROM frontier)                       AS "inside",
+      (SELECT "id" FROM boundary_hit)                       AS "boundaryCityId",
+      (SELECT "slug" FROM boundary_hit)                     AS "boundaryCitySlug",
+      (SELECT "name" FROM boundary_hit)                     AS "boundaryCityName",
+      (SELECT "id" FROM nearest)                            AS "nearestCityId",
+      (SELECT "slug" FROM nearest)                          AS "nearestCitySlug",
+      (SELECT "name" FROM nearest)                          AS "nearestCityName",
+      (SELECT "meters" FROM nearest)::double precision      AS "nearestDistanceMeters"
+  `);
+
+  const row = coverageRowSchema.parse(rows[0]);
+
+  const nearest: NearestCoverageCity | null =
+    row.nearestCityId && row.nearestCitySlug && row.nearestCityName
+      ? {
+          id: row.nearestCityId,
+          slug: row.nearestCitySlug,
+          name: row.nearestCityName,
+          distanceMeters: row.nearestDistanceMeters ?? 0,
+        }
+      : null;
+
+  if (!row.inside) {
+    return { covered: false, nearest };
+  }
+
+  if (row.boundaryCityId && row.boundaryCitySlug && row.boundaryCityName) {
+    return {
+      covered: true,
+      city: { id: row.boundaryCityId, slug: row.boundaryCitySlug, name: row.boundaryCityName },
+      method: 'covers',
+      distanceMeters: 0,
+      nearest,
+    };
+  }
+
+  if (!nearest) {
+    // Inside a padded box with no cities in the database at all: the artifacts
+    // and the seed disagree, which is a deploy fault rather than a user one.
+    return { covered: false, nearest: null };
+  }
+
+  // Inside coverage, in a gap between boundaries. THIS is where the centroid
+  // fallback is correct, and the only place it is reachable.
+  return {
+    covered: true,
+    city: { id: nearest.id, slug: nearest.slug, name: nearest.name },
+    method: 'nearest',
+    distanceMeters: nearest.distanceMeters,
+    nearest,
+  };
+}
+
+/**
+ * How near two coverage requests have to be to count as asking for the same
+ * place, in metres.
+ *
+ * 50 km, which is roughly "the same metro area and its commuter belt". The
+ * number this feeds is "you are the Nth person to ask about somewhere near
+ * here", so it wants to be generous: Thane and Colaba are 40 km apart and
+ * anyone asking about either is asking for Mumbai.
+ */
+export const COVERAGE_REQUEST_CLUSTER_METERS = 50_000;
+
+/**
+ * Records a request for a city the product does not cover, and returns how many
+ * distinct people have now asked for somewhere near that point.
+ *
+ * The upsert is on `(email, lat, lng)` with the coordinates already rounded by
+ * the caller, so one person tapping "tell me" repeatedly increments `asks`
+ * rather than adding rows — otherwise the count below counts taps.
+ *
+ * The count is spatial rather than exact-match, for the reason on
+ * `COVERAGE_REQUEST_CLUSTER_METERS`: two people asking for Mumbai will not have
+ * dropped their pins on the same building.
+ */
+export async function recordCoverageRequest(input: {
+  email: string;
+  lat: number;
+  lng: number;
+  placeLabel?: string | undefined;
+}): Promise<{ asks: number; peopleNearby: number }> {
+  const row = await prisma.coverageRequest.upsert({
+    where: { email_lat_lng: { email: input.email, lat: input.lat, lng: input.lng } },
+    create: {
+      email: input.email,
+      lat: input.lat,
+      lng: input.lng,
+      ...(input.placeLabel ? { placeLabel: input.placeLabel } : {}),
+    },
+    // A later ask may carry a label an earlier one could not resolve, so the
+    // label is filled in but never blanked out.
+    update: {
+      asks: { increment: 1 },
+      ...(input.placeLabel ? { placeLabel: input.placeLabel } : {}),
+    },
+    select: { asks: true },
+  });
+
+  const counted = await prisma.$queryRaw<Array<{ people: number }>>(Prisma.sql`
+    SELECT count(DISTINCT "email")::int AS "people"
+    FROM "CoverageRequest"
+    WHERE ST_DWithin(
+      "location",
+      ${point({ lat: input.lat, lng: input.lng })},
+      ${COVERAGE_REQUEST_CLUSTER_METERS}
+    )
+  `);
+
+  return { asks: row.asks, peopleNearby: Number(counted[0]?.people ?? 1) };
+}

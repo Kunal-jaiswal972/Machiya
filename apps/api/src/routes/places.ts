@@ -46,12 +46,16 @@ export function placesRouter(): Router {
     req.on('close', () => controller.abort());
 
     reversePlace(coordinate, { signal: controller.signal })
-      .then((place) => {
+      .then((result) => {
         res.set('cache-control', 'public, max-age=300');
         // 200 with a null place, not 404: "there is no address at this point"
         // is a successful answer about a legitimate coordinate. The client
         // shows the coordinates instead of an error.
-        res.json({ place });
+        //
+        // A null place WITH a `coverage` payload is the other thing — a point
+        // the product does not reach. Two answers that used to be one, which
+        // is why the response is an envelope rather than a bare place.
+        res.json(result);
       })
       .catch(next);
   });

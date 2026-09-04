@@ -89,3 +89,51 @@ export function isInsideBbox(point: { lat: number; lng: number }, bbox: CityBbox
     point.lng <= bbox.maxLng
   );
 }
+
+/**
+ * The smallest box containing every input box.
+ *
+ * This is what "coverage" means as an outer bound: the union of the **padded**
+ * boxes is the region the OSM artifacts were cut from, so it is the region
+ * where a route, a POI lookup or a reverse geocode can be answered at all.
+ * Outside it every geo service is guessing, which is why correction 9 makes it
+ * an explicit state rather than an empty result.
+ *
+ * A rectangle rather than a true union of rectangles, deliberately: the three
+ * seed cities are a thousand kilometres apart, so their true union is three
+ * disjoint boxes and their bounding rectangle covers most of India. That is
+ * fine for the ONE thing the rectangle is used for — the map's `maxBounds`,
+ * which only has to stop someone panning to Europe. Membership is tested
+ * per-box by `isInsideAnyBbox`, never against this rectangle.
+ */
+export function bboxUnion(boxes: readonly CityBbox[]): CityBbox {
+  const first = boxes[0];
+  if (!first) {
+    throw new Error('bboxUnion needs at least one box');
+  }
+
+  return boxes.reduce<CityBbox>(
+    (union, box) => ({
+      minLng: Math.min(union.minLng, box.minLng),
+      minLat: Math.min(union.minLat, box.minLat),
+      maxLng: Math.max(union.maxLng, box.maxLng),
+      maxLat: Math.max(union.maxLat, box.maxLat),
+    }),
+    first,
+  );
+}
+
+/**
+ * Whether a point is inside ANY of the boxes.
+ *
+ * The membership test for coverage, and the reason `bboxUnion` is not: a point
+ * in the middle of the Deccan is inside the bounding rectangle of Patna,
+ * Bengaluru and Pune and inside none of them. Getting this backwards would
+ * declare most of the country covered and then fail every downstream call.
+ */
+export function isInsideAnyBbox(
+  point: { lat: number; lng: number },
+  boxes: readonly CityBbox[],
+): boolean {
+  return boxes.some((box) => isInsideBbox(point, box));
+}

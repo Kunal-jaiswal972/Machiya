@@ -2,14 +2,18 @@ import { searchPlacesLocally, type LocalPlaceRow } from '@machiya/db';
 import {
   AUTOCOMPLETE_LOCAL_SUFFICIENT_COUNT,
   AUTOCOMPLETE_MIN_REMOTE_CHARS,
+  OUT_OF_COVERAGE_CODE,
   cityBboxSchema,
+  looksLikePlaceName,
   type Coordinate,
   type GeocodeResult,
   type GeocodeSource,
   type PlaceSearchQuery,
   type PlaceSuggestions,
+  type ReversePlaceResponse,
 } from '@machiya/shared';
 import { resolveGeocodeProvider } from '../geo/nominatim.js';
+import { checkCoverage, outOfCoverageFor, outOfCoverageForQuery } from './coverage.js';
 
 /**
  * The two-tier place autocomplete behind one endpoint.
@@ -85,7 +89,7 @@ export async function suggestPlaces(
   const sources: GeocodeSource[] = [];
 
   if (term.length === 0) {
-    return { suggestions: [], sources, degraded: false };
+    return { suggestions: [], sources, state: 'ok' };
   }
 
   const localRows = await searchPlacesLocally({
@@ -109,9 +113,9 @@ export async function suggestPlaces(
     return {
       suggestions: local.slice(0, query.limit),
       sources,
-      // Not degraded: tier 1 was sufficient, which is the fast path, not a
-      // failure. Degraded means "tier 2 should have run and could not".
-      degraded: false,
+      // `ok`, not degraded: tier 1 was sufficient, which is the fast path, not
+      // a failure. A locally-answered query is the good case.
+      state: 'ok',
     };
   }
 
@@ -121,22 +125,58 @@ export async function suggestPlaces(
     ...(options.signal ? { signal: options.signal } : {}),
   });
 
-  if (remote.length > 0) sources.push('nominatim');
+  if (remote.results.length > 0) sources.push('nominatim');
 
-  return {
-    suggestions: mergeTiers(local, remote).slice(0, query.limit),
-    sources,
-    // Tier 2 was needed and returned nothing. Either it is down, still
-    // importing, or rate-limited — the local rows still stand, and the UI can
-    // say so rather than implying the place does not exist.
-    degraded: remote.length === 0,
-  };
+  const suggestions = mergeTiers(local, remote.results).slice(0, query.limit);
+
+  // Tier 2 was needed and could not answer: down, still importing, or rate
+  // limited. The local rows still stand, and the UI says so rather than
+  // implying the place does not exist. This is NOT the same as tier 2
+  // answering with an empty list, which is a fact about the extract — and
+  // reading `results.length === 0` as "degraded" is what made the two
+  // indistinguishable before correction 9.
+  if (remote.refused) {
+    return { suggestions, sources, state: 'degraded' };
+  }
+
+  // Both tiers answered, both empty, and the query reads like a place name.
+  // Almost always a city the product does not serve, and that deserves the
+  // coverage message rather than an empty list a user reads as "this product
+  // has nothing".
+  if (suggestions.length === 0 && looksLikePlaceName(term)) {
+    return {
+      suggestions,
+      sources,
+      state: OUT_OF_COVERAGE_CODE,
+      coverage: outOfCoverageForQuery(),
+    };
+  }
+
+  return { suggestions, sources, state: 'ok' };
 }
 
-/** Reverse geocode for map-click and pin-drag office selection. */
+/**
+ * Reverse geocode for map-click and pin-drag office selection.
+ *
+ * Coverage first, and the reason is what a null `place` used to mean: "there is
+ * no address at this point" and "the product does not reach this point" were
+ * the same answer, so a pin dropped in Mumbai looked identical to a pin dropped
+ * on an unmapped field at the edge of Patna. The first wants the coverage
+ * state; the second is legitimate and shows coordinates.
+ */
 export async function reversePlace(
   coordinate: Coordinate,
   options: { signal?: AbortSignal } = {},
-): Promise<GeocodeResult | null> {
-  return resolveGeocodeProvider().reverse(coordinate, options);
+): Promise<ReversePlaceResponse> {
+  const coverage = await checkCoverage(coordinate);
+
+  if (!coverage.covered) {
+    return {
+      place: null,
+      coverage: outOfCoverageFor({ coordinate, nearest: coverage.nearest }),
+    };
+  }
+
+  const place = await resolveGeocodeProvider().reverse(coordinate, options);
+  return { place };
 }
