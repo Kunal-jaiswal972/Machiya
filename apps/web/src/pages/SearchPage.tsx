@@ -1,4 +1,10 @@
-import type { GeocodeResult, ListingCard, OutOfCoverage } from '@machiya/shared';
+import {
+  precisionNote,
+  type GeocodeResult,
+  type ListingCard,
+  type MatchPrecision,
+  type OutOfCoverage,
+} from '@machiya/shared';
 import { useMutation } from '@tanstack/react-query';
 import { List, Map as MapIcon, Star } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -53,6 +59,16 @@ export function SearchPage() {
    * panel switch to the coverage state without a flash of "no listings".
    */
   const [pinCoverage, setPinCoverage] = useState<OutOfCoverage | null>(null);
+  /**
+   * How precise the office label is, so the UI can say what it actually did.
+   *
+   * "Showing Rajendra Nagar — drag the pin to your exact spot" is the honest
+   * line when a full street address resolved only to its locality, which is the
+   * usual outcome: `addr:housenumber` tagging in Indian cities is sparse and no
+   * change of geocoder fixes that. Null once the pin has been placed by hand,
+   * because then the precision came from the pin. See DECISIONS.md D59.
+   */
+  const [officePrecision, setOfficePrecision] = useState<MatchPrecision | null>(null);
 
   const search = useListingSearch(query);
 
@@ -96,6 +112,7 @@ export function SearchPage() {
   // put an entry in the history the back button has to walk through.
   useEffect(() => {
     if (office || !defaultOffice) return;
+    setOfficePrecision(null);
     setOfficeLabel(defaultOffice.address);
     update({ lat: defaultOffice.lat, lng: defaultOffice.lng }, { replace: true });
   }, [office, defaultOffice, update]);
@@ -115,6 +132,10 @@ export function SearchPage() {
       // reach. That is a different answer from "no address here", which is what
       // a bare null used to conflate it with.
       setPinCoverage(coverage ?? null);
+      // A dropped or dragged pin IS the exact spot, whatever the reverse
+      // geocode managed to name it — so there is nothing to caveat. The label
+      // is a description of the point, not the source of its precision.
+      setOfficePrecision(null);
       setOfficeLabel(
         place?.label
           ? [place.label, place.context].filter(Boolean).join(', ')
@@ -123,6 +144,7 @@ export function SearchPage() {
     },
     onError: (_error, point) => {
       setPinCoverage(null);
+      setOfficePrecision(null);
       setOfficeLabel(describeCoordinate(point));
     },
   });
@@ -141,6 +163,7 @@ export function SearchPage() {
       // own rows and tier 2's Nominatim imported only the covered extracts. So
       // any pin-coverage state from a previous click is stale here.
       setPinCoverage(null);
+      setOfficePrecision(result.matchPrecision);
       setOfficeLabel([result.label, result.context].filter(Boolean).join(', '));
       setOffice({ lat: result.lat, lng: result.lng });
       if (result.citySlug && result.citySlug !== query.city) {
@@ -161,6 +184,7 @@ export function SearchPage() {
   const onPickCoveredCity = useCallback(
     (picked: OutOfCoverage['supportedCities'][number]) => {
       setPinCoverage(null);
+      setOfficePrecision('area');
       setOfficeLabel(picked.name);
       update({ city: picked.slug, lat: picked.centroid.lat, lng: picked.centroid.lng });
     },
@@ -224,6 +248,8 @@ export function SearchPage() {
             onSelect={onSelectSuggestion}
             savedOffices={offices}
             onSelectSaved={(saved) => {
+              // A saved office was pinned when it was saved.
+              setOfficePrecision(null);
               setOfficeLabel(saved.address);
               setOffice({ lat: saved.lat, lng: saved.lng });
             }}
@@ -271,6 +297,19 @@ export function SearchPage() {
             ))}
           </div>
         </div>
+
+        {/* What the geocoder actually did, when it did less than asked. Above
+            the filter bar because it is about the office the filters are
+            measured from, and silent for an exact match — the good case needs
+            no note. */}
+        {office && !coverage && officePrecision && officePrecision !== 'exact' ? (
+          <p className="text-data text-ink-soft">
+            {precisionNote({
+              precision: officePrecision,
+              label: officeLabel.split(',')[0]?.trim() || 'that area',
+            })}
+          </p>
+        ) : null}
 
         {office && !coverage ? (
           <FilterBar

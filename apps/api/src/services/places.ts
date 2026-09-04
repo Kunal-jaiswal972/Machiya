@@ -1,10 +1,12 @@
 import { searchPlacesLocally, type LocalPlaceRow } from '@machiya/db';
 import {
+  AUTOCOMPLETE_CONFIDENT_SCORE,
   AUTOCOMPLETE_LOCAL_SUFFICIENT_COUNT,
   AUTOCOMPLETE_MIN_REMOTE_CHARS,
   OUT_OF_COVERAGE_CODE,
   cityBboxSchema,
   looksLikePlaceName,
+  looksLikeStreetAddress,
   type Coordinate,
   type GeocodeResult,
   type GeocodeSource,
@@ -38,6 +40,7 @@ function toGeocodeResult(row: LocalPlaceRow): GeocodeResult {
     lng: row.lng,
     kind: row.kind,
     source: 'local',
+    matchPrecision: row.matchPrecision,
     score: row.score,
     ...(bbox.success ? { bbox: bbox.data } : {}),
     ...(row.listingSlug ? { listingSlug: row.listingSlug } : {}),
@@ -92,22 +95,56 @@ export async function suggestPlaces(
     return { suggestions: [], sources, state: 'ok' };
   }
 
+  // Over-fetch a little so de-duplication cannot shrink the page below `limit`.
+  const localLimit = Math.min(40, query.limit * 2);
+
   const localRows = await searchPlacesLocally({
     query: term,
     ...(query.citySlug ? { citySlug: query.citySlug } : {}),
-    // Over-fetch a little so de-duplication cannot shrink the page below `limit`.
-    limit: Math.min(40, query.limit * 2),
+    limit: localLimit,
   });
 
+  /**
+   * No stripping here, and that is a measured decision rather than an omission.
+   *
+   * Tier 1 is **already** a fuzzy search — `pg_trgm` trigram similarity — and it
+   * degrades a full street address to its locality unaided. Against the seeded
+   * database, "House 47, Road 3, Rajendra Nagar, Patna" returns
+   * `Rajendra Nagar` as its top row at similarity 0.42, and
+   * "Flat 4B, 21 Patliputra Colony, Patna" returns `Patliputra Colony` at 0.56.
+   * A pre-stripped second local query would be a slower way to get the row
+   * trigram already found.
+   *
+   * What tier 1 cannot do is answer for a locality that is not one of its
+   * rows — Anisabad, Wakad and Bellandur all return only the city. That gap is
+   * tier 2's, and it is the only place a strip earns its keep. See D58.
+   */
   const local = localRows.map(toGeocodeResult);
+
   if (local.length > 0) sources.push('local');
+
+  /**
+   * Whether tier 1 actually ANSWERED, as opposed to merely returning rows.
+   *
+   * A place row counts at any score — a weak trigram hit on a locality name is
+   * still that locality, and it is the kind of answer this box exists to give.
+   * A listing row has to clear `AUTOCOMPLETE_CONFIDENT_SCORE`.
+   *
+   * The distinction was found live. "Flat 3, Bailey Road, Patna" returned eight
+   * listing rows at 0.117 — every flat in Boring Road, which shares trigrams
+   * with Bailey Road — and a plain count of five was enough to suppress tier 2
+   * and never ask Nominatim, which knows Bailey Road. The user got eight
+   * unrelated flats instead of their street.
+   */
+  const confident = local.filter(
+    (result) => result.kind !== 'listing' || result.score >= AUTOCOMPLETE_CONFIDENT_SCORE,
+  ).length;
 
   // Tier 2 is skipped when tier 1 already answered well, and for very short
   // queries where a remote geocoder returns noise anyway — "ko" against
   // Nominatim is not a useful request to make of a shared free service.
   const needsRemote =
-    term.length >= AUTOCOMPLETE_MIN_REMOTE_CHARS &&
-    local.length < AUTOCOMPLETE_LOCAL_SUFFICIENT_COUNT;
+    term.length >= AUTOCOMPLETE_MIN_REMOTE_CHARS && confident < AUTOCOMPLETE_LOCAL_SUFFICIENT_COUNT;
 
   if (!needsRemote) {
     return {
@@ -139,11 +176,23 @@ export async function suggestPlaces(
     return { suggestions, sources, state: 'degraded' };
   }
 
-  // Both tiers answered, both empty, and the query reads like a place name.
-  // Almost always a city the product does not serve, and that deserves the
-  // coverage message rather than an empty list a user reads as "this product
-  // has nothing".
-  if (suggestions.length === 0 && looksLikePlaceName(term)) {
+  /**
+   * Both tiers answered, both empty, and the query reads like a place NAME
+   * rather than a street address.
+   *
+   * The street-address exclusion is the line between corrections 9 and 10, and
+   * it was missing until it showed up live: "221 Sarjapur Road, Bellandur,
+   * Bengaluru" resolves to nothing here — Bellandur is not one of our
+   * `Locality` rows and Nominatim has no match for that string — and the
+   * coverage message answered it with "Machiya covers Patna, Bengaluru and
+   * Pune." For an address IN Bengaluru that is a non-sequitur, and precisely
+   * the confusion the coverage state exists to remove.
+   *
+   * So: an address we cannot resolve is an address problem, and gets the
+   * address message. A place name we cannot resolve anywhere is a coverage
+   * problem, and gets the coverage message.
+   */
+  if (suggestions.length === 0 && looksLikePlaceName(term) && !looksLikeStreetAddress(term)) {
     return {
       suggestions,
       sources,

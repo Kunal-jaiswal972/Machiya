@@ -15,6 +15,7 @@
  * free tier said no.
  */
 import { z } from 'zod';
+import { matchPrecisionSchema } from './address.js';
 import { outOfCoverageSchema } from './coverage.js';
 import { cityBboxSchema, type Coordinate } from './schemas.js';
 
@@ -45,6 +46,13 @@ export const geocodeResultSchema = z.object({
   lng: z.number(),
   kind: geocodeResultKindSchema,
   source: geocodeSourceSchema,
+  /**
+   * How precise this answer is relative to the query that produced it, so the
+   * UI can say what it actually did — "Showing Rajendra Nagar, drag the pin to
+   * your exact spot" rather than presenting a neighbourhood as an address.
+   * See `matchPrecisionSchema`.
+   */
+  matchPrecision: matchPrecisionSchema,
   /** 0-1, comparable ACROSS sources — that is what lets the tiers merge. */
   score: z.number().min(0).max(1),
   /** Present for cities, so selecting one can fit the map to it. */
@@ -262,8 +270,30 @@ export type PlaceSearchQuery = z.infer<typeof placeSearchQuerySchema>;
 /** Below this, only the local tier runs — see D39 for why. */
 export const AUTOCOMPLETE_MIN_REMOTE_CHARS = 3;
 
-/** Tier 2 runs only when tier 1 returned fewer than this. */
+/**
+ * Tier 2 runs only when tier 1 returned fewer than this many CONFIDENT rows.
+ *
+ * Confident, not merely present — see `AUTOCOMPLETE_CONFIDENT_SCORE`. Counting
+ * rows alone let eight weak matches suppress the upstream tier that had the
+ * right answer.
+ */
 export const AUTOCOMPLETE_LOCAL_SUFFICIENT_COUNT = 5;
+
+/**
+ * The similarity a LISTING row needs before it counts towards tier 1 being
+ * sufficient.
+ *
+ * Found live rather than reasoned about: "Flat 3, Bailey Road, Patna" returned
+ * eight listing rows at 0.117 each — every flat in Boring Road, because
+ * "Boring Road" and "Bailey Road" share trigrams — which cleared the count of
+ * five, suppressed tier 2, and so never asked Nominatim, which knows Bailey
+ * Road perfectly well. Eight weak matches are not an answer to a place query.
+ *
+ * Place rows (a city or a locality) count at any score: they are the answer
+ * this box exists to give, and a weak trigram hit on a locality name is still a
+ * locality. Only listing rows have to clear the bar.
+ */
+export const AUTOCOMPLETE_CONFIDENT_SCORE = 0.4;
 
 /** Client-side debounce before tier 2 can be reached, in milliseconds. */
 export const AUTOCOMPLETE_DEBOUNCE_MS = 250;

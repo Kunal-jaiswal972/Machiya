@@ -1564,3 +1564,156 @@ processes were running**, and the stale one held port 4000 while the fresh one's
 log looked healthy. Its 403s went to a log file that had already been deleted,
 so the symptom was a route that returned `degraded` with nothing logged
 anywhere. Check what owns the port before believing a log.
+
+## Correction 10 — honest expectations about address precision
+
+### D58. Tier 1's fuzzy search already degrades an address; only tier 2 needs a strip
+
+The correction assumed a house-number strip was needed to turn a dead-end
+address into a useful area. Measuring first showed that is only half true, and
+the half it is wrong about is the expensive half.
+
+**Tier 1 needs no strip.** `pg_trgm` similarity over the `Locality` table is
+already a fuzzy search, and against the seeded database it degrades a full
+street address to its locality unaided:
+
+| Query                                     | Tier 1's top row        |
+| ----------------------------------------- | ----------------------- |
+| `House 47, Road 3, Rajendra Nagar, Patna` | Rajendra Nagar, 0.42    |
+| `Flat 4B, 21 Patliputra Colony, Patna`    | Patliputra Colony, 0.56 |
+| `Lane 5, Kothrud, Pune`                   | Kothrud, 0.42           |
+
+So a pre-stripped second local query was deleted from the service: it was a
+slower way to reach the row trigram had already found. The first version of this
+correction had one, and it went before it was committed.
+
+**Tier 2 does need it, and free text alone is not enough.** Nominatim answers
+nothing for `House 12, Anisabad, Patna` and returns the neighbourhood for
+`Anisabad, Patna`; nothing for `Flat 3, Bailey Road, Patna` and the road for
+`Bailey Road, Patna`. The obvious fuzzier alternative — drop the commas so
+Nominatim stops parsing structurally and matches free text — was tested and is
+**not** the fix: eight of ten addresses returned nothing with or without commas,
+so those strings are genuinely absent from the extract rather than mis-parsed.
+It is worth doing anyway, because it never did worse and once did much better
+(`#118, 5th Block, Koramangala` returns a **hotel** with commas and
+`Koramangala 5th Block` without them), so the adapter now sends free text _and_
+retries once with the house number stripped.
+
+Three rules keep the retry from becoming a guess:
+
+- **Strip conservatively.** A leading bare number, a number with a letter
+  suffix, or a House/H.No/Flat/Plot/Door/No/# prefix followed by one. "Road 3"
+  and "5th Block" are road and block names and survive.
+- **One retry, never a loop.** Truncating until Nominatim bites is what turns a
+  bad query into a confidently wrong answer: strip past the house number on
+  `47 Road 3 Rajendra Nagar Patna` and all eight results are wrong roads, led by
+  `90 Feet Road`, which is real and is not the one asked for.
+- **Cap the retry at `locality` precision.** The house number is gone, so even a
+  building hit is not the building that was asked about. This is the single rule
+  that separates "a labelled guess" from "a confident lie".
+
+The outcome is cached under the normalised **original** query, retry included, so
+a dead-end address costs two upstream calls once rather than twice per keystroke.
+
+**One ranking bug came out of the measurement.** For the long address forms,
+listing rows scored level with the locality and sometimes above it — so an
+address search would have set the office to one specific flat rather than to the
+neighbourhood. Listings are now weighted 0.35 instead of 0.8 when the query
+reads as a street address, keyed on the same house-number signal.
+
+**And one real bug in the adapter.** Nominatim's jsonv2 output renamed `class`
+to `category`; the schema read only `class`, which is optional, so every result
+fell through to the `poi` branch — a suburb was being classified as a shop.
+Both are read now, and the local instance answers with `category`.
+
+### D59. What the geocoder did is said out loud, and the box asks for what the data has
+
+`matchPrecision` is `exact`, `locality` or `area`, derived from what the result
+**is** rather than from how it was found — a `place/suburb` hit is a
+neighbourhood whether it came from the original query or the retry. A **road** is
+`locality`, not `exact`: finding Bailey Road for "Flat 3, Bailey Road" means we
+found the street and not the flat, and calling that exact would promise a
+precision the answer does not have.
+
+`exact` renders **no note at all**. A precise answer is the good case, and a
+product that annotates its successes trains people to distrust them — the same
+reason a locally-answered query reports `ok` rather than something apologetic.
+
+The copy follows from the numbers. Of ten real addresses with house numbers
+across the three cities, five returned nothing and **one** resolved to an actual
+`addr:housenumber` — the wrong one, on a café. So the field reads "Search a
+landmark, locality or area near your office", never "Enter your address": the
+second promises precision the data cannot deliver and makes a working product
+feel broken. A one-line hint on first focus says landmarks and localities work
+best and that dropping a pin is the precise option.
+
+Kept proportionate on purpose. This sets an **office**. Offices sit in
+commercial areas with named buildings and landmarks, and being 200 m out changes
+nothing about which listings fall inside a 1/2/3 km ring — so the note is one
+quiet line, not a warning.
+
+**What is deferred, and why it is not silent.** The correction also asks that the
+lister wizard prefill only the locality when reverse geocode returns a
+locality-level match, leave the street line empty and editable, and refuse to
+complete its location step without a placed pin. The wizard does not exist yet —
+it is brief step 9 — so those three rules are implemented there rather than
+invented against a component that has no callers. The pieces they need are in
+place: `reverse` now returns a derived `matchPrecision`, and measured at Golghar
+it comes back as "Patna" rather than the building, which is exactly the case the
+rule exists for.
+
+### D60. Three bugs the live run found that the tests could not
+
+All three were invisible to the test suite because the suite stubs tier 2 —
+which is the right thing for it to do, and the reason a live pass is not
+optional. Each is now covered by a test as well.
+
+**1. Weak local rows suppressed the tier that had the answer.** Tier 2 ran only
+when tier 1 returned fewer than five rows, counted flat. "Flat 3, Bailey Road,
+Patna" returned **eight** listing rows at similarity 0.117 — every flat in
+Boring Road, which shares trigrams with Bailey Road — cleared the count of five,
+and so Nominatim, which knows Bailey Road perfectly well, was never asked. The
+user got eight unrelated flats instead of their street.
+
+Sufficiency is now judged on _confident_ rows: a place row counts at any score,
+because a weak trigram hit on a locality name is still that locality, but a
+**listing** row has to clear `AUTOCOMPLETE_CONFIDENT_SCORE` (0.4). Eight weak
+matches are not an answer to a place query.
+
+**2. The two tiers' scores were not comparable at the low end, though the code
+said they were.** Nominatim's `importance` clusters very low — an ordinary
+residential road is around 0.053, Bailey Road is exactly 0.0533 — and the old
+mapping floored at 0.1, _below_ trigram noise. So even once tier 2 was reached,
+the road still lost to the flats.
+
+The first fix was a hard floor at 0.25, and it introduced a second problem worth
+recording because it is the more interesting one: **clipping flattens the range
+where almost everything lands.** Six Bailey Roads and a suburb all pinned to
+0.25 left the alphabetical tiebreak choosing the winner, and it chose "Ahmed
+Enclave" over "Anisabad" for a query that said Anisabad. So the range is
+**lifted** rather than clipped — 0.25 to 0.90, monotonic — plus a small bonus
+for anything OSM itself categorises as a `place`, which is what puts Anisabad
+Golamber above a children's park that merely sits in Anisabad.
+
+**3. An unresolvable address in a covered city was answered with the coverage
+message.** "221 Sarjapur Road, Bellandur, Bengaluru" resolves to nothing —
+Bellandur is not one of our `Locality` rows and Nominatim has no match for that
+string — and `looksLikePlaceName` was happy to call it a place name, so the
+reply was "Machiya covers Patna, Bengaluru and Pune." For an address **in**
+Bengaluru that is a non-sequitur, and exactly the confusion the coverage state
+was built to remove.
+
+The out-of-coverage state now additionally requires that the query does _not_
+read as a street address. That is the line between the two corrections, stated
+as code: an address we cannot resolve is an address problem and gets the address
+message; a place name we cannot resolve anywhere is a coverage problem and gets
+the coverage message.
+
+**And one thing that was not a bug.** Two verification commands lied before this
+was believed. `redis-cli --scan --pattern '*geocode*' | xargs -r redis-cli del`
+deletes nothing: the keys contain the query text, so they contain **spaces**,
+and `xargs` splits each key into several arguments. It exits zero. A stale cache
+then made a corrected score look uncorrected, which sent a diagnosis after
+already-fixed code. The working form is
+`... | while IFS= read -r k; do redis-cli del "$k"; done`. The other was two
+`pnpm dev:api` processes, covered in D57.

@@ -15,6 +15,8 @@ import {
   RING_RADII_METERS,
   listingSearchInputSchema,
   listingSummarySchema,
+  looksLikeStreetAddress,
+  matchPrecisionSchema,
   type Coordinate,
   type ListingSearchInput,
   type ListingSearchOptions,
@@ -444,6 +446,12 @@ const placeRowSchema = z.object({
   lat: z.number(),
   lng: z.number(),
   kind: z.enum(['city', 'locality', 'listing']),
+  /**
+   * How precise the row is, by construction rather than by inference: a city is
+   * an `area`, a locality is a `locality`, and one of our own listings is a
+   * building we hold the coordinates of, so it is `exact`.
+   */
+  matchPrecision: matchPrecisionSchema,
   score: z.number(),
   citySlug: z.string().nullable(),
   listingSlug: z.string().nullable(),
@@ -471,6 +479,21 @@ export async function searchPlacesLocally(input: {
   const prefix = `${term.toLowerCase()}%`;
   const cityFilter = citySlug ?? null;
 
+  /**
+   * How hard to demote our own listing rows.
+   *
+   * 0.8 normally — a locality is a better answer to "where is your office" than
+   * a listing whose title contains the word. **0.35 when the query reads as a
+   * street address**, because someone typing "80 Feet Road, 4th Block,
+   * Koramangala" is looking for a place on a map, not for "1 BHK apartment in
+   * Koramangala".
+   *
+   * That is not a taste call. Measured against the seeded database, the long
+   * address forms put three listings above the locality — so an address query
+   * would have set the office to a specific flat. See DECISIONS.md D58.
+   */
+  const listingWeight = looksLikeStreetAddress(term) ? 0.35 : 0.8;
+
   // One statement, three sources. Nothing is fetched and filtered in JS, and
   // the term reaches SQL only as a bound parameter — the trigram operators are
   // literal text in the query, not interpolated input.
@@ -483,6 +506,7 @@ export async function searchPlacesLocally(input: {
         c."centroidLat"            AS "lat",
         c."centroidLng"            AS "lng",
         'city'                     AS "kind",
+        'area'                     AS "matchPrecision",
         LEAST(
           1.0,
           GREATEST(
@@ -505,6 +529,7 @@ export async function searchPlacesLocally(input: {
         c."name" || ', ' || c."state",
         l."lat",
         l."lng",
+        'locality',
         'locality',
         LEAST(
           1.0,
@@ -530,6 +555,7 @@ export async function searchPlacesLocally(input: {
         li."lat",
         li."lng",
         'listing',
+        'exact',
         (LEAST(
           1.0,
           GREATEST(
@@ -540,7 +566,7 @@ export async function searchPlacesLocally(input: {
               THEN 0.92 ELSE 0
             END
           )
-        ) * 0.8)::double precision,
+        ) * ${listingWeight}::double precision)::double precision,
         c."slug",
         li."slug",
         NULL::jsonb

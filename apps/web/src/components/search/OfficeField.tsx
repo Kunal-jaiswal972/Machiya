@@ -61,6 +61,15 @@ export function OfficeField({
   const [term, setTerm] = useState('');
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  /**
+   * The one-line hint under the field, shown on FIRST focus only.
+   *
+   * Once, because it tells you the thing you need before you start typing and
+   * becomes noise immediately after. Not a tooltip: the point is that dropping
+   * a pin is the precise option, and someone who has not learned that yet is
+   * exactly the person about to type their house number.
+   */
+  const [hintSeen, setHintSeen] = useState(false);
   const reduced = useReducedMotion();
 
   const { suggestions, isLoading, state, coverage } = usePlaceSuggestions({
@@ -132,13 +141,27 @@ export function OfficeField({
           }
           autoComplete="off"
           className="h-9 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-ink-faint"
-          placeholder={value || 'Where do you work?'}
+          /**
+           * "Search a landmark, locality or area near your office", never
+           * "Enter your address".
+           *
+           * The latter promises precision the data cannot deliver — one of ten
+           * real addresses with house numbers resolves in this extract — and a
+           * box that asks for an address and cannot find one makes a working
+           * product feel broken. Proportionate, too: this sets an OFFICE, and
+           * being 200 m off changes nothing about which listings fall inside a
+           * 1/2/3 km ring.
+           */
+          placeholder={value || 'Search a landmark, locality or area near your office'}
           value={term}
           onChange={(event) => {
             setTerm(event.target.value);
             setOpen(true);
           }}
-          onFocus={() => setOpen(true)}
+          onFocus={() => {
+            setOpen(true);
+            setHintSeen(true);
+          }}
           // A click on a row would otherwise be swallowed by the blur.
           onBlur={() => setTimeout(() => setOpen(false), 120)}
           onKeyDown={onKeyDown}
@@ -164,6 +187,13 @@ export function OfficeField({
           </button>
         ) : null}
       </div>
+
+      {/* Shown on first focus, before anything is typed, and never again. */}
+      {open && !hintSeen && term.length === 0 ? (
+        <p className="px-2.5 pt-1 text-data text-ink-faint">
+          Landmarks and localities work best. For an exact spot, drop a pin on the map.
+        </p>
+      ) : null}
 
       <AnimatePresence>
         {open && (rowCount > 0 || term.trim().length >= 2) ? (
@@ -237,6 +267,17 @@ export function OfficeField({
                               </span>
                             ) : null}
                           </span>
+                          {/* What kind of answer this is, before the user
+                              commits to it. An `area` row is a city — useful,
+                              and not what someone typing a street wanted — so
+                              saying so up front is cheaper than letting them
+                              select it and wonder. `exact` rows are unlabelled:
+                              the good case does not need an apology. */}
+                          {result.matchPrecision !== 'exact' ? (
+                            <span className="shrink-0 text-data text-ink-faint">
+                              {result.matchPrecision === 'locality' ? 'area' : 'city'}
+                            </span>
+                          ) : null}
                           {/* A source tag per row, so a user can tell our own
                               localities from a wider geocoder result. */}
                           <span className="shrink-0 text-data text-ink-faint">

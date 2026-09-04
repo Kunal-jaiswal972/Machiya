@@ -80,8 +80,13 @@ Query's `AbortSignal`, which cancels the in-flight request when the term changes
 The route forwards that abort upstream, so an abandoned keystroke stops work at
 Nominatim rather than merely being ignored on arrival.
 
+Tier 2 is asked **free text** rather than a comma-separated structured query,
+and on a zero result it retries **once** with a leading house number stripped.
+Both are measured decisions; see
+[address precision](#address-precision-what-the-extract-actually-holds).
+
 **One endpoint, one list.** `GET /api/places/suggest` merges the tiers on a
-single 0-1 score scale with a `source` per row. De-duplication is by normalised
+single 0-1 score scale with a `source` per row and a `matchPrecision` per row. De-duplication is by normalised
 label plus coordinates rounded to ~100 m, and on a collision **the local row
 wins regardless of score** — it is the one carrying a `citySlug` and, for a
 listing, a slug, which is what the UI needs to act on a selection. Two
@@ -255,6 +260,186 @@ Passing only the caller's signal — which is the request-close signal — silen
 **removes** the timeout, and a slow mirror then held a request open past 45
 seconds instead of degrading at 25. If you add a fourth provider, combine the
 signals.
+
+## Address precision: what the extract actually holds
+
+**Measured, not assumed.** Every query below was run against the local
+Nominatim on the rebuilt three-city extract. The whole design of the fallback
+rests on these numbers, so they are recorded rather than described.
+
+### Landmarks resolve — under their OSM name
+
+| Query                                | Result                                        |
+| ------------------------------------ | --------------------------------------------- |
+| `Golghar Patna`                      | गोलघर, `building/yes`                         |
+| `Gandhi Maidan Patna`                | Gandhi Maidan, `leisure/park`                 |
+| `Patna Junction`                     | Patna Junction, `landuse/railway`             |
+| `Patna Museum`                       | पटना संग्रहालय, `tourism/museum`              |
+| `Kempegowda Bus Station Bengaluru`   | Kempegowda Bus Station, `amenity/bus_station` |
+| `Shaniwar Wada Pune`                 | Shaniwar Wada, `historic/fort`                |
+| `Pune Junction`                      | Pune Junction, `railway/platform`             |
+| `Aga Khan Palace Pune`               | Aga Khan Palace, `tourism/attraction`         |
+| `Vidhan Sabha Bengaluru`             | **nothing** — it is tagged `Vidhana Soudha`   |
+| `Lalbagh Botanical Garden Bengaluru` | **nothing** — `Lalbagh` finds the station     |
+
+So the honest claim is narrower than "landmarks work": a landmark resolves
+under the name OSM holds, and a common alternative spelling may not. That is
+tier 1's job to soften — a locality or landmark someone actually searches for
+belongs in the `Locality` table, where trigram matching forgives the spelling.
+
+### Localities resolve, and tier 1 answers them anyway
+
+All nine locality queries returned something. Two are worth noting because the
+**top** result is not the locality: `Kankarbagh Patna` returns Kankarbagh Main
+Road (`highway/trunk`) and `Hinjewadi Pune` returns an EV charging station. It
+does not matter for office selection, because the seeded localities are tier 1
+rows and are answered locally before Nominatim is asked at all.
+
+### House numbers do not resolve. This is the finding the correction rests on
+
+Ten real addresses with house numbers, across the three cities:
+
+- **5 of 10 returned nothing at all.**
+- **1 of 10 resolved to an actual `addr:housenumber`** — and it was the wrong
+  number: `No 42, 1st Main Road, Indiranagar, Bengaluru` came back as a café at
+  housenumber 205.
+- the other 4 resolved to the road or the block, which is the useful degrade.
+
+`addr:housenumber` tagging in Indian cities is sparse, and no change of
+geocoder fixes that: Nominatim returns what is in the extract, and the
+commercial address data that would resolve "House 47, Road 3, Rajendra Nagar" is
+exactly what this project excluded on purpose. So the product says what it did
+instead of pretending.
+
+### Nonsense returns nothing, which is what makes the above mean something
+
+`Qzxwv Road, Patna` and `zzzzz Bengaluru` both return zero. A fallback that
+always found _something_ would be indistinguishable from a fallback that
+guessed.
+
+## What happens to an address the geocoder cannot parse
+
+### Tier 1 is already a fuzzy search, and it already degrades
+
+`pg_trgm` similarity over the `Locality` table needs no help with an address —
+measured against the seeded database:
+
+| Query                                     | Tier 1's top row        |
+| ----------------------------------------- | ----------------------- |
+| `House 47, Road 3, Rajendra Nagar, Patna` | Rajendra Nagar, 0.42    |
+| `Road 3, Rajendra Nagar, Patna`           | Rajendra Nagar, 0.56    |
+| `Flat 4B, 21 Patliputra Colony, Patna`    | Patliputra Colony, 0.56 |
+| `Lane 5, Kothrud, Pune`                   | Kothrud, 0.42           |
+| `Baner Road, Pune`                        | Baner, 0.38             |
+
+So **there is no stripping in the service**. A pre-stripped second local query
+would be a slower way to reach the row trigram already found. What tier 1 cannot
+do is answer for a locality that is not one of its rows: `Anisabad`, `Wakad` and
+`Bellandur` are real neighbourhoods and all three return only the city.
+
+One thing did need fixing. For the long address forms, listing rows scored level
+with the locality and sometimes above it — so an address search would have set
+the office to one specific flat. Listings are weighted **0.35 instead of 0.8
+when the query reads as a street address**, because someone typing
+"80 Feet Road, 4th Block, Koramangala" wants a place on a map, not a flat whose
+title contains the word.
+
+### Tier 2 gets free text and, on a dead end, one stripped retry
+
+Two things the adapter does, both from measurement:
+
+- **the `q` is free text, commas collapsed to spaces.** Nominatim matches a
+  comma-separated query component by component; free text lets its own fuzzy
+  matching work. Across the ten addresses it never did worse and once did much
+  better — `#118, 5th Block, Koramangala, Bengaluru` returns a **hotel** with
+  commas and `Koramangala 5th Block` (`place/neighbourhood`) without them.
+- **on zero results, one retry with the leading house number stripped.** This is
+  where the real recovery is: `House 12, Anisabad, Patna` → nothing;
+  `Anisabad, Patna` → the neighbourhood. `Flat 3, Bailey Road, Patna` → nothing;
+  `Bailey Road, Patna` → the road.
+
+Free text alone does not fix it — eight of the ten returned nothing with or
+without commas, so those strings are genuinely absent rather than mis-parsed.
+Both are needed, and neither is guesswork about which tokens matter.
+
+**Tier 2 has to actually be reached, which took two more fixes.** Sufficiency is
+judged on _confident_ tier-1 rows, not a flat count: a place row counts at any
+score, a listing row must clear 0.4. Eight "apartment in Boring Road" rows at
+0.117 used to clear a count of five and suppress the tier that knew Bailey Road.
+And Nominatim's `importance` is **lifted** onto the 0.25-0.90 band rather than
+clipped to a floor — clipping flattened the range everything lands in and let an
+alphabetical tiebreak pick the winner. Anything OSM categorises as a `place`
+gets a small bonus on top, which is what puts Anisabad Golamber above a
+children's park in Anisabad. See DECISIONS.md D60.
+
+**An address we cannot resolve is not an uncovered city.** The out-of-coverage
+state requires the query _not_ to read as a street address, because
+"221 Sarjapur Road, Bellandur, Bengaluru" resolves to nothing and answering it
+with "Machiya covers Patna, Bengaluru and Pune" is a non-sequitur about an
+address in Bengaluru. That is the line between this section and the next one.
+
+**One retry, never a loop.** Truncating until Nominatim bites is what turns a
+bad query into a confidently wrong answer: strip past the house number on
+`47 Road 3 Rajendra Nagar Patna` and the eight results are all the wrong roads,
+led by `90 Feet Road`. So the retry fires once and its results are **capped at
+`locality` precision** — the house number is gone, so even a building hit is not
+the building that was asked about.
+
+The outcome is cached under the normalised **original** query, retry included, so
+the same dead-end address costs two upstream calls once rather than twice on
+every keystroke that reaches it.
+
+### `matchPrecision`, and the sentence it buys
+
+Every suggestion carries one of three values, derived from what the result **is**
+rather than from how it was found:
+
+| Value      | What matched                                 | What the UI says                                            |
+| ---------- | -------------------------------------------- | ----------------------------------------------------------- |
+| `exact`    | a building, a named POI, a real house number | nothing — the good case needs no note                       |
+| `locality` | a neighbourhood, a suburb, or a **road**     | "Showing Rajendra Nagar — drag the pin to your exact spot." |
+| `area`     | a city or district                           | "…which covers a wide area — drag the pin…"                 |
+
+A road is `locality` deliberately: finding Bailey Road for "Flat 3, Bailey Road"
+means we found the street and not the flat.
+
+### The copy, and why it is worded that way
+
+The office field reads **"Search a landmark, locality or area near your
+office"**, not "Enter your address". The second promises precision the data
+cannot deliver — one address in ten — and a box that asks for an address and
+cannot find one makes a working product feel broken. A one-line hint appears on
+first focus only: landmarks and localities work best, and dropping a pin is the
+precise option.
+
+Proportionate, too. This sets an **office**. Offices sit in commercial areas
+with named buildings and landmarks, and being 200 m out changes nothing about
+which listings fall inside a 1/2/3 km ring.
+
+### End to end, against the running stack
+
+Verified through `GET /api/places/suggest` with the geocode cache flushed, so
+every row is a fresh answer:
+
+| Query                                     | State             | Top answer                                      |
+| ----------------------------------------- | ----------------- | ----------------------------------------------- |
+| `Golghar`                                 | `ok`              | Golghar Park — `poi` / **exact**                |
+| `Gandhi Maidan`                           | `ok`              | Gandhi Maidan — `poi` / **exact**               |
+| `Koramangala`                             | `ok`              | Koramangala — `locality` / **locality**, tier 1 |
+| `House 47, Road 3, Rajendra Nagar, Patna` | `ok`              | Rajendra Nagar — **locality**, tier 1           |
+| `House 12, Anisabad, Patna`               | `ok`              | Anisabad Golamber — **locality**, tier 2 retry  |
+| `Flat 3, Bailey Road, Patna`              | `ok`              | Bailey Road — **locality**, tier 2 retry        |
+| `Plot 22, Baner Road, Pune`               | `ok`              | Gopal Hari Deshmukh Marg — **locality**         |
+| `221 Sarjapur Road, Bellandur, Bengaluru` | `ok`              | nothing — an address, not a coverage problem    |
+| `Qzxwv Road, Patna`                       | `ok`              | Patna — `city` / **area**                       |
+| `ahmedabad`                               | `out_of_coverage` | the coverage message                            |
+
+Note the last three. Nonsense degrades to the city as an **area** match rather
+than to a wrongly-truncated street; an unresolvable Bengaluru address returns
+empty rather than the coverage message; and only a place name that resolves
+nowhere gets the coverage message.
+
+Reasoning: DECISIONS.md D58, D59 and D60.
 
 ## Coverage: the three cities, as a state the code can see
 
