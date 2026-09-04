@@ -116,20 +116,26 @@ latency — is better served locally by tier 1 above. Full reasoning: D26.
 
 ### Free-tier limits and the swap-out path
 
-| Service   | Self-hosted here                                 | Public fallback                  | Limit                                            | Swap-out                                              |
-| --------- | ------------------------------------------------ | -------------------------------- | ------------------------------------------------ | ----------------------------------------------------- |
-| Nominatim | `mediagis/nominatim:5.3`, `geo` profile          | `nominatim.openstreetmap.org`    | 1 req/s, needs a real contact in the UA          | New `GeocodeProvider`, add a `GEOCODE_PROVIDER` value |
-| OSRM      | `osrm/osrm-backend:v5.25.0` x2                   | `router.project-osrm.org` (demo) | Demo server, no SLA, `ALLOW_PUBLIC_OSRM` gated   | New `RoutingProvider`                                 |
-| Overpass  | `wiktorn/overpass-api:v0.7.62.11`, `geo` profile | mirrors (NOT `overpass-api.de`)  | fallback only; ~10k queries/day, 429s under load | New `PoiProvider`                                     |
-| Tiles     | not self-hosted                                  | `tiles.openfreemap.org`          | Free, no key, fair use                           | `VITE_MAP_STYLE_URL`                                  |
+| Service   | Self-hosted here                                 | Public fallback                 | Limit                                            | Swap-out                                              |
+| --------- | ------------------------------------------------ | ------------------------------- | ------------------------------------------------ | ----------------------------------------------------- |
+| Nominatim | `mediagis/nominatim:5.3`, `geo` profile          | `nominatim.openstreetmap.org`   | 1 req/s, needs a real contact in the UA          | New `GeocodeProvider`, add a `GEOCODE_PROVIDER` value |
+| OSRM      | `osrm/osrm-backend:v5.25.0` x2                   | none — see below                | n/a                                              | New `RoutingProvider`                                 |
+| Overpass  | `wiktorn/overpass-api:v0.7.62.11`, `geo` profile | mirrors (NOT `overpass-api.de`) | fallback only; ~10k queries/day, 429s under load | New `PoiProvider`                                     |
+| Tiles     | not self-hosted                                  | `tiles.openfreemap.org`         | Free, no key, fair use                           | `VITE_MAP_STYLE_URL`                                  |
 
 `NOMINATIM_USER_AGENT` must carry a real contact address **before** pointing
 `NOMINATIM_URL` at the public instance — it rejects requests without one, and
 the policy is the price of the free tier.
 
-`ALLOW_PUBLIC_OSRM` is a local escape hatch for when the graphs are not built
-yet. It must stay `false` in production; a route from the demo server is marked
-`degraded` so the UI never presents it as measured fact.
+**There is no public-OSRM fallback, and the two variables that implied one are
+gone.** `ALLOW_PUBLIC_OSRM` and `PUBLIC_OSRM_URL` were declared in the API's
+env schema and read by nothing: the routing adapter only ever reads
+`OSRM_CAR_URL` and `OSRM_BIKE_URL`. When OSRM cannot answer — graphs not built,
+container down, genuinely no route — the commute panel falls back to a
+straight-line estimate marked `degraded` and says so in words (D43). It never
+silently reaches a demo server. A variable that looks like a supported escape
+hatch and is not is worse than no variable, which is the same reasoning that
+removed the inert Nominatim flatnode mount (D26).
 
 ## Routing: OSRM
 

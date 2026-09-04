@@ -84,12 +84,13 @@ const envSchema = z.object({
   // --- Routing (OSRM) ------------------------------------------------------
   OSRM_CAR_URL: z.string().url().default('http://localhost:5100'),
   OSRM_BIKE_URL: z.string().url().default('http://localhost:5001'),
-  /** Local escape hatch when the self-hosted graphs are not built yet. */
-  ALLOW_PUBLIC_OSRM: z
-    .string()
-    .default('false')
-    .transform((value) => value === 'true'),
-  PUBLIC_OSRM_URL: z.string().url().default('https://router.project-osrm.org'),
+  // There is deliberately no ALLOW_PUBLIC_OSRM / PUBLIC_OSRM_URL pair here.
+  // Both were declared and read by nothing: the routing adapter only ever
+  // reads the two URLs above, and a route OSRM cannot answer falls back to a
+  // labelled straight-line estimate (D43), never to a demo server. A variable
+  // that looks like a supported escape hatch and is not is worse than no
+  // variable — the same reasoning that removed the inert Nominatim flatnode
+  // mount in D26.
 
   // --- POIs (Overpass) -----------------------------------------------------
   /**
