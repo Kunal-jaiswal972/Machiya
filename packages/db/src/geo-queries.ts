@@ -17,6 +17,8 @@ import {
   listingSummarySchema,
   looksLikeStreetAddress,
   matchPrecisionSchema,
+  type CommuteSqlParams,
+  type RoadDistance,
   type Coordinate,
   type ListingSearchInput,
   type ListingSearchOptions,
@@ -160,6 +162,74 @@ function buildFilterConditions(options: {
   return conditions;
 }
 
+/**
+ * The measured road distances, as a joinable relation.
+ *
+ * A `VALUES` list rather than a temporary table: it is one statement, every id
+ * and metre is a bound parameter, and Postgres plans the join against a
+ * few-hundred-row literal perfectly well. The first tuple carries the casts so
+ * the whole relation is typed.
+ *
+ * `Prisma.empty` when there is nothing to join, and the caller then emits null
+ * commute columns — an ordinary sort does not pay for an OSRM round trip.
+ */
+function roadDistanceJoin(distances: readonly RoadDistance[]): Prisma.Sql {
+  if (distances.length === 0) return Prisma.empty;
+
+  const tuples = distances.map((distance, index) =>
+    index === 0
+      ? Prisma.sql`(${distance.listingId}::text, ${distance.meters}::double precision, ${distance.estimated}::boolean)`
+      : Prisma.sql`(${distance.listingId}, ${distance.meters}, ${distance.estimated})`,
+  );
+
+  return Prisma.sql`
+    LEFT JOIN (VALUES ${Prisma.join(tuples, ', ')})
+      AS rd("listingId", "meters", "estimated") ON rd."listingId" = l."id"
+  `;
+}
+
+/**
+ * Rupees per month for the commute, as a SQL expression.
+ *
+ * This is what makes total-cost a real sort rather than a page-local reorder:
+ * the cost is computed per row inside the same statement that filters, orders
+ * and pages, so the cheapest listing in the radius wins rather than the
+ * cheapest of whichever 24 arrived first.
+ *
+ * The arithmetic mirrors `computeCommuteCost` in `@machiya/shared/commute`
+ * exactly, and the duplication is deliberate and tested: the engine cannot run
+ * inside Postgres, and an ORDER BY that disagreed with the number printed on
+ * the card would be the worst possible bug in this feature. `commute.test.ts`
+ * pins the TypeScript; `geo-queries.test.ts` pins that the SQL agrees with it.
+ *
+ * Fuel modes are distance over mileage times price. Transit is the slab fare —
+ * `max(minFare, base + perKm * km)` — because that is how these bus systems
+ * actually charge.
+ */
+function commuteMonthlyExpr(commute: CommuteSqlParams): Prisma.Sql {
+  const km = Prisma.sql`(rd."meters" / 1000.0)`;
+  const tripsPerMonth = commute.tripsPerDay * commute.workingDaysPerMonth;
+
+  if (commute.mode === 'transit') {
+    const fare = commute.transitFare;
+    // No fare table for the city means no transit figure, not a guessed one.
+    if (!fare) return Prisma.sql`0::double precision`;
+
+    return Prisma.sql`(
+      GREATEST(
+        ${fare.minFare}::double precision,
+        ${fare.baseFare}::double precision + ${fare.perKm}::double precision * ${km}
+      ) * ${tripsPerMonth}::double precision
+    )`;
+  }
+
+  return Prisma.sql`(
+    ${km} / ${commute.mileageKmPerLitre}::double precision
+      * ${commute.fuelPricePerLitre}::double precision
+      * ${tripsPerMonth}::double precision
+  )`;
+}
+
 interface SortPlan {
   /** Expression aliased as "sortKey" in the CTE. Always a double precision. */
   keyExpr: Prisma.Sql;
@@ -172,7 +242,11 @@ interface SortPlan {
  * The only place a sort direction or comparison operator reaches SQL, and both
  * come from this closed set.
  */
-function sortPlan(sort: ListingSort, distanceExpr: Prisma.Sql): SortPlan {
+function sortPlan(
+  sort: ListingSort,
+  distanceExpr: Prisma.Sql,
+  totalCostExpr: Prisma.Sql | null,
+): SortPlan {
   switch (sort) {
     case 'price_asc':
       // A null price sorts last by mapping it to the top of the int range.
@@ -195,6 +269,23 @@ function sortPlan(sort: ListingSort, distanceExpr: Prisma.Sql): SortPlan {
       };
     case 'distance':
       return { keyExpr: distanceExpr, direction: 'ASC', comparison: '>' };
+    case 'total_cost':
+      if (!totalCostExpr) {
+        // Asked for without commute parameters. Refusing beats silently
+        // sorting by something else and letting the UI claim it ranked by
+        // total cost — which is the product's headline number.
+        throw new Error(
+          'sort=total_cost requires commute parameters and road distances; the API supplies both',
+        );
+      }
+      return {
+        // A sale listing has no monthly total, so it sorts last rather than
+        // being given a fabricated one — same shape as the null-price handling
+        // in price_asc, and the same reason.
+        keyExpr: Prisma.sql`COALESCE(${totalCostExpr}, 2147483647)::double precision`,
+        direction: 'ASC',
+        comparison: '>',
+      };
   }
 }
 
@@ -215,7 +306,28 @@ export async function searchListingsInRadius(
   const options = listingSearchInputSchema.parse(input);
   const origin = point(options.office);
   const distanceExpr = Prisma.sql`ST_Distance(l."location", ${origin})`;
-  const plan = sortPlan(options.sort, distanceExpr);
+
+  // Commute columns exist only when the caller supplied both halves: the
+  // parameters to price with, and the distances to price. Either alone would
+  // produce a number from a missing input, which is worse than no number.
+  const priceCommute = options.commute && options.roadDistances.length > 0;
+  const join = priceCommute ? roadDistanceJoin(options.roadDistances) : Prisma.empty;
+  const commuteExpr = priceCommute ? commuteMonthlyExpr(options.commute!) : null;
+
+  // Rent + maintenance + commute. NULL for a sale listing, because a monthly
+  // total there would need an interest rate this product never asks for — and
+  // the ORDER BY sends NULLs last rather than treating them as free.
+  const totalCostExpr = commuteExpr
+    ? Prisma.sql`(CASE
+        WHEN l."listingType" = 'RENT' AND l."rentAmount" IS NOT NULL
+        THEN l."rentAmount"::double precision
+             + COALESCE(l."maintenanceMonthly", 0)::double precision
+             + COALESCE(${commuteExpr}, 0)
+        ELSE NULL
+      END)`
+    : null;
+
+  const plan = sortPlan(options.sort, distanceExpr, totalCostExpr);
 
   const conditions = buildFilterConditions({
     filters: options.filters,
@@ -254,8 +366,13 @@ export async function searchListingsInRadius(
         WHEN ${distanceExpr} <= ${RING_2} THEN 2
         ELSE 3
       END) AS "ring",
+      ${commuteExpr ? Prisma.sql`rd."meters"` : Prisma.sql`NULL::double precision`} AS "roadDistanceMeters",
+      ${commuteExpr ? Prisma.sql`ROUND(${commuteExpr}::numeric, 2)::double precision` : Prisma.sql`NULL::double precision`} AS "commuteMonthly",
+      ${totalCostExpr ? Prisma.sql`ROUND(${totalCostExpr}::numeric, 2)::double precision` : Prisma.sql`NULL::double precision`} AS "totalMonthlyCost",
+      ${commuteExpr ? Prisma.sql`COALESCE(rd."estimated", true)` : Prisma.sql`false`} AS "commuteEstimated",
       ${plan.keyExpr} AS "sortKey"
     FROM "Listing" l
+    ${join}
     LEFT JOIN LATERAL (
       SELECT li."variantBaseKey", li."lqip", li."dominantColor"
       FROM "ListingImage" li
@@ -321,6 +438,55 @@ export async function searchListingsInRadius(
     ringCounts,
     total: ringCounts[1] + ringCounts[2] + ringCounts[3],
   };
+}
+
+/**
+ * Every candidate in the radius — ids and coordinates only, unpaged.
+ *
+ * The one query in this file that deliberately returns the whole filtered set
+ * rather than a page, and the reason is the total-cost sort: ranking by rent
+ * plus commute needs the road distance to **every** candidate, so the set has
+ * to be known before the page is chosen. Asking for a page's worth would rank
+ * 24 arbitrary listings and call it the cheapest total cost, which is the exact
+ * inversion the feature exists to expose.
+ *
+ * Cheap enough to be safe: three columns over what a 3 km radius holds, which
+ * is a few hundred rows at most, served by the same GiST index as the search.
+ * It is NOT a general-purpose "all listings" query and must not become one —
+ * the radius and the filters are required arguments for that reason.
+ */
+const candidateRowSchema = z.object({
+  id: z.string(),
+  lat: z.number(),
+  lng: z.number(),
+});
+
+export type ListingCandidate = z.infer<typeof candidateRowSchema>;
+
+export async function listingsInRadius(input: {
+  office: Coordinate;
+  radiusMeters: number;
+  filters: ListingSearchOptions['filters'];
+  statuses: readonly string[];
+}): Promise<ListingCandidate[]> {
+  const origin = point(input.office);
+
+  const conditions = buildFilterConditions({
+    filters: input.filters,
+    statuses: input.statuses,
+  });
+  conditions.push(Prisma.sql`ST_DWithin(l."location", ${origin}, ${input.radiusMeters})`);
+
+  const rows = await prisma.$queryRaw<unknown[]>(Prisma.sql`
+    SELECT l."id", l."lat", l."lng"
+    FROM "Listing" l
+    WHERE ${Prisma.join(conditions, ' AND ')}
+    -- Ordered so the candidate set hash is stable across requests that
+    -- filtered in a different order; the caller keys a cache on it.
+    ORDER BY l."id" ASC
+  `);
+
+  return z.array(candidateRowSchema).parse(rows);
 }
 
 const similarListingSchema = listingSummarySchema.omit({ ring: true });

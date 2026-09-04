@@ -1,6 +1,7 @@
 import {
   CACHE_TTL_SECONDS,
   type Coordinate,
+  type RouteMatrix,
   type RouteProfile,
   type RouteResult,
   type RoutingProvider,
@@ -52,6 +53,71 @@ export class OsrmRoutingProvider implements RoutingProvider {
 
   private baseUrlFor(profile: RouteProfile): string {
     return profile === 'bike' ? env.OSRM_BIKE_URL : env.OSRM_CAR_URL;
+  }
+
+  async table(input: {
+    from: Coordinate;
+    to: readonly Coordinate[];
+    profile: RouteProfile;
+    signal?: AbortSignal;
+  }): Promise<RouteMatrix | null> {
+    if (input.to.length === 0) {
+      return { profile: input.profile, distances: [], durations: [] };
+    }
+
+    const distances: (number | null)[] = [];
+    const durations: (number | null)[] = [];
+
+    try {
+      for (let offset = 0; offset < input.to.length; offset += TABLE_CHUNK) {
+        const chunk = input.to.slice(offset, offset + TABLE_CHUNK);
+        const url = new URL(
+          // `driving` is literal for the same reason as in `fetchRoute`:
+          // osrm-routed ignores the profile segment and the graph decides.
+          `/table/v1/driving/${coordinateList([input.from, ...chunk])}`,
+          this.baseUrlFor(input.profile),
+        );
+        url.searchParams.set('sources', '0');
+        url.searchParams.set('annotations', 'distance,duration');
+
+        const response = await fetch(url, {
+          signal: AbortSignal.any([
+            ...(input.signal ? [input.signal] : []),
+            AbortSignal.timeout(15_000),
+          ]),
+        });
+
+        if (!response.ok) {
+          throw new Error(`osrm table ${String(response.status)} for ${input.profile}`);
+        }
+
+        const parsed = osrmTableSchema.parse(await response.json());
+        if (parsed.code !== 'Ok') throw new Error(`osrm table said ${parsed.code}`);
+
+        // Row 0 is the single source; its first cell is the source to itself.
+        const distanceRow = parsed.distances[0]?.slice(1) ?? [];
+        const durationRow = parsed.durations[0]?.slice(1) ?? [];
+
+        if (distanceRow.length !== chunk.length) {
+          throw new Error(
+            `osrm table returned ${String(distanceRow.length)} cells for ${String(chunk.length)} destinations`,
+          );
+        }
+
+        distances.push(...distanceRow);
+        durations.push(...durationRow);
+      }
+
+      return { profile: input.profile, distances, durations };
+    } catch (error) {
+      // The caller falls back to straight-line estimates for every
+      // destination and labels them, rather than losing the listings.
+      logger.warn(
+        { err: error, profile: input.profile, destinations: input.to.length },
+        'osrm table failed; commute costs will be estimated',
+      );
+      return null;
+    }
   }
 
   async route(input: {
@@ -130,6 +196,35 @@ export class OsrmRoutingProvider implements RoutingProvider {
       degraded: false,
     };
   }
+}
+
+/**
+ * `/table` with `sources=0`: one origin, every destination, one request.
+ *
+ * `max-table-size` is pinned to 1000 on both services in compose rather than
+ * inherited, because this is the call that depends on it — and a default below
+ * the candidate count would degrade the total-cost sort silently. Measured
+ * before relying on it: 300 destinations answer in about 170 ms, and 1000 are
+ * accepted (D61).
+ */
+const osrmTableSchema = z.object({
+  code: z.string(),
+  distances: z.array(z.array(z.number().nullable())).default([]),
+  durations: z.array(z.array(z.number().nullable())).default([]),
+});
+
+/**
+ * Beyond this many destinations the request is split.
+ *
+ * Below the pinned 1000 with room to spare: a URL carrying a thousand
+ * coordinate pairs is roughly 24 KB, and while OSRM accepts it, a proxy in
+ * front of it one day may not. Chunking is cheap insurance and the results
+ * concatenate exactly.
+ */
+const TABLE_CHUNK = 200;
+
+function coordinateList(coordinates: readonly Coordinate[]): string {
+  return coordinates.map((c) => `${String(c.lng)},${String(c.lat)}`).join(';');
 }
 
 let provider: RoutingProvider | undefined;

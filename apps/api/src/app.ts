@@ -114,9 +114,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
   // which is why the coverage set is public and mounted first.
   app.use('/api', coverageRouter());
   app.use('/api', placesRouter());
-  app.use('/api', searchRouter());
 
   if (sessionResolver) {
+    // The search is PUBLIC, but it reads the caller's commute preferences when
+    // there is a session, so it needs the resolver. `optionalAuth` inside keeps
+    // it working signed out.
+    app.use('/api', searchRouter(sessionResolver));
     app.use('/api', meRouter(sessionResolver));
     app.use('/api', listingsRouter(sessionResolver));
     app.use('/api', listingDetailRouter(sessionResolver));

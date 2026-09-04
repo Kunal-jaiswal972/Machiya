@@ -131,6 +131,26 @@ export const routeResultSchema = z.object({
 
 export type RouteResult = z.infer<typeof routeResultSchema>;
 
+/**
+ * One row of a distance matrix: one origin to many destinations.
+ *
+ * `null` for a destination the graph cannot reach from the origin, which is a
+ * real answer and not an error — an address on an island, or a coordinate that
+ * snapped to a disconnected fragment. The caller substitutes a labelled
+ * estimate rather than dropping the destination, because a listing that
+ * vanishes from results for an invisible reason is worse than one with an
+ * approximate commute.
+ */
+export const routeMatrixSchema = z.object({
+  profile: routeProfileSchema,
+  /** Metres per destination, in the order they were asked for. */
+  distances: z.array(z.number().nonnegative().nullable()),
+  /** Seconds per destination, same order. */
+  durations: z.array(z.number().nonnegative().nullable()),
+});
+
+export type RouteMatrix = z.infer<typeof routeMatrixSchema>;
+
 export interface RoutingProvider {
   readonly name: string;
   /** Null when no route exists between the points on that graph. */
@@ -140,6 +160,24 @@ export interface RoutingProvider {
     profile: RouteProfile;
     signal?: AbortSignal;
   }): Promise<RouteResult | null>;
+  /**
+   * Road distance from ONE origin to many destinations, in one request.
+   *
+   * This exists so that sorting by total monthly cost can happen inside the
+   * search query. That sort needs the real road distance to every candidate in
+   * the radius, and N separate `route` calls would be hundreds of round trips
+   * per search — which is why the sort would otherwise end up client-side over
+   * a single page, ranking 24 arbitrary listings.
+   *
+   * Null when the matrix could not be obtained at all. A partial answer comes
+   * back as nulls inside the arrays.
+   */
+  table(input: {
+    from: Coordinate;
+    to: readonly Coordinate[];
+    profile: RouteProfile;
+    signal?: AbortSignal;
+  }): Promise<RouteMatrix | null>;
 }
 
 // --- POIs -------------------------------------------------------------------

@@ -11,6 +11,7 @@ import {
   outOfCoverageSchema,
   radiusMetersSchema,
   ringSchema,
+  transitFareConfigSchema,
 } from './geo/index.js';
 
 /**
@@ -53,17 +54,81 @@ export const listingFiltersSchema = z.object({
 
 export type ListingFilters = z.infer<typeof listingFiltersSchema>;
 
+/**
+ * `total_cost` is the product's own argument as a sort: rent plus maintenance
+ * plus the real monthly commute, ranked ascending.
+ *
+ * It is not a client-side re-sort of a page. Ranking a page would show the
+ * cheapest of 24 arbitrary listings rather than the cheapest of the 200 in the
+ * radius — which is precisely the inversion the product exists to surface, and
+ * precisely the one a page-local sort hides. See DECISIONS.md D64.
+ */
 export const listingSortSchema = z
-  .enum(['distance', 'price_asc', 'price_desc', 'newest'])
+  .enum(['distance', 'price_asc', 'price_desc', 'newest', 'total_cost'])
   .default('distance');
 
 export type ListingSort = z.infer<typeof listingSortSchema>;
+
+/**
+ * Everything the SQL needs to price a commute, per request.
+ *
+ * All scalars, deliberately: the whole point is that the cost becomes an
+ * expression inside the search query, so it can be ordered and paged on. The
+ * moment one of these had to be looked up per row, the sort would have to move
+ * out of SQL and back into the application.
+ *
+ * Supplied by the API from the caller's stored preferences, the scraped fuel
+ * price and the city's fare table — never by the client, which has no business
+ * naming the fuel price its own commute is costed with.
+ */
+export const commuteSqlParamsSchema = z.object({
+  mode: z.enum(['car', 'bike', 'transit']),
+  /** Rupees per litre, or per kg for CNG. Zero when no price is known. */
+  fuelPricePerLitre: z.number().nonnegative(),
+  mileageKmPerLitre: z.number().positive(),
+  tripsPerDay: z.number().int().positive(),
+  workingDaysPerMonth: z.number().int().positive(),
+  /** Required for `mode: 'transit'`, ignored otherwise. */
+  transitFare: transitFareConfigSchema.optional(),
+});
+
+export type CommuteSqlParams = z.infer<typeof commuteSqlParamsSchema>;
+
+/**
+ * One listing's measured road distance from the office.
+ *
+ * `estimated` is what keeps a routing failure from silently deleting a
+ * listing. OSRM can return null for a coordinate its graph cannot reach, and
+ * dropping those rows would remove homes from the results for a reason the user
+ * cannot see — so they carry a straight-line estimate and say so.
+ */
+export const roadDistanceSchema = z.object({
+  listingId: z.string().min(1),
+  meters: z.number().nonnegative(),
+  estimated: z.boolean(),
+});
+
+export type RoadDistance = z.infer<typeof roadDistanceSchema>;
 
 export const listingSearchInputSchema = z.object({
   office: coordinateSchema,
   radiusMeters: radiusMetersSchema,
   filters: listingFiltersSchema.default({}),
   sort: listingSortSchema,
+  /**
+   * Commute parameters, present whenever the caller wants cost figures — which
+   * `sort: 'total_cost'` requires. Absent means the query returns null commute
+   * columns and cannot be sorted by total cost.
+   */
+  commute: commuteSqlParamsSchema.optional(),
+  /**
+   * Road distances for the candidate set, from one OSRM `/table` request.
+   *
+   * The whole filtered set, not the page: a keyset sort on total cost has to
+   * compare every candidate, and asking for a page's worth would rank 24
+   * arbitrary listings.
+   */
+  roadDistances: z.array(roadDistanceSchema).default([]),
   limit: z.coerce.number().int().min(1).max(100).default(24),
   /** Opaque keyset cursor from the previous page. */
   cursor: z.string().min(1).optional(),
@@ -120,6 +185,23 @@ export const listingSummarySchema = z.object({
   /** Straight-line metres from the office. Road distance comes from OSRM. */
   distanceMeters: z.number().nonnegative(),
   ring: ringSchema,
+
+  /**
+   * Real ROAD metres from the office, when the search measured them.
+   *
+   * Null when no commute parameters were supplied — the ordinary sorts do not
+   * need an OSRM round trip and do not pay for one.
+   */
+  roadDistanceMeters: z.number().nonnegative().nullable().default(null),
+  /** Rupees per month for the selected mode, computed in SQL. */
+  commuteMonthly: z.number().nonnegative().nullable().default(null),
+  /**
+   * Rent + maintenance + commute. Null for a sale listing, where a monthly
+   * total would need an interest rate this product never asks for.
+   */
+  totalMonthlyCost: z.number().nonnegative().nullable().default(null),
+  /** True when the road distance is a labelled straight-line estimate. */
+  commuteEstimated: z.boolean().default(false),
 });
 
 export type ListingSummary = z.infer<typeof listingSummarySchema>;
@@ -166,8 +248,30 @@ export type ListingSearchResponse = z.infer<typeof listingSearchResponseSchema>;
  * complete answer to a well-formed question. Listing *creation* out of coverage
  * is a 422, because that one is a refusal.
  */
+/**
+ * What the search did about commute cost, stated once for the whole response.
+ *
+ * Null when it could not be costed at all — a city with no scraped fuel price
+ * yet. `anyEstimated` and `sortedByTotalCost` are the two honesty flags: the
+ * first says at least one distance is a straight-line fallback, the second says
+ * whether the sort the client asked for actually happened, because a search
+ * that quietly ranked by distance while the UI claims "total cost" would be
+ * lying about the product's headline feature.
+ */
+export const searchCommuteSummarySchema = z.object({
+  mode: z.enum(['car', 'bike', 'transit']),
+  fuelPricePerLitre: z.number().nonnegative(),
+  anyEstimated: z.boolean(),
+  sortedByTotalCost: z.boolean(),
+});
+
+export type SearchCommuteSummary = z.infer<typeof searchCommuteSummarySchema>;
+
 export const searchResponseSchema = z.discriminatedUnion('status', [
-  listingSearchResponseSchema.extend({ status: z.literal('ok') }),
+  listingSearchResponseSchema.extend({
+    status: z.literal('ok'),
+    commute: searchCommuteSummarySchema.nullable().default(null),
+  }),
   z.object({
     status: z.literal(OUT_OF_COVERAGE_CODE),
     coverage: outOfCoverageSchema,

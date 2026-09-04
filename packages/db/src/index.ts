@@ -5,6 +5,7 @@ export { prisma, disconnectPrisma } from './client.js';
 export { probeDatabase, type DatabaseProbe } from './probe.js';
 export {
   searchListingsInRadius,
+  listingsInRadius,
   findSimilarListings,
   searchPlacesLocally,
   straightLineDistanceMeters,
@@ -14,6 +15,7 @@ export {
   decodeCursor,
   COVERAGE_REQUEST_CLUSTER_METERS,
   type CityMatch,
+  type ListingCandidate,
   type CoverageBbox,
   type CoverageCity,
   type CoverageResolution,

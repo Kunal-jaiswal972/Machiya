@@ -1,13 +1,14 @@
 import { parseSearchQuery, searchQueryToInput } from '@machiya/shared';
 import { Router } from 'express';
 import { HttpError } from '../middleware/error-handler.js';
+import { optionalAuth, type SessionResolver } from '../middleware/require-auth.js';
 import { listCities, searchListings } from '../services/search.js';
 
 /**
  * Radius search and the city list. Both public — someone picks an office and
  * searches before they sign in, and that is the product's first interaction.
  */
-export function searchRouter(): Router {
+export function searchRouter(resolve: SessionResolver): Router {
   const router = Router();
 
   router.get('/cities', (_req, res, next) => {
@@ -20,7 +21,12 @@ export function searchRouter(): Router {
       .catch(next);
   });
 
-  router.get('/listings/search', (req, res, next) => {
+  /**
+   * `optionalAuth` because the commute figures on every card come from the
+   * caller's own stored preferences when they have any, and from the defaults
+   * when they do not. A search must still work signed out.
+   */
+  router.get('/listings/search', optionalAuth(resolve), (req, res, next) => {
     const query = parseSearchQuery(req.query as Record<string, string | undefined>);
     const input = searchQueryToInput(query);
 
@@ -31,7 +37,13 @@ export function searchRouter(): Router {
       return;
     }
 
-    searchListings(input)
+    const controller = new AbortController();
+    req.on('close', () => controller.abort());
+
+    searchListings(input, {
+      ...(req.auth ? { session: req.auth } : {}),
+      signal: controller.signal,
+    })
       .then((result) => {
         // Not cacheable by a shared cache: the result set changes as listings
         // are published, and a stale count on a shared link is worse than a
