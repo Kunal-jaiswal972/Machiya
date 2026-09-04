@@ -26,6 +26,11 @@ Then open http://localhost:5173. Sign in as `seeker@dev.local` /
 `devpass123`. Routing and geocoding need a one-time
 [`pnpm bootstrap`](docs/setup.md#routing-and-geocoding).
 
+Name the services in every `docker compose up`. A bare `docker compose up -d`
+also starts `api`, `worker` and `web` from previously built images, which take
+the ports `pnpm dev` wants and then serve stale code — see
+[docs/setup.md](docs/setup.md#compose-profiles).
+
 ## Documentation
 
 | Document                                       | Read it when                                                       |

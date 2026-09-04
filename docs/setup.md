@@ -23,7 +23,7 @@ pnpm install
 cp .env.example .env
 docker compose up -d postgis redis minio minio-init mailhog
 pnpm bootstrap                       # OSM cuts, OSRM graphs, Nominatim + Overpass
-docker compose --profile geo up -d   # osrm-car, osrm-bike, nominatim, overpass
+docker compose --profile geo up -d nominatim overpass osrm-car osrm-bike   # NAME them — see below
 pnpm seed:photos                     # fetches the seed photographs (see below)
 pnpm db:deploy                       # apply migrations
 pnpm cities:boundaries               # city polygons, from the local Nominatim
@@ -84,10 +84,32 @@ D5.
 
 ## Compose profiles
 
-| Command                              | Brings up                                                |
-| ------------------------------------ | -------------------------------------------------------- |
-| `docker compose up -d`               | postgis, redis, minio, mailhog, api, worker, web         |
-| `docker compose --profile geo up -d` | adds nominatim, overpass, osrm-init, osrm-car, osrm-bike |
+| Command                                                                    | Brings up                                       |
+| -------------------------------------------------------------------------- | ----------------------------------------------- |
+| `docker compose up -d postgis redis minio minio-init mailhog`              | just the infrastructure — what `pnpm dev` needs |
+| `docker compose --profile geo up -d nominatim overpass osrm-car osrm-bike` | the geo services, and nothing else              |
+| `docker compose up -d`                                                     | ALL of the above **plus api, worker and web**   |
+
+**Always name the services.** `docker compose --profile geo up -d` with no
+service names does not "add the geo services" — it starts the named profile
+**and** the default one, so it also brings up `api`, `worker` and `web` from
+whatever images were last built. Those containers publish 4000, 4100 and 8080,
+so a `pnpm dev` started alongside loses the race for port 4000 and dies, and the
+browser talks to a stale image instead. The symptom is a 404 from routes that
+exist in your working tree:
+
+```
+{"error":{"code":"not_found","message":"No route for GET /api/places/reverse"}}
+```
+
+with `/health` answering 200 the whole time, because that route is old enough to
+be in the stale image too. If you see that, `docker compose stop api worker web`
+and restart `pnpm dev`. To check what you are actually talking to:
+`docker compose ps` and `docker compose images api`.
+
+The containerised `api`, `worker` and `web` are a **different workflow** from
+`pnpm dev`: they serve built images, not your working tree, so they need
+`docker compose build` after every change. Pick one workflow per session.
 
 The geo services sit behind a profile because they cannot start until
 `scripts/bootstrap.sh` has produced the merged OSM extract and built their
@@ -100,7 +122,7 @@ One-time, and idempotent:
 
 ```bash
 pnpm bootstrap                        # ~1 GB of downloads, cached in .osm-cache/
-docker compose --profile geo up -d    # nominatim, overpass, osrm-car, osrm-bike
+docker compose --profile geo up -d nominatim overpass osrm-car osrm-bike
 ```
 
 `scripts/bootstrap.sh` downloads the three Geofabrik India **zone** extracts that

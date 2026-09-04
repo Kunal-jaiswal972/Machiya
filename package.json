@@ -35,7 +35,7 @@
     "auth:check": "tsx --env-file-if-exists=.env apps/api/scripts/check-auth-schema.ts",
     "auth:routes": "curl -s $BETTER_AUTH_URL/api/auth/open-api/generate-schema | node -e \"let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(Object.keys(JSON.parse(d).paths).sort().join(String.fromCharCode(10))))\"",
     "compose:up": "docker compose up -d",
-    "compose:up:geo": "docker compose --profile geo up -d",
+    "compose:up:geo": "docker compose --profile geo up -d nominatim overpass osrm-car osrm-bike",
     "compose:down": "docker compose down",
     "compose:nuke": "docker compose down -v",
     "compose:logs": "docker compose logs -f",
