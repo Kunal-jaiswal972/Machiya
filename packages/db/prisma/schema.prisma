@@ -178,6 +178,19 @@ model User {
   phone           String?
   isPhoneVerified Boolean @default(false)
 
+  /// [CommutePreferences] — fuel type, vehicle class, mileage, trips per day
+  /// and working days per month, as the commute panel last had them.
+  ///
+  /// A JSON column rather than five columns or a side table, because nothing
+  /// queries or aggregates these: they are read whole for one user and written
+  /// whole by one form. The shape is validated by
+  /// `commutePreferencesSchema` on the way in and on the way out, so a stale
+  /// blob from an older shape fails loudly at the boundary rather than
+  /// producing a commute cost from a missing mileage. Null means "never
+  /// touched", which is different from "set to the defaults" — the panel says
+  /// so. See DECISIONS.md D63.
+  commutePrefs Json?
+
   // Better Auth admin plugin.
   banned     Boolean?
   banReason  String?

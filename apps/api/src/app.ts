@@ -12,6 +12,7 @@ import { probeRedis } from './lib/redis.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import type { SessionResolver } from './middleware/require-auth.js';
 import { coverageRouter } from './routes/coverage.js';
+import { fuelRouter } from './routes/fuel.js';
 import { healthRouter, type HealthProbes } from './routes/health.js';
 import { helloRouter } from './routes/hello.js';
 import { listingDetailRouter } from './routes/listing-detail.js';
@@ -120,6 +121,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
     app.use('/api', listingsRouter(sessionResolver));
     app.use('/api', listingDetailRouter(sessionResolver));
     app.use('/api', officesRouter(sessionResolver));
+    // Fuel prices are public, but the commute preferences and the scrape
+    // health page in the same router are not, so it mounts with the resolver.
+    app.use('/api', fuelRouter(sessionResolver));
   }
 
   app.use(notFoundHandler);

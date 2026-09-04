@@ -51,7 +51,53 @@ export async function enqueueImageProcessing(job: ProcessImageJob): Promise<void
   logger.info({ listingId: job.listingId, imageId: job.imageId }, 'image processing enqueued');
 }
 
+/**
+ * The fuel queue, producer side only.
+ *
+ * The API enqueues a refresh when it finds no cached snapshot and then serves
+ * the stale one immediately — see `getFuelSnapshot`. It never waits for this.
+ */
+const fuelQueue = new Queue<FuelRefreshJob>(QUEUE_NAMES.fuelPrices, {
+  connection,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: { type: 'exponential', delay: 30_000 },
+    removeOnComplete: { count: 50 },
+    removeOnFail: { count: 100 },
+  },
+});
+
+export interface FuelRefreshJob {
+  /** Which city prompted it. The job scrapes every city regardless. */
+  citySlug: string;
+}
+
+/**
+ * Asks for a fuel refresh, at most once per hour however many people ask.
+ *
+ * The `jobId` is the hour, not the city, and both halves of that matter. The
+ * hour makes it idempotent: fifty viewers hitting a cold cache at 09:05 enqueue
+ * one job, because BullMQ rejects a duplicate id — without it, a cache expiry on
+ * a busy morning becomes fifty scrapes walking three sites each, which is a
+ * self-inflicted burst on somebody else's server. Not the city, because the job
+ * scrapes all of them anyway, so a per-city id would let three cities trigger
+ * three identical full runs.
+ */
+export async function enqueueFuelRefresh(citySlug: string): Promise<void> {
+  const hour = new Date().toISOString().slice(0, 13).replace(/[-T:]/g, '');
+
+  await fuelQueue.add(
+    'scrape-fuel-prices',
+    { citySlug },
+    // BullMQ rejects ":" in a custom id, hence the stripped timestamp.
+    { jobId: `refresh-${hour}` },
+  );
+
+  logger.info({ citySlug, jobId: `refresh-${hour}` }, 'fuel refresh enqueued');
+}
+
 export async function closeQueues(): Promise<void> {
+  await fuelQueue.close();
   await imagesQueue.close();
   if (connection.status !== 'end') {
     await connection.quit();
