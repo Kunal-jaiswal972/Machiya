@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, isAbsolute, join } from 'node:path';
 import {
   CITIES,
   GEO_EPOCH_UNBUILT,
@@ -27,9 +28,46 @@ import { logger } from '../logger.js';
  * an epoch that could change under a running process would split one request's
  * reads from its writes.
  */
+/**
+ * Where the manifest actually is, given a possibly relative configured path.
+ *
+ * A relative path resolves against the process's cwd, and the cwd differs by
+ * how the API is started: `/app` in the container, but `apps/api` under
+ * `pnpm dev`, because that is where the package script runs. So the default
+ * `osm-data/manifest.json` pointed at `apps/api/osm-data/manifest.json` in
+ * development and never resolved — the epoch silently fell back to `unbuilt`
+ * and `/health/geo` reported artifacts that were sitting right there, built.
+ * A staleness check that is wrong in the one environment where cities get
+ * added is worse than none.
+ *
+ * So a relative path is searched for from the cwd upwards, a few levels. An
+ * absolute path — which is what compose sets — short-circuits and is used as
+ * given.
+ */
+function resolveManifestPath(configured: string): string {
+  if (isAbsolute(configured)) return configured;
+
+  let directory = process.cwd();
+
+  for (let depth = 0; depth < 5; depth += 1) {
+    const candidate = join(directory, configured);
+    if (existsSync(candidate)) return candidate;
+
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+
+  // Nothing found: hand back the cwd-relative path so the warning names
+  // somewhere real rather than the last directory walked to.
+  return join(process.cwd(), configured);
+}
+
+const manifestPath = resolveManifestPath(env.GEO_MANIFEST_PATH);
+
 function load(): GeoManifest | null {
   try {
-    const raw = readFileSync(env.GEO_MANIFEST_PATH, 'utf8');
+    const raw = readFileSync(manifestPath, 'utf8');
     const manifest = geoManifestSchema.parse(JSON.parse(raw));
 
     logger.info(
@@ -49,7 +87,7 @@ function load(): GeoManifest | null {
     // absent. What must not happen is a silent fallback, so this is a warning
     // with the path in it.
     logger.warn(
-      { err: error, path: env.GEO_MANIFEST_PATH },
+      { err: error, path: manifestPath, configured: env.GEO_MANIFEST_PATH },
       'no usable geo artifact manifest; derived caches will use the "unbuilt" epoch',
     );
     return null;
@@ -93,7 +131,7 @@ export function geoArtifactStatus(): GeoArtifactStatus {
     return {
       ok: false,
       state: 'unbuilt',
-      reason: `no artifact manifest at ${env.GEO_MANIFEST_PATH} — run pnpm bootstrap`,
+      reason: `no artifact manifest at ${manifestPath} — run pnpm bootstrap`,
       epoch: GEO_EPOCH_UNBUILT,
       configHash,
     };

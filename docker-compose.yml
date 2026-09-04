@@ -410,18 +410,19 @@ services:
         condition: service_completed_successfully
     volumes:
       - osrm-data:/graph
+      - ./scripts/osrm-healthcheck.pl:/opt/osrm-healthcheck.pl:ro
     command: ['osrm-routed', '--algorithm', 'mld', '/graph/car/merged.osrm']
     ports:
       # 5000 is AirPlay Receiver on macOS, so the default is out of its way.
       - '${OSRM_CAR_PORT:-5100}:5000'
     healthcheck:
-      test:
-        [
-          'CMD-SHELL',
-          'curl -fsS "http://127.0.0.1:5000/route/v1/driving/85.13,25.59;85.14,25.60?overview=false" >/dev/null',
-        ]
+      # Perl, not curl: this image ships neither curl nor wget, so the previous
+      # curl-based check exited 127 on every run and BOTH OSRM services had
+      # reported unhealthy since the day they were added — while answering
+      # routes perfectly. Nothing depended on them, so nothing caught it.
+      test: ['CMD', 'perl', '/opt/osrm-healthcheck.pl']
       interval: 20s
-      timeout: 5s
+      timeout: 10s
       retries: 10
       start_period: 30s
 
@@ -435,17 +436,16 @@ services:
         condition: service_completed_successfully
     volumes:
       - osrm-data:/graph
+      - ./scripts/osrm-healthcheck.pl:/opt/osrm-healthcheck.pl:ro
     command: ['osrm-routed', '--algorithm', 'mld', '/graph/bicycle/merged.osrm']
     ports:
       - '${OSRM_BIKE_PORT:-5001}:5000'
     healthcheck:
-      test:
-        [
-          'CMD-SHELL',
-          'curl -fsS "http://127.0.0.1:5000/route/v1/driving/85.13,25.59;85.14,25.60?overview=false" >/dev/null',
-        ]
+      # Same check, same graph-decides-the-profile reasoning as osrm-car: the
+      # URL says `driving` because osrm-routed ignores that segment entirely.
+      test: ['CMD', 'perl', '/opt/osrm-healthcheck.pl']
       interval: 20s
-      timeout: 5s
+      timeout: 10s
       retries: 10
       start_period: 30s
 

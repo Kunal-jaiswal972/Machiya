@@ -6,3 +6,4 @@
 *.svg text
 *.osm.pbf binary
 pnpm-lock.yaml linguist-generated=true
+*.pl text eol=lf
