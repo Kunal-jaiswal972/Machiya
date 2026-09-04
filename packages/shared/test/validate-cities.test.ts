@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { padBbox } from '../src/cities/bbox.js';
 import { CITIES, type CityConfig } from '../src/cities/config.js';
+import { FUEL_SOURCE_IDS } from '../src/cities/fuel-sources.js';
 import { validateCities } from '../src/cities/validate.js';
 
 /**
@@ -36,7 +37,12 @@ function baseCity(): CityConfig {
       { name: 'Two', lat: 25.59, lng: 85.156 },
       { name: 'Three', lat: 25.6053, lng: 85.1567 },
     ],
-    fuelSlugs: { goodreturns: 'testville', mypetrolprice: 'testville', ndtv: 'testville' },
+    // Built from the registry rather than listed, so adding or replacing a
+    // source cannot leave this fixture quietly incomplete — which is exactly
+    // the failure the fuel-slug rule below exists to catch.
+    fuelSlugs: Object.fromEntries(
+      FUEL_SOURCE_IDS.map((id) => [id, 'testville']),
+    ) as CityConfig['fuelSlugs'],
   };
 }
 
@@ -57,7 +63,7 @@ describe('validateCities', () => {
     // The realistic mistake: a source is added to the registry and one city's
     // record is not updated. That source then silently returns nothing for
     // this city while the others cover for it.
-    city.fuelSlugs = { ...city.fuelSlugs, mypetrolprice: '' };
+    city.fuelSlugs = { ...city.fuelSlugs, [FUEL_SOURCE_IDS[0] as string]: '' };
     expect(rulesOf([city])).toContain('fuel-slug');
   });
 

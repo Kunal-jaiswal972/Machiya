@@ -148,37 +148,84 @@ export const FUEL_KEY_IS_NOT_EPOCH_SCOPED = true;
 
 // --- consensus --------------------------------------------------------------
 
+/** Picks the lower middle of a price-sorted list — see `pickConsensus`. */
+function lowerMedian(quotes: readonly FuelQuote[]): FuelQuote | undefined {
+  const sorted = [...quotes].sort((a, b) => a.price - b.price);
+  return sorted[Math.floor((sorted.length - 1) / 2)];
+}
+
+export interface ConsensusOptions {
+  /**
+   * Which upstream feed a source id belongs to.
+   *
+   * Sources that share a feed are collapsed to ONE vote before the median is
+   * taken, and this is not a refinement — without it the consensus is wrong.
+   * Measured live: `bankbazaar` and `petrolpriceindia` return identical figures
+   * (Bengaluru petrol 110.93 from both) while `goodreturns` returns 111.68. A
+   * plain median over three quotes therefore lets the shared feed outvote the
+   * independent source **2:1 every single time**, which makes the second
+   * opinion decorative and the word "consensus" a lie.
+   *
+   * Defaults to identity — each source its own feed — so a caller that has no
+   * feed information gets the naive behaviour rather than a silent grouping.
+   */
+  feedOf?: (sourceId: string) => string;
+}
+
 /**
  * Which price to believe when several sources disagree.
  *
- * The **median**, and specifically an actual quote rather than an average of
- * them, so `source` and `sourceUrl` still point at a page a user can open. An
- * average of three numbers is attributable to nobody, and attribution is a
+ * The **median across FEEDS**, and specifically an actual quote rather than an
+ * average, so `source` and `sourceUrl` still point at a page a user can open.
+ * An average of three numbers is attributable to nobody, and attribution is a
  * requirement here rather than a nicety.
  *
  * Median rather than first-wins because the interesting failure with several
  * sources is one adapter silently returning a stale or misparsed number while
  * the others are right — first-wins makes that decide the answer whenever the
- * broken source happens to be listed first. With an even count it takes the
- * lower of the two middles: understating a commute cost is the error that
- * argues against the product's own case, so it is the safer direction to lean.
+ * broken source happens to be listed first.
+ *
+ * With an even number of feeds it takes the lower of the two middles.
+ * Understating a commute cost is the error that argues against the product's
+ * own case, so that is the safer direction to lean — and with exactly two
+ * independent feeds, which is the real situation here, it is the whole rule.
  */
-export function pickConsensus(quotes: readonly FuelQuote[]): FuelPriceReading | null {
+export function pickConsensus(
+  quotes: readonly FuelQuote[],
+  options: ConsensusOptions = {},
+): FuelPriceReading | null {
   const plausible = quotes.filter((quote) => isPlausibleFuelPrice(quote.price));
   if (plausible.length === 0) return null;
 
-  const sorted = [...plausible].sort((a, b) => a.price - b.price);
-  const middle = sorted[Math.floor((sorted.length - 1) / 2)];
-  if (!middle) return null;
+  const feedOf = options.feedOf ?? ((sourceId: string) => sourceId);
+
+  // One vote per feed: within a feed, its own lower median; across feeds, the
+  // lower median of those representatives.
+  const byFeed = new Map<string, FuelQuote[]>();
+  for (const quote of plausible) {
+    const feed = feedOf(quote.source);
+    const group = byFeed.get(feed);
+    if (group) group.push(quote);
+    else byFeed.set(feed, [quote]);
+  }
+
+  const representatives = [...byFeed.values()]
+    .map((group) => lowerMedian(group))
+    .filter((quote): quote is FuelQuote => quote !== undefined);
+
+  const chosen = lowerMedian(representatives);
+  if (!chosen) return null;
 
   return {
-    fuelType: middle.fuelType,
-    price: middle.price,
-    currency: middle.currency,
-    source: middle.source,
-    sourceUrl: middle.sourceUrl,
+    fuelType: chosen.fuelType,
+    price: chosen.price,
+    currency: chosen.currency,
+    source: chosen.source,
+    sourceUrl: chosen.sourceUrl,
+    // Every source that contributed, not just the winning feed's — the UI says
+    // "3 sources" and an admin needs to see when that silently becomes 1.
     sources: [...new Set(plausible.map((quote) => quote.source))].sort(),
-    fetchedAt: middle.fetchedAt,
+    fetchedAt: chosen.fetchedAt,
   };
 }
 

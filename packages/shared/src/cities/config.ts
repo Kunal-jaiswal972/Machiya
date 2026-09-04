@@ -108,8 +108,8 @@ const CITY_INPUTS: CityConfigInput[] = [
     ],
     fuelSlugs: {
       goodreturns: 'patna',
-      mypetrolprice: 'patna',
-      ndtv: 'patna',
+      bankbazaar: 'patna',
+      petrolpriceindia: 'patna',
     },
   },
   {
@@ -135,12 +135,15 @@ const CITY_INPUTS: CityConfigInput[] = [
       { name: 'Jayanagar', lat: 12.925, lng: 77.5938 },
       { name: 'Hebbal', lat: 13.0358, lng: 77.597 },
     ],
-    // The reason this map exists rather than reusing `slug`: two of the three
-    // sources still index the city under its former name.
+    // The reason this map exists rather than reusing `slug`: **all three**
+    // sources index the city under its former name. Verified per source, not
+    // assumed — `.../petrol-price-in-bengaluru.html` is a 404 on goodreturns
+    // while `...-bangalore.html` returns the city. A single `slug` would have
+    // made Bengaluru the quiet city the validator exists to catch.
     fuelSlugs: {
       goodreturns: 'bangalore',
-      mypetrolprice: 'bangalore',
-      ndtv: 'bengaluru',
+      bankbazaar: 'bangalore',
+      petrolpriceindia: 'bangalore',
     },
   },
   {
@@ -168,8 +171,8 @@ const CITY_INPUTS: CityConfigInput[] = [
     ],
     fuelSlugs: {
       goodreturns: 'pune',
-      mypetrolprice: 'pune',
-      ndtv: 'pune',
+      bankbazaar: 'pune',
+      petrolpriceindia: 'pune',
     },
   },
 ];

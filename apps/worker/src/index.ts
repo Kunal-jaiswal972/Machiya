@@ -6,7 +6,9 @@ import { env } from './env.js';
 import { cleanupImages } from './jobs/cleanup-images.js';
 import { markImageFailed, processImageJob, type ProcessImageJob } from './jobs/process-image.js';
 import { reconcileImages } from './jobs/reconcile-images.js';
+import { scrapeFuelPrices } from './jobs/scrape-fuel-prices.js';
 import { logger } from './logger.js';
+import { closeWorkerRedis } from './lib/redis.js';
 import { QUEUE_NAMES, createConnection, createQueue, createWorker } from './queues.js';
 
 /**
@@ -46,16 +48,25 @@ imageWorker.on('failed', (job, error) => {
 });
 
 /**
- * Placeholder processor. The real fuel price adapters land in step 8; until then
- * this proves the queue, the scheduler and the Redis wiring actually work.
+ * The hourly fuel scrape, plus the on-demand refresh the API enqueues on a
+ * cache miss.
+ *
+ * Concurrency stays at the default rather than being raised: the job walks
+ * three cities x three sources in series on purpose, because 27 requests fired
+ * at once is a burst against somebody else's server for no gain when the job
+ * has a whole hour. Two of these running at once would defeat that.
+ *
+ * `jobId` on the enqueue side is what stops a stampede of refreshes; see
+ * `enqueueFuelRefresh` in the API.
  */
 const fuelWorker = createWorker(
   QUEUE_NAMES.fuelPrices,
   async (job) => {
     logger.info({ jobId: job.id, name: job.name }, 'fuel price job picked up');
-    return { scrapedAt: new Date().toISOString(), adapters: 0 };
+    return await scrapeFuelPrices();
   },
   connection,
+  { concurrency: 1 },
 );
 
 const maintenanceWorker = createWorker(
@@ -162,6 +173,7 @@ async function shutdown(signal: string): Promise<void> {
     fuelQueue.close(),
     maintenanceQueue.close(),
     disconnectPrisma(),
+    closeWorkerRedis(),
   ]);
   await connection.quit();
   process.exit(0);
