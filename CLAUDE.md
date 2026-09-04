@@ -173,3 +173,67 @@ abstraction. If a decision is ambiguous, pick a sane default, log it in
 
 At the end of each item, print the diff summary, the commands to verify it, and
 anything left deliberately undone.
+
+Replace the section you appended with this version — the two additions are folded in.
+
+## Comments
+
+Comments are for what the code cannot say. Default to none.
+
+Write a comment only when a reader who understands the language would still be
+surprised: a non-obvious constraint, a workaround for upstream behaviour, a
+sequence that must not be reordered, a value that looks arbitrary and is not.
+Use JSdoc format for comments.
+Those are rare — most functions need zero.
+
+Never write:
+
+- restatements of the code (`// increment the counter`, `// fetch the user`)
+- section banners, ASCII dividers, or `// ---- helpers ----` headers
+- docblocks that only repeat the signature and parameter names
+- a comment on every field, branch or step because the others have one
+- `// TODO`, `// NOTE:`, `// FIXME` without an owner and a condition — an
+  unowned TODO is a comment that will never be removed
+- narration of your own process: `// as discussed`, `// per the prompt`,
+  `// simplified for now`, `// this handles the edge case where...` on code that
+  visibly handles it
+- commented-out code. Delete it; git remembers.
+
+**Configuration files are the exception, and generously so.** `.env.example`,
+`docker-compose.yml`, `prisma.config.ts`, `nginx.conf`, CI workflows, the OSM
+manifest and any tuning constants are read by people deciding what to change, not
+by people following logic — and the reason a value is what it is cannot be
+inferred from the value. Explain what a knob does, what breaks at the wrong
+setting, and why a non-default was chosen. `OVERPASS_META: no` deserves a line;
+`API_PORT: 4000` does not.
+
+**Decisions do not go in comments.** The reasoning behind a choice belongs in
+`DECISIONS.md`, where it is findable, reviewable and rewritable when superseded.
+A rationale buried in a comment is invisible to anyone who is not already reading
+that file, and it rots silently when the decision changes. If you find yourself
+writing a paragraph explaining why, stop: write the entry, and leave at most a
+one-line pointer at the code — `// see DECISIONS D42` — and only where someone
+editing this line would otherwise undo the decision.
+
+The trigger, the CHECK constraints, the epoch-keyed cache and the float casts are
+the shape of thing that earns a pointer. A normal handler is not.
+
+Prefer making the comment unnecessary: a named constant instead of a magic number
+with an explanation, an extracted function whose name is the comment, an early
+return instead of a note about what the nesting means.
+
+**Clean up as you go.** The existing code is heavily over-commented against this
+rule. Whenever you open a file to change it, delete the comments in it that this
+section forbids — restatements, banners, process narration, unowned TODOs,
+commented-out code — as part of that commit, not as a separate sweep. Where a
+comment holds real reasoning that belongs in `DECISIONS.md`, move it there and
+either drop it or reduce it to a pointer. Where it documents behaviour that has
+since changed, the comment is now a lie: fix or remove it rather than leaving it.
+
+Do not open files solely to strip comments, and do not mix a large comment
+cleanup into a change that is hard to review — if a file's comment removal is
+larger than the functional change, commit the cleanup separately with a
+`chore:` prefix so the diff stays readable.
+
+Apply this to commit messages too: the subject line says what changed, the body
+says why only when why is not obvious, and neither restates the diff.
