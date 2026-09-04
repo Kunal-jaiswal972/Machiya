@@ -11,6 +11,7 @@ first sentence whether you are in the right place.
 | [architecture.md](architecture.md)   | You need the shape of the system, or the cache TTLs                |
 | [data-model.md](data-model.md)       | You are touching the schema, a migration, or a geo query           |
 | [geo.md](geo.md)                     | Geocoding, routing, POIs, autocomplete, or a free tier is refusing |
+| [adding-a-city.md](adding-a-city.md) | You are adding a city, or want to know what that actually costs    |
 | [images.md](images.md)               | Photo upload, validation, variants, or an image is stuck           |
 | [auth.md](auth.md)                   | Sessions, roles, guards, or a Better Auth upgrade                  |
 | [design.md](design.md)               | You are building or changing UI                                    |

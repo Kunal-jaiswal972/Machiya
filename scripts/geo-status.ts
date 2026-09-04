@@ -115,7 +115,7 @@ function cutRows(): Row[] {
   });
 }
 
-function manifestRows(): { rows: Row[]; mergedSha: string | null } {
+function manifestRows(): { rows: Row[]; mergedSha: string | null; configStale: boolean } {
   const path = join(OUT_DIR, 'manifest.json');
 
   if (!existsSync(path)) {
@@ -129,6 +129,7 @@ function manifestRows(): { rows: Row[]; mergedSha: string | null } {
         },
       ],
       mergedSha: null,
+      configStale: true,
     };
   }
 
@@ -144,11 +145,13 @@ function manifestRows(): { rows: Row[]; mergedSha: string | null } {
         },
       ],
       mergedSha: null,
+      configStale: true,
     };
   }
 
   const manifest = parsed.data;
   const configHash = computeGeoConfigHash(CITIES);
+  const configStale = configHash !== manifest.configHash;
   const rows: Row[] = [];
 
   rows.push(
@@ -193,25 +196,43 @@ function manifestRows(): { rows: Row[]; mergedSha: string | null } {
       detail: 'osm-data/merged.osm.pbf is absent',
       fix: REBUILD,
     });
-    return { rows, mergedSha: null };
+    return { rows, mergedSha: null, configStale };
   }
 
   const mergedSha = sha256File(MERGED);
+
+  // Two different questions, and the exercise in docs/adding-a-city.md is what
+  // separated them: the extract can match the manifest byte for byte and still
+  // be built from a city list the running config has since outgrown. Reporting
+  // that as `ok` is how a fourth city gets served empty results by an artifact
+  // set every row called healthy.
   rows.push(
-    mergedSha === manifest.merged.sha256
-      ? { artifact: 'merged extract', state: 'ok', detail: `${mergedSha.slice(0, 12)}…`, fix: '' }
-      : {
+    mergedSha !== manifest.merged.sha256
+      ? {
           artifact: 'merged extract',
           state: 'stale',
           detail: 'on disk does not match the manifest',
           fix: 'pnpm geo:manifest',
-        },
+        }
+      : configStale
+        ? {
+            artifact: 'merged extract',
+            state: 'stale',
+            detail: 'matches the manifest, but the manifest predates the city config',
+            fix: REBUILD,
+          }
+        : {
+            artifact: 'merged extract',
+            state: 'ok',
+            detail: `${mergedSha.slice(0, 12)}…`,
+            fix: '',
+          },
   );
 
-  return { rows, mergedSha };
+  return { rows, mergedSha, configStale };
 }
 
-function osrmRows(mergedSha: string | null): Row[] {
+function osrmRows(mergedSha: string | null, configStale: boolean): Row[] {
   return (['car', 'bicycle'] as const).map((profile): Row => {
     const stored = readFromVolume('machiya_osrm-data', `/${profile}/source.sha256`);
 
@@ -232,18 +253,32 @@ function osrmRows(mergedSha: string | null): Row[] {
       };
     }
 
-    return stored === mergedSha
+    if (stored !== mergedSha) {
+      return {
+        artifact: `osrm ${profile} graph`,
+        state: 'stale',
+        detail: 'built from a different extract',
+        fix: REBUILD,
+      };
+    }
+
+    // Matching the extract is not the same as matching the CONFIG. The
+    // Hyderabad exercise (docs/adding-a-city.md) is what separated the two:
+    // every downstream row read `ok` while the manifest row said the artifacts
+    // predated the city list, which is precisely the state in which a new city
+    // serves empty results with a green board.
+    return configStale
       ? {
+          artifact: `osrm ${profile} graph`,
+          state: 'stale',
+          detail: 'built from the current extract, which predates the city config',
+          fix: REBUILD,
+        }
+      : {
           artifact: `osrm ${profile} graph`,
           state: 'ok',
           detail: 'built from this extract',
           fix: '',
-        }
-      : {
-          artifact: `osrm ${profile} graph`,
-          state: 'stale',
-          detail: 'built from a different extract',
-          fix: REBUILD,
         };
   });
 }
@@ -253,7 +288,7 @@ function osrmRows(mergedSha: string | null): Row[] {
  * dropping the volume. Neither can be asked which extract it holds, hence the
  * stamp — and hence the fix being three commands rather than one.
  */
-function importRows(mergedSha: string | null): Row[] {
+function importRows(mergedSha: string | null, configStale: boolean): Row[] {
   const services = [
     { service: 'nominatim', volume: 'machiya_nominatim-data' },
     { service: 'overpass', volume: 'machiya_overpass-db' },
@@ -277,20 +312,35 @@ function importRows(mergedSha: string | null): Row[] {
       return { artifact: `${service} import`, state: 'unknown', detail: 'nothing to compare', fix };
     }
 
-    return stamped === mergedSha
-      ? { artifact: `${service} import`, state: 'ok', detail: 'imported this extract', fix: '' }
-      : {
+    if (stamped !== mergedSha) {
+      return {
+        artifact: `${service} import`,
+        state: 'stale',
+        detail: 'imported a different extract',
+        fix,
+      };
+    }
+
+    return configStale
+      ? {
           artifact: `${service} import`,
           state: 'stale',
-          detail: 'imported a different extract',
+          detail: 'imported the current extract, which predates the city config',
           fix,
-        };
+        }
+      : { artifact: `${service} import`, state: 'ok', detail: 'imported this extract', fix: '' };
   });
 }
 
 export function geoStatus(): Row[] {
-  const { rows: manifestPart, mergedSha } = manifestRows();
-  return [...manifestPart, ...cutRows(), ...osrmRows(mergedSha), ...importRows(mergedSha)];
+  const { rows: manifestPart, mergedSha, configStale } = manifestRows();
+
+  return [
+    ...manifestPart,
+    ...cutRows(),
+    ...osrmRows(mergedSha, configStale),
+    ...importRows(mergedSha, configStale),
+  ];
 }
 
 function main(): void {
