@@ -3,6 +3,7 @@ import { prisma } from '../src/client.js';
 import {
   findSimilarListings,
   searchListingsInRadius,
+  searchPlacesLocally,
   straightLineDistanceMeters,
 } from '../src/geo-queries.js';
 import { PATNA_OFFICE, PUNE_OFFICE, north, seedFixtures, type SeededFixtures } from './fixtures.js';
@@ -356,5 +357,47 @@ describe('straightLineDistanceMeters', () => {
   it('is zero for the same point', async () => {
     const meters = await straightLineDistanceMeters(PATNA_OFFICE, PATNA_OFFICE);
     expect(meters).toBe(0);
+  });
+});
+
+describe('searchPlacesLocally — the office picker', () => {
+  /**
+   * The way anyone types a place.
+   *
+   * A listing matches on its `address` column, which already contains the city,
+   * so adding the city to the query used to RAISE every listing's similarity
+   * and LOWER the locality's — until "Boring Road, Patna" returned eight flats
+   * and no locality at all, and you could not set your office to a locality by
+   * naming it. See docs/ux-audit.md 1.10.
+   */
+  it('puts the locality first whether or not the city is typed', async () => {
+    const city = await prisma.city.findUniqueOrThrow({ where: { slug: 'patna' } });
+
+    await prisma.locality.create({
+      data: {
+        cityId: city.id,
+        slug: 'boring-road',
+        name: 'Boring Road',
+        lat: 25.6127,
+        lng: 85.1145,
+      },
+    });
+
+    for (const query of ['Boring Road', 'Boring Road, Patna']) {
+      const rows = await searchPlacesLocally({ query, limit: 5 });
+      const first = rows[0];
+
+      expect(first, `no suggestions at all for "${query}"`).toBeDefined();
+      expect(first?.kind, `"${query}" did not put the locality first`).toBe('locality');
+      expect(first?.label).toBe('Boring Road');
+    }
+  });
+
+  it('still finds a locality the query only partly names', async () => {
+    // The bare-name path has to keep working — it is the one the trigram index
+    // serves, and the qualified form is an addition rather than a replacement.
+    const rows = await searchPlacesLocally({ query: 'borng road', limit: 5 });
+
+    expect(rows.some((row) => row.kind === 'locality' && row.label === 'Boring Road')).toBe(true);
   });
 });

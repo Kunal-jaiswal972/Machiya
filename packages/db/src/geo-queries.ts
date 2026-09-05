@@ -677,6 +677,8 @@ export async function searchPlacesLocally(input: {
           1.0,
           GREATEST(
             similarity(c."name", ${term}),
+            -- "Patna, Bihar" is one way people name a city, same as above.
+            similarity(c."name" || ', ' || c."state", ${term}),
             CASE WHEN lower(c."name") LIKE ${prefix} THEN 0.92 ELSE 0 END
           )
         )::double precision        AS "score",
@@ -684,7 +686,11 @@ export async function searchPlacesLocally(input: {
         NULL::text                 AS "listingSlug",
         c."bbox"                   AS "bbox"
       FROM "City" c
-      WHERE (c."name" % ${term} OR lower(c."name") LIKE ${prefix})
+      WHERE (
+          c."name" % ${term}
+          OR lower(c."name") LIKE ${prefix}
+          OR (c."name" || ', ' || c."state") % ${term}
+        )
         AND (${cityFilter}::text IS NULL OR c."slug" = ${cityFilter})
 
       UNION ALL
@@ -701,6 +707,8 @@ export async function searchPlacesLocally(input: {
           1.0,
           GREATEST(
             similarity(l."name", ${term}),
+            -- The qualified form, because it is how people type a place.
+            similarity(l."name" || ', ' || c."name", ${term}),
             CASE WHEN lower(l."name") LIKE ${prefix} THEN 0.92 ELSE 0 END
           )
         )::double precision,
@@ -709,7 +717,26 @@ export async function searchPlacesLocally(input: {
         NULL::jsonb
       FROM "Locality" l
       JOIN "City" c ON c."id" = l."cityId"
-      WHERE (l."name" % ${term} OR lower(l."name") LIKE ${prefix})
+      -- Matched against "Boring Road" AND "Boring Road, Patna".
+      --
+      -- A listing matches on its address column, which already contains the
+      -- city, so adding the city to the query RAISED every listing's
+      -- similarity and LOWERED the locality's -- until "Boring Road, Patna"
+      -- returned eight flats and no locality at all. You could not pick a
+      -- locality as your office by typing its name and its city, which is how
+      -- anyone would type it. See docs/ux-audit.md 1.10.
+      --
+      -- The bare-name disjuncts stay first so the trigram index still serves
+      -- the common case; the computed one cannot use it and does not need to,
+      -- since Locality is tens of rows per city rather than thousands.
+      --
+      -- SQL comments, not a JSDoc block: this is inside a tagged template, and
+      -- a backtick in a comment here closes the template literal.
+      WHERE (
+          l."name" % ${term}
+          OR lower(l."name") LIKE ${prefix}
+          OR (l."name" || ', ' || c."name") % ${term}
+        )
         AND (${cityFilter}::text IS NULL OR c."slug" = ${cityFilter})
 
       UNION ALL
