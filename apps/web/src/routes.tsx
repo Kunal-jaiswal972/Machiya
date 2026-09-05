@@ -3,24 +3,28 @@ import { App } from './App';
 import { RequireAuth, RequireRole } from './components/RequireAuth';
 import { RouteError } from './components/RouteError';
 import { AccountPage } from './pages/AccountPage';
-import { EnquiriesPage } from './pages/EnquiriesPage';
 import { ForbiddenPage } from './pages/ForbiddenPage';
-import { AdminPage } from './pages/admin/AdminPage';
-import { CoverageDemandPage } from './pages/admin/CoverageDemandPage';
-import { FuelHealthPage } from './pages/admin/FuelHealthPage';
-import { ModerationPage } from './pages/admin/ModerationPage';
-import { UsersPage } from './pages/admin/UsersPage';
 import { ListingDetailRoute } from './pages/ListingDetailRoute';
-import { SavedPage } from './pages/SavedPage';
-import { SearchPage } from './pages/SearchPage';
-import { DashboardPage } from './pages/lister/DashboardPage';
-import { WizardPage } from './pages/lister/WizardPage';
 import { NotFoundPage } from './pages/NotFoundPage';
+import { SearchPage } from './pages/SearchPage';
 import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
 import { ResetPasswordPage } from './pages/auth/ResetPasswordPage';
 import { SignInPage } from './pages/auth/SignInPage';
 import { SignUpPage } from './pages/auth/SignUpPage';
 import { VerifyEmailPage } from './pages/auth/VerifyEmailPage';
+// Code-split, and in their own module because this one exports a router rather
+// than a component — mixing the two costs fast refresh for every page in it.
+import {
+  AdminPage,
+  CoverageDemandPage,
+  DashboardPage,
+  EnquiriesPage,
+  FuelHealthPage,
+  ModerationPage,
+  SavedPage,
+  UsersPage,
+  WizardPage,
+} from './routes-lazy';
 
 export const router = createBrowserRouter([
   {

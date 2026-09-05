@@ -7,8 +7,8 @@
     "dev": "pnpm sync:maplibre && vite",
     "build": "pnpm sync:maplibre && tsc -p tsconfig.json --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "test": "vitest run",
     "clean": "rimraf dist",
     "sync:maplibre": "node scripts/sync-maplibre-worker.mjs"
   },

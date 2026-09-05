@@ -33,5 +33,15 @@
     "tsx": "^4.23.13",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"
+  },
+  "exports": {
+    "./jobs/process-image": {
+      "types": "./dist/jobs/process-image.d.ts",
+      "import": "./dist/jobs/process-image.js"
+    },
+    "./jobs/notify-enquiry": {
+      "types": "./dist/jobs/notify-enquiry.d.ts",
+      "import": "./dist/jobs/notify-enquiry.js"
+    }
   }
 }

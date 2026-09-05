@@ -41,15 +41,10 @@ fixes it**. A list nobody prunes is a list nobody reads.
 
 ## Bugs and gaps recorded, not fixed
 
-- **`pnpm typecheck` still does not compile a line of `apps/web`.** Every other
-  package gained a `tsconfig.test.json` in correction 11; the web app has no
-  test config and no tests, and its `test` script is
-  `vitest run --passWithNoTests`. The gap D65 closed everywhere else is open
-  here. ([D65](../DECISIONS.md#d65-pnpm-typecheck-did-not-look-at-a-single-test-file))
-- **The suite stubs tier 2 of the geocoder**, which is why D57, D58 and D60 were
-  all found by a live run rather than by a test. Live-service coverage exists
-  for routing, POIs and coverage boundaries; the autocomplete's remote tier is
-  still stubbed everywhere.
+- **The autocomplete's tier 2 is still stubbed in every suite**, which is why
+  D57, D58 and D60 were all found by a live run. `apps/e2e` now walks sign-up to
+  enquiry against the real stack, but its geocoding is not on that path — the
+  wizard sends a pin, not a query.
   ([D60](../DECISIONS.md#d60-three-bugs-the-live-run-found-that-the-tests-could-not))
 
 ## Not issues, recorded so they stop being rediscovered

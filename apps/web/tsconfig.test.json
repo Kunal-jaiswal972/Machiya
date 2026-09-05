@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // `vite/client` is what declares ImportMeta.env, and this list REPLACES the
+    // one in tsconfig.json rather than adding to it — drop it and four source
+    // files stop compiling under the test config only.
+    "types": ["vite/client", "node"],
+    "rootDir": "."
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx", "vitest.config.ts"]
+}

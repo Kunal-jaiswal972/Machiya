@@ -48,5 +48,11 @@
     "@types/nodemailer": "^8.0.1",
     "@testcontainers/postgresql": "^12.1.0",
     "testcontainers": "^12.1.0"
+  },
+  "exports": {
+    "./app": {
+      "types": "./dist/app.d.ts",
+      "import": "./dist/app.js"
+    }
   }
 }
