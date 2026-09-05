@@ -12,6 +12,7 @@ export {
   resolveCityForPoint,
   resolveCoverage,
   recordCoverageRequest,
+  coverageRequestClusters,
   decodeCursor,
   COVERAGE_REQUEST_CLUSTER_METERS,
   type CityMatch,
@@ -20,6 +21,7 @@ export {
   type CoverageCity,
   type CoverageResolution,
   type NearestCoverageCity,
+  type CoverageCluster,
   type SimilarListing,
   type LocalPlaceRow,
 } from './geo-queries.js';

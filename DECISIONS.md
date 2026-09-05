@@ -2175,3 +2175,108 @@ Three consequences worth stating:
 `viewerHasEnquired` travels with the listing so the panel can say "you have a
 conversation open" and link to it, rather than offering a form that would create
 a second place to write into the same thread.
+
+### D70. The admin plugin was mounted and inert, because `adminRoles` is not the permission check
+
+`docs/audit-2026-09.md` records the Better Auth admin plugin as **implemented,
+"Not a gap"**, on the evidence that `adminPlugin({ defaultRole: DEFAULT_ROLE,
+adminRoles: ['ADMIN'] })` is in the config. It is. It also did nothing.
+
+Measured against the running API, signed in as the seeded `admin@dev.local`:
+
+| Endpoint            | Before                                         |
+| ------------------- | ---------------------------------------------- |
+| `/admin/list-users` | 403 `YOU_ARE_NOT_ALLOWED_TO_LIST_USERS`        |
+| `/admin/ban-user`   | 403 `YOU_ARE_NOT_ALLOWED_TO_BAN_USERS`         |
+| `/admin/set-role`   | 403 `YOU_ARE_NOT_ALLOWED_TO_CHANGE_USERS_ROLE` |
+
+Every endpoint on the plugin. The cause is that `adminRoles` and the permission
+check are two different mechanisms. `adminRoles: ['ADMIN']` gets a caller past
+the "is this an admin at all" gate; each endpoint then asks
+`roles[session.role]` for a specific statement, and the plugin's built-in map
+holds exactly two keys — `admin` and `user`. `ADMIN` is neither, the lookup
+misses, and the answer is no.
+
+**It fails closed and silently.** Nothing throws, nothing logs at error, no
+build step complains. A page listing users renders perfectly and every button
+returns 403. This is D23's failure mode — a rule that reads as covered and is
+not — and it is worth noting that the audit's own method (grep the config,
+confirm the option is present) is what missed it. The option was present. The
+behaviour was absent.
+
+**Chosen: define the access control in our role names**, with
+`createAccessControl(defaultStatements)` and a role per `UserRole`. After it,
+the same three endpoints answer 200 and the writes land — `set-role` to
+`LISTER` and back, `ban-user` writing `banned` and `banReason`, `unban-user`
+clearing them.
+
+Three details are decisions rather than mechanics:
+
+- **Impersonation is granted to nobody.** The plugin ships
+  `/admin/impersonate-user`, which would let an operator read somebody's
+  private enquiry threads as them. Nothing in this product needs it, and an
+  unused permission is one nobody is watching — so the statement is omitted
+  from every role rather than granted and left un-exercised. Verified: it still
+  answers 403 after the fix, which is the point.
+- **The definition lives in `@machiya/shared/auth-access`, not in the API.**
+  Both ends need it and for different reasons: without it the server 403s
+  everything, and without it `authClient.admin.setRole` is typed to
+  `'admin' | 'user'` and refuses a role this product actually has. Two copies
+  would be the worst case — the runtime allowing what the types forbade, which
+  is how a cast ends up at the call site and the only check there was
+  disappears. A **subpath**, for the same reason as `/images` and `/cities`
+  (D34, D49): the module reaches into `better-auth`, and neither the worker nor
+  `packages/db` has any business pulling that in.
+- **`ac` is annotated, and the annotation is load-bearing.** Left inferred, the
+  emitted `.d.ts` describes it as an anonymous object shape, and
+  `adminPlugin`'s `AC extends AccessControl` cannot be inferred from that — so
+  the same value that compiles inside `packages/shared` fails to compile in
+  `apps/api`. It only appeared when the definition crossed a package boundary,
+  which is the moment it was moved. `AccessControl<typeof defaultStatements>`
+  fixes it.
+
+The browser client gets `roles` and **not** `ac`: `adminClient` types that
+option as the un-parameterised `AccessControl`, so an `ac` built from concrete
+statements is not assignable to it, and the client only needs the role names
+anyway. The server gets both.
+
+`pnpm auth:check` and `pnpm auth:routes` do not catch this — the schema is
+correct and the routes exist; it is the permission map that was wrong. So the
+three curl probes above are recorded here and named in
+`apps/api/src/auth/access.ts`, and they are what to re-run after a Better Auth
+upgrade.
+
+### D71. The admin page answers "what is broken" and "where next", not just "who signed up"
+
+Two operational views already existed with nowhere to live: the per-adapter
+fuel scrape health from step 8, at a `/admin/fuel` URL nothing linked to, and
+the `CoverageRequest` table from D55, which had a write path and no reader at
+all. Both are now tabs on one admin shell, and they are ordered ahead of user
+management deliberately — moderation first because it is the only queue that
+grows on its own, coverage demand second because it is the question this
+product is trying to answer for itself.
+
+Three decisions inside it:
+
+- **The moderation queue is oldest-first and holds only unverified rows.**
+  Newest-first leaves the oldest unreviewed listing unreviewed forever, which
+  is the failure a queue exists to prevent. Verifying takes the row off the
+  list, so the count means "outstanding" rather than "total" — and `unverify`
+  therefore cannot live in the queue, because it would be a button that removes
+  the row it sits on and can never be pressed again.
+- **The owner's account age is on the row.** A listing published by an account
+  two hours old is the shape of a spam run, and a moderator should not have to
+  open a second page to see it.
+- **Coverage demand is clustered spatially and ranked by distinct people.**
+  `ST_ClusterDBSCAN` over the geography column at the same 50 km radius the
+  public endpoint reports back, `minpoints => 1` so a city nobody has asked
+  about twice is still a data point rather than DBSCAN noise. Ranking by asks
+  would let one determined person choose the fourth city; ranking by rows would
+  be worse still, since D55 already dedupes per person per point. Verified
+  against the seeded database with three planted requests: Mumbai and Thane,
+  19 km apart, collapse into one cluster of 2 people and 4 asks with the label
+  "Mumbai", while Hyderabad 600 km away stays its own cluster of 1.
+
+The page states the people-versus-asks distinction in words rather than leaving
+it to a column header, because "40 requests" and "40 people" are the same number
+for very different reasons and only one of them is a reason to build a city.

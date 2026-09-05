@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   enquiryStatusSchema,
   furnishingTypeSchema,
+  userRoleSchema,
   listingStatusSchema,
   listingTypeSchema,
   propertyTypeSchema,
@@ -517,3 +518,78 @@ export type SavedSearchView = z.infer<typeof savedSearchViewSchema>;
 export const savedSearchesResponseSchema = z.object({
   searches: z.array(savedSearchViewSchema),
 });
+
+// --- admin ------------------------------------------------------------------
+
+export const adminListingSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  title: z.string().nullable(),
+  locality: z.string().nullable(),
+  listingType: listingTypeSchema,
+  status: listingStatusSchema,
+  rentAmount: z.number().int().nullable(),
+  salePrice: z.number().int().nullable(),
+  isVerified: z.boolean(),
+  publishedAt: z.string().nullable(),
+  citySlug: z.string(),
+  cityName: z.string(),
+  owner: z.object({
+    id: z.string(),
+    name: z.string(),
+    email: z.string(),
+    /** A new account publishing at once is the shape of a spam run. */
+    memberSince: z.string(),
+  }),
+  imageCount: z.number().int(),
+  enquiryCount: z.number().int(),
+  coverUrl: z.string().nullable(),
+});
+
+export type AdminListing = z.infer<typeof adminListingSchema>;
+
+export const moderationQueueResponseSchema = z.object({
+  listings: z.array(adminListingSchema),
+});
+
+export const adminUserSchema = z.object({
+  id: z.string(),
+  email: z.string(),
+  name: z.string(),
+  role: userRoleSchema,
+  emailVerified: z.boolean(),
+  banned: z.boolean(),
+  banReason: z.string().nullable(),
+  createdAt: z.string(),
+  listingCount: z.number().int(),
+  enquiryCount: z.number().int(),
+});
+
+export type AdminUser = z.infer<typeof adminUserSchema>;
+
+export const adminUsersResponseSchema = z.object({ users: z.array(adminUserSchema) });
+
+/**
+ * Where people are asking the product to go next.
+ *
+ * Clustered spatially and ranked by distinct people rather than by rows: two
+ * people asking about Mumbai will not have dropped pins on the same building,
+ * and a count of taps would let one determined person pick the fourth city.
+ * See DECISIONS.md D55.
+ */
+export const coverageDemandSchema = z.object({
+  clusterRadiusMeters: z.number().int().positive(),
+  clusters: z.array(
+    z.object({
+      lat: z.number(),
+      lng: z.number(),
+      people: z.number().int().nonnegative(),
+      asks: z.number().int().nonnegative(),
+      label: z.string().nullable(),
+      firstAskedAt: z.string(),
+      lastAskedAt: z.string(),
+    }),
+  ),
+});
+
+export type CoverageDemand = z.infer<typeof coverageDemandSchema>;

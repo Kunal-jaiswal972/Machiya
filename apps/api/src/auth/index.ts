@@ -5,6 +5,7 @@ import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { admin as adminPlugin, openAPI } from 'better-auth/plugins';
 import { env } from '../env.js';
+import { ac, roles } from '@machiya/shared/auth-access';
 import { authRedis } from '../lib/redis.js';
 import { sendPasswordResetEmail, sendVerificationEmail } from './emails.js';
 
@@ -127,7 +128,11 @@ export const auth = betterAuth({
   },
 
   plugins: [
-    adminPlugin({ defaultRole: DEFAULT_ROLE, adminRoles: ['ADMIN'] }),
+    // `ac` and `roles` are not optional here. Without them every endpoint on
+    // this plugin answers 403, because the permission check resolves our role
+    // names against the plugin's built-in admin/user map and misses. See
+    // apps/api/src/auth/access.ts and DECISIONS.md D70.
+    adminPlugin({ defaultRole: DEFAULT_ROLE, adminRoles: ['ADMIN'], ac, roles }),
     // Route explorer at /api/auth/reference. Never in production.
     ...(isProduction ? [] : [openAPI()]),
   ],

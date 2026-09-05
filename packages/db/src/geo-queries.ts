@@ -1099,3 +1099,83 @@ export async function recordCoverageRequest(input: {
 
   return { asks: row.asks, peopleNearby: Number(counted[0]?.people ?? 1) };
 }
+
+export interface CoverageCluster {
+  /** Centre of the cluster, as the mean of its requests. */
+  lat: number;
+  lng: number;
+  /** Distinct people who asked. The number that decides the fourth city. */
+  people: number;
+  /** Total asks, which is people plus repeat taps. */
+  asks: number;
+  /** The most-repeated label anyone's geocoder managed for this area. */
+  label: string | null;
+  firstAskedAt: Date;
+  lastAskedAt: Date;
+}
+
+/**
+ * Coverage requests, clustered — the actual answer to "which city next".
+ *
+ * Counting rows would answer a different and useless question. D55 already
+ * rounds coordinates and dedupes per person per point, but two people asking
+ * about Mumbai will have dropped pins 40 km apart (Thane and Colaba), and forty
+ * requests spread across Maharashtra are not the same signal as forty within
+ * 20 km of Nariman Point. So the grouping is **spatial**, at the same 50 km
+ * radius the endpoint reports back, and the ranking is by DISTINCT PEOPLE
+ * rather than by asks.
+ *
+ * `ST_ClusterDBSCAN` rather than a self-join: it is a window function, so the
+ * whole thing is one pass over an index-assisted scan, and `minpoints => 1`
+ * means a lone request is its own cluster rather than being dropped — a city
+ * nobody has asked about twice yet is still a data point.
+ */
+export async function coverageRequestClusters(limit = 20): Promise<CoverageCluster[]> {
+  const rows = await prisma.$queryRaw<
+    Array<{
+      lat: number;
+      lng: number;
+      people: number;
+      asks: number;
+      label: string | null;
+      firstAskedAt: Date;
+      lastAskedAt: Date;
+    }>
+  >(Prisma.sql`
+    WITH clustered AS (
+      SELECT
+        "email",
+        "lat",
+        "lng",
+        "asks",
+        "placeLabel",
+        "createdAt",
+        "updatedAt",
+        ST_ClusterDBSCAN("location"::geometry, eps => ${COVERAGE_REQUEST_CLUSTER_METERS / 111_320}::double precision, minpoints => 1)
+          OVER () AS cluster_id
+      FROM "CoverageRequest"
+    )
+    SELECT
+      avg("lat")::double precision AS "lat",
+      avg("lng")::double precision AS "lng",
+      count(DISTINCT "email")::int AS "people",
+      sum("asks")::int AS "asks",
+      (array_agg("placeLabel" ORDER BY "asks" DESC) FILTER (WHERE "placeLabel" IS NOT NULL))[1] AS "label",
+      min("createdAt") AS "firstAskedAt",
+      max("updatedAt") AS "lastAskedAt"
+    FROM clustered
+    GROUP BY cluster_id
+    ORDER BY "people" DESC, "asks" DESC
+    LIMIT ${limit}
+  `);
+
+  return rows.map((row) => ({
+    lat: row.lat,
+    lng: row.lng,
+    people: Number(row.people),
+    asks: Number(row.asks),
+    label: row.label,
+    firstAskedAt: row.firstAskedAt,
+    lastAskedAt: row.lastAskedAt,
+  }));
+}

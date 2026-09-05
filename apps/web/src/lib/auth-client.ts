@@ -6,6 +6,7 @@ import {
   type AuthErrorCode,
   type SocialProvider,
 } from '@machiya/shared';
+import { roles } from '@machiya/shared/auth-access';
 import { adminClient } from 'better-auth/client/plugins';
 import { createAuthClient } from 'better-auth/react';
 import { env } from '../env';
@@ -17,7 +18,16 @@ import { env } from '../env';
  */
 export const authClient = createAuthClient({
   baseURL: `${env.VITE_API_BASE_URL}${AUTH_BASE_PATH}`,
-  plugins: [adminClient()],
+  // `roles` is what widens `admin.setRole` past the plugin's built-in
+  // `admin | user`, which would otherwise reject every role this product has
+  // while the server — configured with the same map — accepts them fine.
+  //
+  // `ac` is deliberately NOT passed alongside it: `adminClient` types that
+  // option as the un-parameterised `AccessControl`, so an `ac` built from
+  // concrete statements is not assignable to it, and the client only needs the
+  // role names. The server gets both. See @machiya/shared/auth-access and
+  // DECISIONS.md D70.
+  plugins: [adminClient({ roles })],
   fetchOptions: {
     // The session cookie is httpOnly and cross-origin in development.
     credentials: 'include',

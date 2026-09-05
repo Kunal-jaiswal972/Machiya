@@ -5,7 +5,11 @@ import { RouteError } from './components/RouteError';
 import { AccountPage } from './pages/AccountPage';
 import { EnquiriesPage } from './pages/EnquiriesPage';
 import { ForbiddenPage } from './pages/ForbiddenPage';
+import { AdminPage } from './pages/admin/AdminPage';
+import { CoverageDemandPage } from './pages/admin/CoverageDemandPage';
 import { FuelHealthPage } from './pages/admin/FuelHealthPage';
+import { ModerationPage } from './pages/admin/ModerationPage';
+import { UsersPage } from './pages/admin/UsersPage';
 import { ListingDetailRoute } from './pages/ListingDetailRoute';
 import { SavedPage } from './pages/SavedPage';
 import { SearchPage } from './pages/SearchPage';
@@ -58,13 +62,19 @@ export const router = createBrowserRouter([
       },
 
       {
-        path: 'admin/fuel',
+        path: 'admin',
         element: (
           <RequireRole minimum="ADMIN">
-            <FuelHealthPage />
+            <AdminPage />
           </RequireRole>
         ),
         errorElement: <RouteError />,
+        children: [
+          { index: true, element: <ModerationPage /> },
+          { path: 'demand', element: <CoverageDemandPage /> },
+          { path: 'fuel', element: <FuelHealthPage /> },
+          { path: 'users', element: <UsersPage /> },
+        ],
       },
 
       {
