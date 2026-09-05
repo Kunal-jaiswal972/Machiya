@@ -243,27 +243,38 @@ model Listing {
   ownerId String
   cityId  String
 
-  title       String
-  description String
+  /// Null until the wizard's step that collects it. Every nullable column on
+  /// this model is nullable for that one reason: a draft is genuinely
+  /// incomplete, and a placeholder title is a lie the rest of the code then has
+  /// to believe. The `listing_complete_when_live` CHECK in the migration makes
+  /// all of them NOT NULL the moment status leaves DRAFT. See DECISIONS.md D67.
+  title       String?
+  description String?
 
-  listingType  ListingType
-  propertyType PropertyType
+  /// Defaulted rather than nullable: this is a rentals product, the wizard
+  /// shows the real choice on its second step, and a two-value enum has no
+  /// honest null. See D67.
+  listingType  ListingType   @default(RENT)
+  propertyType PropertyType?
   status       ListingStatus @default(DRAFT)
 
-  address  String
-  locality String
+  /// The street line stays EMPTY after the location step rather than being
+  /// filled with a reverse-geocoded approximation, which is one of D59's three
+  /// rules. `locality` is prefilled only on a locality-level match.
+  address  String?
+  locality String?
   lat      Float
   lng      Float
 
   location Unsupported("geography(Point, 4326)")?
 
-  bedrooms    Int
-  bathrooms   Int
+  bedrooms    Int?
+  bathrooms   Int?
   floor       Int?
   totalFloors Int?
-  areaSqft    Int
+  areaSqft    Int?
 
-  furnishing FurnishingType
+  furnishing FurnishingType?
 
   /// Whole rupees, not paise: no sub-rupee rent exists in this market and Int
   /// keeps the money out of Decimal serialisation entirely.

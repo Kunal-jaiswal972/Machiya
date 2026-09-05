@@ -29,8 +29,15 @@ vi.mock('../src/lib/queues.js', () => ({
   closeQueues: vi.fn(async () => undefined),
 }));
 
-const { changeStatus, createDraft, deleteListing, getListingBySlug, listOwned, patchListing } =
-  await import('../src/services/listings.js');
+const {
+  changeStatus,
+  createDraft,
+  deleteListing,
+  getDraft,
+  getListingBySlug,
+  listOwned,
+  patchListing,
+} = await import('../src/services/listings.js');
 const { requestImageUpload, markImageUploaded, reorderImages, deleteImage } =
   await import('../src/services/listing-images.js');
 const { headObject } = await import('../src/lib/storage.js');
@@ -111,6 +118,131 @@ describe('createDraft', () => {
     await expect(createDraft(world.ownerSession, draftBody({ title: 'short' }))).rejects.toThrow();
 
     await expect(createDraft(world.ownerSession, draftBody({ lat: 91 }))).rejects.toThrow();
+  });
+});
+
+describe('the wizard draft', () => {
+  it('opens a draft from a pin alone, with nothing else filled in', async () => {
+    const draft = await createDraft(world.ownerSession, {
+      citySlug: 'patna',
+      lat: 25.6127,
+      lng: 85.1588,
+    });
+
+    const view = await getDraft(world.ownerSession, draft.id);
+
+    expect(view.status).toBe('DRAFT');
+    expect(view.title).toBeNull();
+    expect(view.propertyType).toBeNull();
+    expect(view.areaSqft).toBeNull();
+    expect(view.citySlug).toBe('patna');
+    // Named so a human reading the database can see it is not a real URL yet.
+    expect(view.slug.startsWith('draft-')).toBe(true);
+  });
+
+  it('leaves the street line empty rather than approximating it (D59)', async () => {
+    // What a reverse geocode at Golghar actually returns is the city, not the
+    // building — so the wizard sends a locality and no address at all.
+    const draft = await createDraft(world.ownerSession, {
+      citySlug: 'patna',
+      lat: 25.6127,
+      lng: 85.1588,
+      locality: 'Golghar',
+    });
+
+    const view = await getDraft(world.ownerSession, draft.id);
+
+    expect(view.locality).toBe('Golghar');
+    expect(view.address).toBeNull();
+  });
+
+  it('autosaves one step at a time, and a cleared field really clears', async () => {
+    const draft = await createDraft(world.ownerSession, {
+      citySlug: 'patna',
+      lat: 25.6127,
+      lng: 85.1588,
+    });
+
+    await patchListing(world.ownerSession, draft.id, {
+      title: 'A bright two-bedroom near Golghar',
+      propertyType: 'APARTMENT',
+    });
+    expect((await getDraft(world.ownerSession, draft.id)).title).toBe(
+      'A bright two-bedroom near Golghar',
+    );
+
+    // undefined would mean "this step did not touch it"; null is the user
+    // emptying the box, and the two must not collapse.
+    await patchListing(world.ownerSession, draft.id, { title: null });
+    const cleared = await getDraft(world.ownerSession, draft.id);
+    expect(cleared.title).toBeNull();
+    expect(cleared.propertyType).toBe('APARTMENT');
+  });
+
+  it('keeps a draft private to its owner', async () => {
+    const draft = await createDraft(world.ownerSession, {
+      citySlug: 'patna',
+      lat: 25.6127,
+      lng: 85.1588,
+    });
+
+    await expect(getDraft(world.strangerSession, draft.id)).rejects.toMatchObject({ status: 403 });
+    await expect(getDraft(world.adminSession, draft.id)).resolves.toMatchObject({ id: draft.id });
+  });
+
+  it('names the missing field rather than reporting a type error', async () => {
+    const draft = await createDraft(world.ownerSession, {
+      citySlug: 'patna',
+      lat: 25.6127,
+      lng: 85.1588,
+    });
+
+    await expect(changeStatus(world.ownerSession, draft.id, 'publish')).rejects.toMatchObject({
+      status: 422,
+      code: 'listing_incomplete',
+      message: expect.stringContaining('Give the listing a title'),
+    });
+  });
+
+  it('names the URL from the final title at publish, then freezes it', async () => {
+    const draft = await createDraft(world.ownerSession, {
+      citySlug: 'patna',
+      lat: 25.6127,
+      lng: 85.1588,
+    });
+
+    await patchListing(world.ownerSession, draft.id, {
+      ...draftBody({ title: 'Renamed before it ever went live' }),
+      citySlug: undefined,
+      lat: undefined,
+      lng: undefined,
+    });
+
+    const imageId = `img-${draft.id}`;
+    await prisma.listingImage.create({
+      data: {
+        id: imageId,
+        listingId: draft.id,
+        objectKey: null,
+        variantBaseKey: variantBaseKey(draft.id, imageId),
+        status: 'READY',
+        width: 1200,
+        height: 800,
+      },
+    });
+
+    const published = await changeStatus(world.ownerSession, draft.id, 'publish');
+    expect(published.slug).toBe(
+      'patna-renamed-before-it-ever-went-live-' + published.slug.slice(-6),
+    );
+    expect(published.slug.startsWith('draft-')).toBe(false);
+
+    // A rename after publication must NOT move the URL: a slug that changes
+    // under a shared link is a broken link.
+    await patchListing(world.ownerSession, draft.id, { title: 'Renamed again, after going live' });
+    await changeStatus(world.ownerSession, draft.id, 'pause');
+    const republished = await changeStatus(world.ownerSession, draft.id, 'unpause');
+    expect(republished.slug).toBe(published.slug);
   });
 });
 

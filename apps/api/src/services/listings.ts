@@ -2,9 +2,13 @@ import { randomBytes } from 'node:crypto';
 import { prisma } from '@machiya/db';
 import {
   listingDraftSchema,
+  listingDraftStartSchema,
   listingPatchSchema,
+  missingPublishFields,
   publishableListingSchema,
   type ListingDraft,
+  type ListingDraftView,
+  type ListingPatch,
   type ListingStatusAction,
 } from '@machiya/shared';
 import { logger } from '../logger.js';
@@ -23,17 +27,35 @@ function slugify(value: string): string {
     .slice(0, 60);
 }
 
+function slugSuffix(): string {
+  return randomBytes(4)
+    .toString('base64url')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 6);
+}
+
 /**
  * Slugs are user-visible, so they carry the city and title — but they must also
  * be unique across every listing ever created, including two identical titles in
  * the same locality. A short random suffix buys that without a retry loop.
  */
 function buildSlug(citySlug: string, title: string): string {
-  const suffix = randomBytes(4)
-    .toString('base64url')
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
-  return `${citySlug}-${slugify(title)}-${suffix.slice(0, 6)}`;
+  return `${citySlug}-${slugify(title)}-${slugSuffix()}`;
+}
+
+const DRAFT_SLUG_PREFIX = 'draft-';
+
+/**
+ * A draft opened from a pin alone has no title to name it with, so it gets a
+ * placeholder that is obviously one.
+ *
+ * The prefix is what `changeStatus` later reads to decide whether the slug is
+ * still up for grabs: a listing that has ever been published keeps its URL
+ * forever, because a slug that changes under a shared link is a broken link.
+ */
+function buildDraftSlug(citySlug: string): string {
+  return `${DRAFT_SLUG_PREFIX}${citySlug}-${slugSuffix()}`;
 }
 
 async function resolveCityId(citySlug: string): Promise<string> {
@@ -159,8 +181,15 @@ function toCreateData(input: ListingDraft) {
   };
 }
 
-/** Patch variant: only the keys actually sent reach the UPDATE. */
-function toColumnData(input: Partial<ListingDraft>) {
+/**
+ * Patch variant: only the keys actually sent reach the UPDATE.
+ *
+ * Takes the nullable draft shape rather than `Partial<ListingDraft>` because
+ * `undefined` and `null` mean different things here — "this step did not touch
+ * the field" against "the user emptied it" — and collapsing them would make a
+ * cleared title unclearable.
+ */
+function toColumnData(input: ListingPatch) {
   return {
     ...(input.title !== undefined ? { title: input.title } : {}),
     ...(input.description !== undefined ? { description: input.description } : {}),
@@ -187,10 +216,54 @@ function toColumnData(input: Partial<ListingDraft>) {
   };
 }
 
+/**
+ * Opens a listing.
+ *
+ * Two shapes, because there are two callers with genuinely different
+ * information. The wizard sends only what its location step produced — a pin,
+ * the city it resolved to, and whatever the reverse geocode was willing to name
+ * — and gets back a draft it can autosave into from then on. Anything sending a
+ * complete listing (a test, a seed, an importer) still gets today's behaviour,
+ * slug and all.
+ *
+ * The two are told apart by whether a `title` is present, which is the first
+ * field the full schema requires and the last thing the wizard has.
+ */
 export async function createDraft(
   session: RequestSession,
   body: unknown,
 ): Promise<{ id: string; slug: string }> {
+  const wantsFullCreate =
+    typeof body === 'object' && body !== null && 'title' in body && Boolean(body.title);
+
+  if (!wantsFullCreate) {
+    const start = listingDraftStartSchema.parse(body);
+    const city = await resolveCityForListing(start);
+
+    const draft = await prisma.listing.create({
+      data: {
+        slug: buildDraftSlug(city.slug),
+        ownerId: session.userId,
+        cityId: city.id,
+        status: 'DRAFT',
+        lat: start.lat,
+        lng: start.lng,
+        // D59: the street line is left EMPTY rather than filled with an
+        // approximation, and the locality only arrives when the reverse
+        // geocode actually resolved one.
+        address: start.address ?? null,
+        locality: start.locality ?? null,
+      },
+      select: { id: true, slug: true },
+    });
+
+    logger.info(
+      { listingId: draft.id, ownerId: session.userId },
+      'listing draft opened from a pin',
+    );
+    return draft;
+  }
+
   const input = listingDraftSchema.parse(body);
   const city = await resolveCityForListing(input);
   const amenityIds = await resolveAmenityIds(input.amenitySlugs);
@@ -212,6 +285,65 @@ export async function createDraft(
 
   logger.info({ listingId: listing.id, ownerId: session.userId }, 'listing draft created');
   return listing;
+}
+
+/**
+ * The wizard's read: the whole draft, as the server holds it.
+ *
+ * The client keeps nothing that matters, which is what makes a draft survive a
+ * closed tab and reopen on another device. Owner-only — an admin passes through
+ * `assertOwnership` like everywhere else.
+ */
+export async function getDraft(
+  session: RequestSession,
+  listingId: string,
+): Promise<ListingDraftView> {
+  const listing = await prisma.listing.findUnique({
+    where: { id: listingId },
+    include: {
+      city: { select: { slug: true, name: true } },
+      amenities: { select: { amenity: { select: { slug: true } } } },
+      images: { orderBy: { sortOrder: 'asc' } },
+    },
+  });
+
+  if (!listing) {
+    throw new HttpError(404, 'listing_not_found', 'No such listing');
+  }
+
+  assertOwnership(session, listing.ownerId);
+
+  return {
+    id: listing.id,
+    slug: listing.slug,
+    status: listing.status,
+    citySlug: listing.city.slug,
+    cityName: listing.city.name,
+    lat: listing.lat,
+    lng: listing.lng,
+    address: listing.address,
+    locality: listing.locality,
+    title: listing.title,
+    description: listing.description,
+    listingType: listing.listingType,
+    propertyType: listing.propertyType,
+    furnishing: listing.furnishing,
+    bedrooms: listing.bedrooms,
+    bathrooms: listing.bathrooms,
+    floor: listing.floor,
+    totalFloors: listing.totalFloors,
+    areaSqft: listing.areaSqft,
+    rentAmount: listing.rentAmount,
+    salePrice: listing.salePrice,
+    securityDeposit: listing.securityDeposit,
+    maintenanceMonthly: listing.maintenanceMonthly,
+    availableFrom: listing.availableFrom?.toISOString() ?? null,
+    rules: listing.rules,
+    amenitySlugs: listing.amenities.map((join) => join.amenity.slug),
+    images: listing.images.map((image) => toImageView(image, listing.id)),
+    publishedAt: listing.publishedAt?.toISOString() ?? null,
+    updatedAt: listing.updatedAt.toISOString(),
+  };
 }
 
 export async function patchListing(
@@ -277,7 +409,7 @@ export async function changeStatus(
   session: RequestSession,
   listingId: string,
   action: ListingStatusAction,
-): Promise<{ id: string; status: string; roleUpgraded: boolean }> {
+): Promise<{ id: string; status: string; slug: string; roleUpgraded: boolean }> {
   const listing = await loadForMutation(session, listingId);
 
   if (action !== 'publish') {
@@ -288,18 +420,37 @@ export async function changeStatus(
     }
 
     await prisma.listing.update({ where: { id: listingId }, data: { status } });
-    return { id: listingId, status, roleUpgraded: false };
+    return { id: listingId, status, slug: listing.slug, roleUpgraded: false };
   }
 
   const full = await prisma.listing.findUniqueOrThrow({
     where: { id: listingId },
-    include: { city: { select: { slug: true } }, amenities: { select: { amenityId: true } } },
+    include: {
+      city: { select: { slug: true } },
+      amenities: { select: { amenity: { select: { slug: true } } } },
+    },
   });
+
+  // Which fields are still EMPTY, before which combinations are incoherent.
+  // A draft missing a title fails the strict schema with "expected string,
+  // received null", which tells a lister nothing about where to go.
+  const missing = missingPublishFields(full);
+
+  if (missing.length > 0) {
+    throw new HttpError(
+      422,
+      'listing_incomplete',
+      missing.map((requirement) => requirement.message).join('; '),
+    );
+  }
 
   const candidate = {
     ...full,
     citySlug: full.city.slug,
-    amenitySlugs: [],
+    // The listing's real amenities, not an empty list. Nothing in the strict
+    // schema reads them today, but handing a validator a value that is not
+    // true is how a future rule gets written against a lie.
+    amenitySlugs: full.amenities.map((join) => join.amenity.slug),
     rules: full.rules,
   };
 
@@ -340,11 +491,21 @@ export async function changeStatus(
   // transaction as the publish so the two can never disagree.
   const roleUpgraded = session.role === 'SEEKER';
 
+  // A draft opened from a pin has a placeholder slug and no public URL yet, so
+  // this is the one moment it can be named from the title the lister settled
+  // on. After that the slug is frozen: a URL that changes under a shared link
+  // is a broken link, whatever the listing was later renamed to.
+  const slug =
+    full.publishedAt === null && full.slug.startsWith(DRAFT_SLUG_PREFIX)
+      ? buildSlug(full.city.slug, validated.data.title)
+      : full.slug;
+
   await prisma.$transaction(async (tx) => {
     await tx.listing.update({
       where: { id: listingId },
       data: {
         status: 'PUBLISHED',
+        slug,
         // Keep the original publication date on a re-publish.
         publishedAt: full.publishedAt ?? new Date(),
       },
@@ -355,8 +516,8 @@ export async function changeStatus(
     }
   });
 
-  logger.info({ listingId, ownerId: full.ownerId, roleUpgraded }, 'listing published');
-  return { id: listingId, status: 'PUBLISHED', roleUpgraded };
+  logger.info({ listingId, ownerId: full.ownerId, roleUpgraded, slug }, 'listing published');
+  return { id: listingId, status: 'PUBLISHED', slug, roleUpgraded };
 }
 
 export async function deleteListing(

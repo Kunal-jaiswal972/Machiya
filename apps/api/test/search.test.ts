@@ -179,16 +179,28 @@ describe('searchListings', () => {
     expect(result.listings[0]?.coverUrl).toBeNull();
   });
 
-  it('sorts by price ascending, with nulls last', async () => {
+  it('sorts by price ascending', async () => {
     await publish({ slug: 'cheap', metersAway: 300, rentAmount: 9_000 });
     await publish({ slug: 'dear', metersAway: 300, rentAmount: 30_000 });
-    await publish({ slug: 'unpriced', metersAway: 300, rentAmount: null });
 
     const result = ok(
       await searchListings({ office: OFFICE, radiusMeters: 3000, sort: 'price_asc' }),
     );
 
-    expect(result.listings.map((l) => l.slug)).toEqual(['cheap', 'dear', 'unpriced']);
+    expect(result.listings.map((l) => l.slug)).toEqual(['cheap', 'dear']);
+  });
+
+  // This case used to publish a rental with a null rent and assert it sorted
+  // last. It cannot exist any more, and the COALESCE that handled it is now
+  // defence in depth rather than a live path — so the assertion moves to the
+  // thing that made it unreachable.
+  it('cannot store a published rental with no rent at all', async () => {
+    await expect(publish({ slug: 'unpriced', metersAway: 300, rentAmount: null })).rejects.toThrow(
+      /listing_complete_when_live/,
+    );
+
+    const result = ok(await searchListings({ office: OFFICE, radiusMeters: 3000 }));
+    expect(result.listings).toHaveLength(0);
   });
 
   it('compares a rental against rent and a sale against sale price', async () => {

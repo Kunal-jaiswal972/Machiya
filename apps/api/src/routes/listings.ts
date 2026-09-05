@@ -18,6 +18,7 @@ import {
   changeStatus,
   createDraft,
   deleteListing,
+  getDraft,
   getListingBySlug,
   listOwned,
   patchListing,
@@ -54,6 +55,14 @@ export function listingsRouter(resolve: SessionResolver): Router {
     const query = ownedQuerySchema.parse(req.query);
     listOwned(sessionOf(req), query)
       .then((result) => res.json(result))
+      .catch(next);
+  });
+
+  // Ahead of /listings/:slug for the same reason as "mine": the wizard reads by
+  // id, and an id would otherwise be looked up as a slug and 404.
+  router.get('/listings/:id/draft', authed, (req, res, next) => {
+    getDraft(sessionOf(req), pathParam(req, 'id'))
+      .then((draft) => res.json({ draft }))
       .catch(next);
   });
 

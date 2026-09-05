@@ -1976,3 +1976,88 @@ and `.rotate()` leaves 400x200 unchanged. Testing it properly needs a fixture
 carrying a real orientation tag, which means committing binary image data —
 left undone deliberately, and recorded in the test as undone rather than left
 looking finished.
+
+## Step 9 — the lister side
+
+### D67. A draft is incomplete in the database, not padded with placeholders
+
+The wizard autosaves after every step, starting with location. That means a row
+has to exist after step one — a pin, a city, nothing else — and
+`listingDraftSchema` describes a **complete** listing: a title of at least eight
+characters, a thirty-character description, a carpet area, a furnishing level.
+Nothing in that shape can be written from a dropped pin.
+
+Three ways out were on the table:
+
+1. **Keep the columns NOT NULL and write placeholders** — `title: ''`,
+   `areaSqft: 0`. Rejected. An empty title is a value every reader downstream
+   then has to disbelieve, and a zero area is a number that renders. It is the
+   same failure as a `NaN` monthly cost in D63: wrong in a way that looks like
+   data rather than like a bug. It also makes "is this draft finished" a
+   question about sentinel values, which every call site has to answer the same
+   way and one eventually will not.
+2. **Keep the row out of the database until it is complete** and autosave to
+   browser storage. Rejected by the requirement: a draft has to survive a closed
+   tab **and a different device**, which local storage cannot do.
+3. **Make the columns nullable and enforce completeness at the boundary the
+   listing actually crosses** — chosen.
+
+So `title`, `description`, `address`, `locality`, `propertyType`, `furnishing`,
+`bedrooms`, `bathrooms` and `areaSqft` are nullable, and the
+`listing_complete_when_live` CHECK makes every one of them NOT NULL the moment
+`status` leaves `DRAFT`. The constraint also carries the price rule — a live
+RENT listing has a `rentAmount`, a live SALE listing has a `salePrice` — because
+a published rental with no rent is not a validation failure, it is a row that
+makes every price sort and every total-cost sort wrong.
+
+Verified by trying it: inserting a bare `PUBLISHED` row is refused with
+`new row for relation "Listing" violates check constraint
+"listing_complete_when_live"`, the identical row inserts fine as `DRAFT`, and
+`UPDATE ... SET status='PUBLISHED'` on that draft is refused. `prisma migrate
+status` then reports "Database schema is up to date!" — Prisma has no CHECK
+support, so it ignores the constraint and sees no drift, the same arrangement as
+`listing_location_present` (D15) and `city_boundary_has_area` (D50).
+
+**`listingType` is defaulted rather than nullable.** A two-value enum has no
+honest null, this is a rentals product, and the wizard's second step shows the
+real choice. Defaulting it costs one enum default; making it nullable would cost
+another CHECK clause and another null every consumer has to narrow.
+
+Four things fell out of the change, and each is the interesting part:
+
+- **The publish error had to be rewritten.** Feeding a null title to
+  `publishableListingSchema` produces "expected string, received null", which
+  tells a lister nothing. `missingPublishFields` runs first and answers _which
+  field, on which step, in words_; the strict schema then answers the question it
+  is actually good at — whether the combination is coherent (a rent on a sale, a
+  third floor in a two-storey building). Two checks, each doing one job.
+- **The slug is claimed at publish, once.** A draft opened from a pin has no
+  title to be named from, so it gets `draft-{city}-{suffix}` — obviously a
+  placeholder to anyone reading the database. `changeStatus` renames it from the
+  final title **only** while `publishedAt` is null and the slug still carries the
+  draft prefix. After that the URL is frozen for good, because a slug that moves
+  under a shared link is a broken link, whatever the listing was later renamed
+  to. This is strictly better than the old behaviour, which froze the slug at
+  _create_ time — so a wizard user who changed their title in step two got a URL
+  naming the title they abandoned.
+- **`listingPatchSchema` had to learn the difference between `undefined` and
+  `null`.** A `.partial()` alone cannot express "the user emptied this box" —
+  only "this step did not touch it" — so a title typed and then deleted would
+  stay in the draft forever. The nullable fields accept both, and `toColumnData`
+  passes `null` through rather than skipping it.
+- **One test changed meaning rather than being deleted.** `search.test.ts`
+  published a rental with a null rent to prove nulls sort last. That row can no
+  longer exist, so the case now asserts the constraint refuses it — and the
+  `COALESCE` in `price_asc` is documented as defence in depth rather than a live
+  path. Deleting the test would have quietly removed the only evidence of why
+  the old behaviour went away.
+
+`publishableListingSchema` itself is unchanged, and D33 still holds: drafts
+validate loosely, publishing validates strictly. What changed is that "loosely"
+now includes "not yet present", which is what a wizard actually produces.
+
+One thing the same change fixed by accident: publishing used to validate a
+candidate built with `amenitySlugs: []` rather than the listing's real
+amenities. Nothing in the strict schema reads them, so it changed no outcome —
+but handing a validator a value that is not true is how a future rule gets
+written against a lie.

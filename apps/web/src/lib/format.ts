@@ -63,13 +63,27 @@ export function formatDuration(seconds: number | null | undefined): string {
   return rest === 0 ? `${String(hours)} h` : `${String(hours)} h ${String(rest)} m`;
 }
 
-export function formatArea(sqft: number): string {
+/**
+ * An em dash, for a value a DRAFT listing has not been given yet.
+ *
+ * These three take nullable input because a listing genuinely has none of them
+ * until the wizard's later steps (D67), and the alternative is `??` at every
+ * call site — where one omission renders the word "null" to a user.
+ */
+export const UNKNOWN_VALUE = '—';
+
+export function formatArea(sqft: number | null | undefined): string {
+  if (sqft == null) return UNKNOWN_VALUE;
   return `${plainNumber.format(sqft)} sq ft`;
 }
 
 /** "2 BHK", and "Studio" when that is what one bedroom with no wall means. */
-export function formatBedrooms(bedrooms: number, propertyType: string): string {
+export function formatBedrooms(
+  bedrooms: number | null | undefined,
+  propertyType: string | null | undefined,
+): string {
   if (propertyType === 'STUDIO') return 'Studio';
+  if (bedrooms == null) return UNKNOWN_VALUE;
   if (propertyType === 'PG') return `PG · ${String(bedrooms)} bed`;
   return `${String(bedrooms)} BHK`;
 }
@@ -77,7 +91,8 @@ export function formatBedrooms(bedrooms: number, propertyType: string): string {
 const TITLE_CASE_EXCEPTIONS = new Set(['PG']);
 
 /** APARTMENT → Apartment, BUILDER_FLOOR → Builder floor, PG → PG. */
-export function humanizeEnum(value: string): string {
+export function humanizeEnum(value: string | null | undefined): string {
+  if (value == null || value === '') return UNKNOWN_VALUE;
   if (TITLE_CASE_EXCEPTIONS.has(value)) return value;
   const spaced = value.toLowerCase().replace(/_/g, ' ');
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);

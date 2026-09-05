@@ -20,21 +20,27 @@ export const listingDetailSchema = z.object({
   listing: z.object({
     id: z.string(),
     slug: z.string(),
-    title: z.string(),
-    description: z.string(),
+    /**
+     * Nullable because this endpoint also serves an owner their own DRAFT, and
+     * a draft is genuinely incomplete until the wizard's later steps fill it
+     * in. For anything PUBLISHED these are guaranteed non-null by the
+     * `listing_complete_when_live` CHECK, not by hope — see DECISIONS.md D67.
+     */
+    title: z.string().nullable(),
+    description: z.string().nullable(),
     listingType: listingTypeSchema,
-    propertyType: propertyTypeSchema,
+    propertyType: propertyTypeSchema.nullable(),
     status: listingStatusSchema,
-    furnishing: furnishingTypeSchema,
-    address: z.string(),
-    locality: z.string(),
+    furnishing: furnishingTypeSchema.nullable(),
+    address: z.string().nullable(),
+    locality: z.string().nullable(),
     lat: z.number(),
     lng: z.number(),
-    bedrooms: z.number().int(),
-    bathrooms: z.number().int(),
+    bedrooms: z.number().int().nullable(),
+    bathrooms: z.number().int().nullable(),
     floor: z.number().int().nullable(),
     totalFloors: z.number().int().nullable(),
-    areaSqft: z.number().int(),
+    areaSqft: z.number().int().nullable(),
     rentAmount: z.number().int().nullable(),
     salePrice: z.number().int().nullable(),
     securityDeposit: z.number().int().nullable(),

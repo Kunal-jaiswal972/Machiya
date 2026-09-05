@@ -119,7 +119,7 @@ export function ListingDetailRoute() {
           />
         ) : (
           <div className="flex flex-col gap-5 p-3 pt-11">
-            <Gallery images={listing.images} title={listing.title} />
+            <Gallery images={listing.images} title={listing.title ?? 'Untitled draft'} />
 
             {/* Price loudest, road distance second — the product's argument. */}
             <header className="flex items-start justify-between gap-3">
@@ -133,7 +133,7 @@ export function ListingDetailRoute() {
                   ) : null}
                 </div>
                 <h2 className="text-title mt-1 text-balance">
-                  {listing.title}
+                  {listing.title ?? 'Untitled draft'}
                   {listing.isVerified ? (
                     <BadgeCheck
                       className="ml-1.5 inline size-4 -translate-y-px text-verdant"
@@ -145,7 +145,9 @@ export function ListingDetailRoute() {
                     city name is not repeated — only the state, which it does
                     not include. */}
                 <p className="text-data mt-0.5 text-ink-soft">
-                  {listing.address} · {listing.city.state}
+                  {[listing.address ?? listing.locality, listing.city.state]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </p>
               </div>
 
@@ -238,7 +240,10 @@ export function ListingDetailRoute() {
                   label="Layout"
                   value={formatBedrooms(listing.bedrooms, listing.propertyType)}
                 />
-                <Fact label="Bathrooms" value={String(listing.bathrooms)} />
+                <Fact
+                  label="Bathrooms"
+                  value={listing.bathrooms === null ? '—' : String(listing.bathrooms)}
+                />
                 <Fact label="Area" value={formatArea(listing.areaSqft)} />
                 <Fact label="Furnishing" value={humanizeEnum(listing.furnishing)} />
                 <Fact label="Type" value={humanizeEnum(listing.propertyType)} />
@@ -262,7 +267,9 @@ export function ListingDetailRoute() {
 
             <section>
               <h3 className="text-title mb-1">About</h3>
-              <p className="text-sm whitespace-pre-line">{listing.description}</p>
+              <p className="text-sm whitespace-pre-line">
+                {listing.description ?? 'No description yet.'}
+              </p>
             </section>
 
             {listing.amenities.length > 0 ? (
