@@ -360,3 +360,77 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* driver.js ships its own popover chrome; these are the tokens that make it
+   ours. Only colour, radius and type — the positioning and the stage cutout are
+   the library's job and are left alone. See DECISIONS.md D81. */
+.driver-popover.machiya-tour {
+  background: var(--paper-raised);
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-chrome);
+  box-shadow: 0 12px 32px oklch(0 0 0 / 0.18);
+  max-width: 22rem;
+}
+
+.driver-popover.machiya-tour .driver-popover-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.driver-popover.machiya-tour .driver-popover-description {
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.driver-popover.machiya-tour .driver-popover-progress-text {
+  color: var(--ink-faint);
+  font-size: 0.75rem;
+}
+
+.driver-popover.machiya-tour button {
+  background: var(--paper-sunken);
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-inset);
+  text-shadow: none;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.6rem;
+}
+
+.driver-popover.machiya-tour button:hover {
+  background: var(--accent);
+}
+
+/* driver's close button is positioned against the popover's padding box, which
+   with our own padding leaves it hanging off the corner. */
+.driver-popover.machiya-tour .driver-popover-close-btn {
+  top: 0.35rem;
+  right: 0.4rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  line-height: 1;
+  color: var(--ink-faint);
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.driver-popover.machiya-tour .driver-popover-close-btn:hover {
+  color: var(--ink);
+  background: transparent;
+}
+
+.driver-popover.machiya-tour .driver-popover-arrow-side-top {
+  border-top-color: var(--paper-raised);
+}
+.driver-popover.machiya-tour .driver-popover-arrow-side-bottom {
+  border-bottom-color: var(--paper-raised);
+}
+.driver-popover.machiya-tour .driver-popover-arrow-side-left {
+  border-left-color: var(--paper-raised);
+}
+.driver-popover.machiya-tour .driver-popover-arrow-side-right {
+  border-right-color: var(--paper-raised);
+}

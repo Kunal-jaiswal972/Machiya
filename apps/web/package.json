@@ -20,6 +20,7 @@
     "better-auth": "^1.7.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "driver.js": "^1.8.0",
     "lucide-react": "^1.39.0",
     "maplibre-gl": "^6.6.0",
     "motion": "^13.2.0",

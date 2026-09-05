@@ -2615,3 +2615,38 @@ here" question into every read of a thread.
 
 The page says all of this before the confirmation, in the words above — the
 listings come down, the threads stay, your side shows as a closed account.
+
+## D81 — The tour is driver.js, styled with our own tokens
+
+A four-step tour needs a stage cutout that follows a moving target, scroll into
+view, reposition on resize, an escape hatch and keyboard control. Those are the
+parts that are tedious to get right, and they are the parts a library is for.
+
+Compared, on the constraint that every dependency is free or self-hostable:
+
+|                    | licence      | dependencies | why not                                                      |
+| ------------------ | ------------ | ------------ | ------------------------------------------------------------ |
+| **driver.js 1.8**  | MIT          | none         | chosen                                                       |
+| react-joyride 3.2  | MIT          | 10           | ten transitive packages to draw four boxes                   |
+| shepherd.js 15.3   | **AGPL-3.0** | 2            | copyleft that reaches a hosted app; out on the licence alone |
+| @reactour/tour 3.8 | MIT          | 3 internal   | fine, but no better than driver.js and larger                |
+
+driver.js brings its own popover markup, which is the thing to watch: left alone
+it looks like a different product. `popoverClass: 'machiya-tour'` scopes an
+override in `index.css` to colour, radius and type only — the positioning and the
+cutout stay the library's, because those are what it was chosen for.
+
+Two behaviours are ours rather than its defaults:
+
+- **`animate` follows `prefers-reduced-motion`**, which the library does not do
+  on its own. Reduced motion gets the same steps with no transition.
+- **A step whose target is not laid out is dropped before the tour starts.** The
+  view toggle is `lg:hidden` and the result cards do not exist in map view on a
+  phone, so a fixed step list would highlight an empty corner. Desktop gets four
+  steps, a phone in map view gets a different four.
+
+It runs once, after the first search returns rather than on load — half the
+steps are about results — and the help button beside the office field starts it
+again whenever. Seen-ness is `localStorage`, per device: it is about whether
+this browser has seen the product, and pushing it to the account would mean a
+signed-out visitor either never gets the tour or gets it on every visit.

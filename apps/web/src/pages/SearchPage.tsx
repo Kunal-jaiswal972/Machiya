@@ -5,7 +5,7 @@ import {
   type MatchPrecision,
   type OutOfCoverage,
 } from '@machiya/shared';
-import { List, Map as MapIcon, Star } from 'lucide-react';
+import { HelpCircle, List, Map as MapIcon, Star } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Outlet, useMatch, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
@@ -25,6 +25,7 @@ import { useSearchState } from '../hooks/use-search-state';
 import { useFavoriteIds, useToggleFavorite } from '../hooks/use-seeker';
 import { useAuth } from '../lib/auth-context';
 import { describeCoordinate } from '../lib/places';
+import { hasSeenTour, startTour } from '../lib/tour';
 import { cn } from '../lib/utils';
 import { useSearchUi } from '../stores/search-ui';
 
@@ -77,6 +78,20 @@ export function SearchPage() {
   const [officePrecision, setOfficePrecision] = useState<MatchPrecision | null>(null);
 
   const search = useListingSearch(query);
+
+  /**
+   * The tour runs itself once, and only when there is something to point at.
+   *
+   * After the first search returns rather than on load: half its steps are
+   * about results, and a tour of an empty page teaches nothing. It marks itself
+   * seen when it ends, however it ends.
+   */
+  useEffect(() => {
+    if (hasSeenTour() || search.listings.length === 0) return;
+
+    const timer = window.setTimeout(startTour, 600);
+    return () => window.clearTimeout(timer);
+  }, [search.listings.length]);
 
   // One value for the two ways a point can be out of coverage. The pin's answer
   // wins because it lands first, and because the search is not even run for a
@@ -233,22 +248,34 @@ export function SearchPage() {
     <div className="flex h-full min-h-0 flex-col">
       <div className="z-20 flex shrink-0 flex-col gap-2 border-b border-edge bg-card px-3 py-2.5">
         <div className="flex items-center gap-2">
-          <OfficeField
-            value={officeLabel}
-            onSelect={onSelectSuggestion}
-            savedOffices={offices}
-            onSelectSaved={(saved) => {
-              // A saved office was pinned when it was saved.
-              setOfficePrecision(null);
-              setOfficeLabel(saved.address);
-              setOffice({ lat: saved.lat, lng: saved.lng });
-            }}
-            onUseMyLocation={useMyLocation}
-            isLocating={isLocating}
-            {...(query.city ? { citySlug: query.city } : {})}
-            onPickCity={onPickCoveredCity}
-            className="max-w-lg flex-1"
-          />
+          <div className="max-w-lg flex-1" data-tour="office-field">
+            <OfficeField
+              value={officeLabel}
+              onSelect={onSelectSuggestion}
+              savedOffices={offices}
+              onSelectSaved={(saved) => {
+                // A saved office was pinned when it was saved.
+                setOfficePrecision(null);
+                setOfficeLabel(saved.address);
+                setOffice({ lat: saved.lat, lng: saved.lng });
+              }}
+              onUseMyLocation={useMyLocation}
+              isLocating={isLocating}
+              {...(query.city ? { citySlug: query.city } : {})}
+              onPickCity={onPickCoveredCity}
+            />
+          </div>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={startTour}
+            title="How this works"
+            className="shrink-0"
+          >
+            <HelpCircle aria-hidden />
+            <span className="sr-only">How this works</span>
+          </Button>
 
           {office && isSignedIn ? (
             <Button
@@ -264,7 +291,10 @@ export function SearchPage() {
 
           {/* The list view is the keyboard and screen-reader path, and a real
               toggle anyone can use rather than a hidden fallback. */}
-          <div className="ml-auto flex items-center gap-0.5 rounded-chrome border border-edge p-0.5 lg:hidden">
+          <div
+            className="ml-auto flex items-center gap-0.5 rounded-chrome border border-edge p-0.5 lg:hidden"
+            data-tour="view-toggle"
+          >
             {(
               [
                 { value: 'map', label: 'Map', Icon: MapIcon },

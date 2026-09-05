@@ -103,7 +103,7 @@ export function ResultCard({
           price yet — since a Rs0 commute would read as a claim.
         */}
         {listing.totalMonthlyCost !== null ? (
-          <p className="text-data text-ink-soft">
+          <p className="text-data text-ink-soft" data-tour="total-cost">
             <span className="font-medium tabular-nums text-ink">
               {formatRupees(listing.totalMonthlyCost)}
             </span>{' '}

@@ -153,7 +153,10 @@ export function FilterBar({
       <div className="flex items-center gap-2">
         {/* Ring picker. Doubles as the counts display: choosing a ring shows
             what it contains before you commit to it. */}
-        <div className="flex items-center gap-1 rounded-chrome border border-edge p-0.5">
+        <div
+          className="flex items-center gap-1 rounded-chrome border border-edge p-0.5"
+          data-tour="ring-counts"
+        >
           {([1, 2, 3] as const).map((ring) => {
             const active = query.ring === ring;
             const enabled = (RING_RADII_METERS[ring - 1] ?? 0) <= radiusMeters;
@@ -214,7 +217,7 @@ export function FilterBar({
           ) : null}
         </Button>
 
-        <label className="ml-auto flex items-center gap-1.5">
+        <label className="ml-auto flex items-center gap-1.5" data-tour="sort">
           <span className="text-label text-ink-soft">Sort</span>
           <select
             value={query.sort ?? 'distance'}

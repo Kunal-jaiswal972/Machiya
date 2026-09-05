@@ -375,6 +375,14 @@ Two things the account page exposed on the way:
   number — a zod union reporting the empty branch. `phoneFieldSchema` in
   `@machiya/shared` carries the empty case with its own message.
 
+**There was no onboarding beyond the empty state.** A four-step tour now runs
+itself once after the first search and can be restarted from the help button
+beside the office field. Driven: it opened on `office-field`, stepped to
+`ring-counts`, finished on "Got it", marked itself seen, did not reappear on
+reload, reopened from the button, and closed on Escape. Light and dark both
+match the panel chrome; a phone in map view gets the view-toggle step and drops
+the card step, because the cards are not on screen. Library choice is D81.
+
 Account deletion is covered by `apps/api/test/account.test.ts` rather than
 driven in the browser: the only account to drive it with is a seeded dev one,
 and proving it works means destroying it. See D80 for what it does.
