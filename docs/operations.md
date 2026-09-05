@@ -130,6 +130,21 @@ Nothing important is mocked.
 | `apps/api` (places) | real PostGIS + a stubbed geocoder | Trigram behaviour is the subject; Nominatim is not           |
 | `apps/api` (guards) | an injected fake session resolver | Guards should need no infrastructure at all                  |
 | `apps/worker`       | real PostGIS + real Redis         | `getJob`, job states and id collisions are where the bug was |
+| `apps/web`          | nothing                           | Pure rules — step completeness and the draft formatters      |
+| `apps/e2e`          | PostGIS, Redis, MinIO, OSRM       | One path through every subsystem, with nothing stubbed       |
+
+### The end-to-end suite
+
+`pnpm -F @machiya/e2e test` walks sign-up, a draft from a pin, autosaves, a
+presigned POST to real MinIO, the worker's real derivation, publish, a radius
+search, the detail read and an enquiry with its reply. It needs the core compose
+stack up; OSRM is optional, because a missing route degrades to a labelled
+estimate, which is the specified behaviour (D43) and is what the suite asserts.
+
+It uses **Redis database 3**, flushed on setup. On database 0 it would share
+Better Auth's rate-limit counters with the developer's own stack — burning their
+sign-in budget, and 429ing on a second run inside five minutes for a reason
+unrelated to the path under test.
 
 `TEST_DATABASE_URL` wins when set (CI provides a PostGIS service container);
 otherwise a throwaway testcontainer is started. The developer's own

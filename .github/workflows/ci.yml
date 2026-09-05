@@ -99,5 +99,26 @@ jobs:
       - name: Check formatting
         run: pnpm format:check
 
+      # MinIO is a `docker run` rather than a service container because it needs
+      # a command (`server /data`) and GitHub's `services:` block cannot set
+      # one. The bucket policy mirrors compose's minio-init exactly: `none` on
+      # the bucket, `download` on variants/ only — and the end-to-end suite
+      # asserts BOTH halves, so a drift here fails rather than passing quietly.
+      # See DECISIONS.md D35.
+      - name: Start MinIO for the end-to-end suite
+        run: |
+          docker run -d --name minio -p 9000:9000             -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin             minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 2
+          done
+          docker run --rm --network host minio/mc:latest /bin/sh -c '
+            set -e
+            mc alias set local http://localhost:9000 minioadmin minioadmin
+            mc mb --ignore-existing local/machiya-listings
+            mc anonymous set none local/machiya-listings
+            mc anonymous set download local/machiya-listings/variants
+          '
+
       - name: Test
         run: pnpm test
