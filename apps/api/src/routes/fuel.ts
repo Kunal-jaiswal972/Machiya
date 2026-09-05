@@ -1,4 +1,8 @@
-import { commutePreferencesPatchSchema, coordinateSchema } from '@machiya/shared';
+import {
+  commuteParamsQuerySchema,
+  commutePreferencesPatchSchema,
+  coordinateSchema,
+} from '@machiya/shared';
 import { Router } from 'express';
 import { z } from 'zod';
 import { pathParam } from '../lib/route-params.js';
@@ -75,6 +79,14 @@ export function fuelRouter(resolve: SessionResolver): Router {
     const { fromLat, fromLng } = commuteQuerySchema.parse(req.query);
     const from = coordinateSchema.parse({ lat: fromLat, lng: fromLng });
 
+    // Parsed separately rather than merged into the schema above: the settings
+    // the answer depends on travel in the URL so that the URL determines the
+    // response and the cache below is honest (D76). Two parses beat composing
+    // the schemas — zod 4's `extend` takes a plain shape, and handing it a
+    // schema throws at request time rather than at build time.
+    const overrides = commuteParamsQuerySchema.parse(req.query);
+    const hasOverrides = Object.values(overrides).some((value) => value !== undefined);
+
     const controller = new AbortController();
     req.on('close', () => controller.abort());
 
@@ -82,11 +94,19 @@ export function fuelRouter(resolve: SessionResolver): Router {
       slug: pathParam(req, 'slug'),
       from,
       ...(req.auth ? { session: req.auth } : {}),
+      ...(hasOverrides ? { overrides } : {}),
       signal: controller.signal,
     })
       .then((commute) => {
-        // Private: it depends on the caller's own settings.
-        res.set('cache-control', 'private, max-age=120');
+        // Cacheable only when the URL says what the answer depends on.
+        //
+        // This used to be `private, max-age=120` unconditionally, while the
+        // answer varied by the caller's STORED settings — which appear in no
+        // URL and no Vary header. The browser then served its own copy for two
+        // minutes, so changing a setting left every figure on screen unmoved
+        // until the cache expired. That was the whole of "the commute inputs do
+        // nothing". See docs/ux-audit.md 1.1 and DECISIONS.md D76.
+        res.set('cache-control', hasOverrides ? 'private, max-age=120' : 'private, no-store');
         res.json(commute);
       })
       .catch(next);

@@ -103,6 +103,87 @@ export type CommutePreferences = z.infer<typeof commutePreferencesSchema>;
 /** The defaults, materialised — handy for a first render and for tests. */
 export const DEFAULT_COMMUTE_PREFERENCES: CommutePreferences = commutePreferencesSchema.parse({});
 
+/**
+ * Settings that cannot contradict themselves.
+ *
+ * `mode: 'bike'` with `vehicleClass: 'sedan'` is two individually valid fields
+ * and one nonsensical setting — D63 names it, and the UI produced it: switching
+ * to Bike left a sedan selected and priced the ride on a car's consumption
+ * (docs/ux-audit.md 1.3).
+ *
+ * The mode wins, because it is what the person clicked. A vehicle belonging to
+ * another mode is replaced by that mode's default rather than refused: a 400
+ * would punish an old client for a combination we can resolve unambiguously,
+ * and there is no reading of "bike with a sedan" where the sedan is the intent.
+ *
+ * Mileage is dropped with the vehicle, for the reason it is nullable at all —
+ * a pinned figure belongs to the vehicle it was pinned for.
+ */
+export function reconcileCommutePreferences(preferences: CommutePreferences): CommutePreferences {
+  const wanted = vehicleClass(preferences.vehicleClass).mode;
+  const expected = preferences.mode === 'transit' ? 'car' : preferences.mode;
+
+  if (wanted === expected) return preferences;
+
+  const replacement = VEHICLE_CLASSES.find((candidate) => candidate.mode === expected);
+  if (!replacement) return preferences;
+
+  return { ...preferences, vehicleClass: replacement.id, mileageKmPerLitre: null };
+}
+
+/**
+ * Commute preferences as URL query parameters.
+ *
+ * The commute endpoint's answer depends entirely on these, so they travel in
+ * the REQUEST rather than being read ambiently from the session. Two things
+ * follow, and both were bugs before:
+ *
+ *  - the response can be cached by URL again, because the URL now determines
+ *    it. It used to be cached for 120s while varying by the caller's stored
+ *    settings, so changing a setting showed the old number until the cache
+ *    expired — see docs/ux-audit.md 1.1;
+ *  - a signed-out visitor gets real numbers from their own choices, with no
+ *    server-side row to read them from.
+ *
+ * Every field is optional. Anything absent falls back to the session's stored
+ * preference, then to the defaults — so an old client, or a link shared without
+ * them, still gets a sensible answer.
+ */
+export const commuteParamsQuerySchema = z.object({
+  mode: commuteModeSchema.optional(),
+  vehicleClass: vehicleClassIdSchema.optional(),
+  fuelType: fuelTypeSchema.optional(),
+  mileageKmPerLitre: z.coerce.number().min(1).max(100).optional(),
+  tripsPerDay: z.coerce.number().int().min(1).max(10).optional(),
+  workingDaysPerMonth: z.coerce.number().int().min(1).max(31).optional(),
+});
+
+export type CommuteParamsQuery = z.infer<typeof commuteParamsQuerySchema>;
+
+/**
+ * Preferences to query parameters, dropping anything at its default.
+ *
+ * A shorter URL is not the point — a STABLE one is. Two clients holding the
+ * same effective settings must produce the same URL, or the cache is keyed on
+ * noise.
+ */
+export function commutePreferencesToQuery(preferences: CommutePreferences): Record<string, string> {
+  const query: Record<string, string> = {
+    mode: preferences.mode,
+    vehicleClass: preferences.vehicleClass,
+    fuelType: preferences.fuelType,
+    tripsPerDay: String(preferences.tripsPerDay),
+    workingDaysPerMonth: String(preferences.workingDaysPerMonth),
+  };
+
+  // Null means "use the class default" and must not become the string "null".
+  if (preferences.mileageKmPerLitre !== null) {
+    query.mileageKmPerLitre = String(preferences.mileageKmPerLitre);
+  }
+
+  return query;
+}
+
 /** Patch shape for the API: every field optional, nothing else accepted. */
 export const commutePreferencesPatchSchema = commutePreferencesSchema.partial();
 

@@ -1,4 +1,4 @@
-import { parseSearchQuery, searchQueryToInput } from '@machiya/shared';
+import { commuteParamsQuerySchema, parseSearchQuery, searchQueryToInput } from '@machiya/shared';
 import { Router } from 'express';
 import { HttpError } from '../middleware/error-handler.js';
 import { optionalAuth, type SessionResolver } from '../middleware/require-auth.js';
@@ -41,6 +41,11 @@ export function searchRouter(resolve: SessionResolver): Router {
   router.get('/listings/search', optionalAuth(resolve), (req, res, next) => {
     const query = parseSearchQuery(req.query as Record<string, string | undefined>);
     const input = searchQueryToInput(query);
+    // The same settings the commute panel sends, for the same reason: the
+    // total-cost column on every card depends on them, so they belong in the
+    // URL rather than being read ambiently from the session (D76).
+    const overrides = commuteParamsQuerySchema.parse(req.query);
+    const hasOverrides = Object.values(overrides).some((value) => value !== undefined);
 
     if (!input) {
       // The whole search is anchored to a point. Without one there is nothing
@@ -54,6 +59,7 @@ export function searchRouter(resolve: SessionResolver): Router {
 
     searchListings(input, {
       ...(req.auth ? { session: req.auth } : {}),
+      ...(hasOverrides ? { commuteOverrides: overrides } : {}),
       signal: controller.signal,
     })
       .then((result) => {
@@ -68,7 +74,13 @@ export function searchRouter(resolve: SessionResolver): Router {
         // union so no caller can mistake it for an empty result set.
         res.set(
           'cache-control',
-          result.status === 'ok' ? 'private, max-age=15' : 'public, max-age=600',
+          result.status === 'ok'
+            ? // Only cacheable when the URL says what the commute figures were
+              // computed from; otherwise they vary by the session (D76).
+              hasOverrides
+              ? 'private, max-age=15'
+              : 'private, no-store'
+            : 'public, max-age=600',
         );
         res.json(result);
       })

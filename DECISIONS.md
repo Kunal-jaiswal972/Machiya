@@ -2417,3 +2417,68 @@ prepares the bucket for the end-to-end suite, so the two cannot drift.
 
 "It only creates a bucket" was the reasoning. "It decides what is public" is the
 job.
+
+## Correction 13 — the UX repair
+
+### D76. The commute answer is a function of the request, not of ambient session state
+
+The commute controls did nothing. Not "did nothing when signed out", not
+"sometimes lagged" — moving vehicle, mileage, fuel, trips or working days left
+every figure on screen exactly where it was, which is the product's entire
+argument rendered as decoration. `docs/ux-audit.md` 1.1 has the reproduction.
+
+**The cause was one line, and it was not in the client.**
+`GET /api/listings/:slug/commute` carried `cache-control: private, max-age=120`
+while its answer varied by the caller's **stored** preferences — which appear in
+no URL and in no `Vary` header. So the browser answered the refetch from its own
+cache for two minutes, and TanStack's invalidation never reached the server. The
+comment above the line read "Private: it depends on the caller's own settings",
+which is precisely why a URL-keyed cache was the wrong instrument.
+
+Measured, signed in, after setting mileage to 36:
+
+| Probe                                | Answer                                     |
+| ------------------------------------ | ------------------------------------------ |
+| `GET /api/me/commute`                | `mileageKmPerLitre: 36` — the write landed |
+| The app's own commute URL            | `perMonth: 219.33` — the previous value    |
+| The same URL plus `&mode=car`        | `perMonth: 328.99` — correct               |
+| The app's own URL, two minutes later | `perMonth: 274.16` — correct               |
+
+That also explains why it "worked sometimes": a change took effect if and only
+if 120 seconds had passed since that URL was last fetched.
+
+**Chosen: the settings travel in the URL.** `commutePreferencesToQuery` puts
+mode, vehicle class, fuel, mileage, trips and working days into the query
+string; `getListingCommute` and the search take them as overrides that win over
+the stored row. The URL now determines the answer, so `max-age=120` is honest
+again — and when the parameters are **absent** the response is `private,
+no-store`, because then it does depend on the session.
+
+Three things fall out, and each fixes something else that was broken:
+
+- **Signed out works.** Previously the only source of preferences was a query
+  gated on `isSignedIn`, so there was no cache entry, the optimistic update was
+  a no-op against `undefined`, and the PATCH 401'd. The hook's comment claimed
+  "the controls still work, nothing is saved"; nothing worked. Preferences are
+  now client-first in `stores/commute-preferences.ts`, persisted to the server
+  when there is a session and to `localStorage` when there is not.
+- **The list and the panel agree.** The search endpoint takes the same
+  parameters, so the total-cost column on every card is computed from the
+  settings the panel is showing. They were two different sources before.
+- **The per-listing override the brief asks for is the same mechanism.** Sending
+  parameters does not touch the stored row, so a one-off experiment is already
+  distinct from a preference change.
+
+**`reconcileCommutePreferences` is in `@machiya/shared`, and it coerces rather
+than refuses.** "Mode bike with vehicle sedan" is the combination D63 warns
+about, and the UI produced it — switching to Bike left a sedan selected and
+priced the ride at 13 km/l. The mode wins and the vehicle moves to that mode's
+default, because the mode is what the person clicked and there is no reading
+where the sedan was the intent. A 400 would punish an old client for something
+resolvable. It lives in shared because both ends apply it: two copies would let
+the client display what the server would not charge.
+
+One implementation note worth keeping: composing the two query schemas with
+`.merge()` throws `Invalid input to extend: expected a plain object` at request
+time under zod 4, not at build time. They are parsed separately instead. The
+test suite caught it; the typechecker did not.

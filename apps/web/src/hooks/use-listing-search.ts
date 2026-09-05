@@ -1,5 +1,6 @@
 import {
   buildSearchParams,
+  commutePreferencesToQuery,
   searchResponseSchema,
   type ListingCard,
   type OutOfCoverage,
@@ -7,6 +8,7 @@ import {
 } from '@machiya/shared';
 import { useInfiniteQuery, type InfiniteData } from '@tanstack/react-query';
 import { apiFetch } from '../lib/api';
+import { useCommutePreferencesStore } from '../stores/commute-preferences';
 
 /**
  * The radius search, paged by the API's keyset cursor.
@@ -42,9 +44,14 @@ export interface ListingSearchState {
   outOfCoverage: OutOfCoverage | null;
 }
 
-async function fetchPage(query: SearchQuery, signal: AbortSignal) {
+async function fetchPage(query: SearchQuery, commute: Record<string, string>, signal: AbortSignal) {
   const params = buildSearchParams(query);
   params.set('limit', String(LIST_PAGE_SIZE));
+  // Deliberately NOT in `buildSearchParams`: these are settings, not search
+  // state, so they must not end up in a shared link. They are here because the
+  // total-cost figure on every card is computed from them, and a URL that does
+  // not say so is a URL that gets cached against the wrong answer (D76).
+  for (const [key, value] of Object.entries(commute)) params.set(key, value);
 
   return apiFetch(`/api/listings/search?${params.toString()}`, searchResponseSchema, {
     signal,
@@ -53,6 +60,8 @@ async function fetchPage(query: SearchQuery, signal: AbortSignal) {
 
 export function useListingSearch(query: SearchQuery): ListingSearchState {
   const hasOffice = query.lat !== undefined && query.lng !== undefined;
+  const preferences = useCommutePreferencesStore((state) => state.preferences);
+  const commuteQuery = commutePreferencesToQuery(preferences);
 
   // The cursor is NOT part of the key: React Query owns paging, and leaving a
   // cursor in the key would make every page a separate cache entry that the
@@ -60,11 +69,11 @@ export function useListingSearch(query: SearchQuery): ListingSearchState {
   const { cursor: _cursor, ...keyable } = query;
 
   const result = useInfiniteQuery({
-    queryKey: ['listings', 'search', keyable],
+    queryKey: ['listings', 'search', keyable, commuteQuery],
     enabled: hasOffice,
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) =>
-      fetchPage({ ...query, ...(pageParam ? { cursor: pageParam } : {}) }, signal),
+      fetchPage({ ...query, ...(pageParam ? { cursor: pageParam } : {}) }, commuteQuery, signal),
     // No next page out of coverage: there is nothing to page through, and
     // asking for one would loop on the same refusal.
     getNextPageParam: (lastPage) =>

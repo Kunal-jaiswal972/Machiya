@@ -1,6 +1,9 @@
 import { prisma, searchListingsInRadius } from '@machiya/db';
 import {
   DEFAULT_COMMUTE_PREFERENCES,
+  commutePreferencesSchema,
+  reconcileCommutePreferences,
+  type CommuteParamsQuery,
   OUT_OF_COVERAGE_CODE,
   effectiveMileage,
   listingSearchInputSchema,
@@ -53,10 +56,21 @@ function toCard(listing: ListingSummary): ListingCard {
 async function commuteParamsFor(input: {
   citySlug: string;
   session?: RequestSession | undefined;
+  /** The caller's own settings, which win over the stored ones (D76). */
+  overrides?: CommuteParamsQuery | undefined;
 }): Promise<CommuteSqlParams | null> {
-  const preferences = input.session
+  const stored = input.session
     ? await getCommutePreferences(input.session.userId)
     : DEFAULT_COMMUTE_PREFERENCES;
+
+  const preferences = reconcileCommutePreferences(
+    commutePreferencesSchema.parse({
+      ...stored,
+      ...Object.fromEntries(
+        Object.entries(input.overrides ?? {}).filter(([, value]) => value !== undefined),
+      ),
+    }),
+  );
 
   const reading = await getFuelPrice(input.citySlug, preferences.fuelType);
 
@@ -78,7 +92,11 @@ async function commuteParamsFor(input: {
 
 export async function searchListings(
   input: ListingSearchInput,
-  context: { session?: RequestSession | undefined; signal?: AbortSignal } = {},
+  context: {
+    session?: RequestSession | undefined;
+    commuteOverrides?: CommuteParamsQuery | undefined;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<SearchResponse> {
   // `statuses` is never read from the client. A search is a public surface, so
   // PUBLISHED is the only set it can produce — the lister dashboard and the
@@ -110,6 +128,7 @@ export async function searchListings(
   const commute = await commuteParamsFor({
     citySlug: coverage.city.slug,
     ...(context.session ? { session: context.session } : {}),
+    ...(context.commuteOverrides ? { overrides: context.commuteOverrides } : {}),
   });
 
   let roadDistances: RoadDistance[] = [];

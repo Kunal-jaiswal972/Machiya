@@ -2,12 +2,14 @@ import { prisma, straightLineDistanceMeters } from '@machiya/db';
 import {
   commutePreferencesSchema,
   compareCommuteModes,
+  reconcileCommutePreferences,
   computeCommuteCost,
   computeMonthlyOutlay,
   effectiveMileage,
   routeProfileForMode,
   vehicleClass,
   type CommuteComparison,
+  type CommuteParamsQuery,
   type CommutePreferences,
   type CommutePreferencesPatch,
   type Coordinate,
@@ -154,6 +156,15 @@ export async function getListingCommute(input: {
   slug: string;
   from: Coordinate;
   session?: RequestSession | undefined;
+  /**
+   * Settings supplied by the caller, which win over the stored ones.
+   *
+   * This is what makes the answer a function of the request rather than of
+   * ambient session state — so it can be cached by URL, and so a signed-out
+   * visitor's own choices produce real numbers. It is also the per-listing
+   * override: sending them does not touch the stored preference. See D76.
+   */
+  overrides?: CommuteParamsQuery | undefined;
   signal?: AbortSignal;
 }): Promise<ListingCommute> {
   const listing = await prisma.listing.findUnique({
@@ -177,9 +188,21 @@ export async function getListingCommute(input: {
   // commute nobody could make. Refused here rather than downstream (D53).
   await assertCovered(input.from);
 
-  const preferences = input.session
+  const stored = input.session
     ? await getCommutePreferences(input.session.userId)
     : commutePreferencesSchema.parse({});
+
+  // Reconciled after merging, not before: an override may name a mode without
+  // naming a vehicle, and "bike with the stored sedan" is the combination that
+  // priced a bike ride on a car (D63, docs/ux-audit.md 1.3).
+  const preferences = reconcileCommutePreferences(
+    commutePreferencesSchema.parse({
+      ...stored,
+      ...Object.fromEntries(
+        Object.entries(input.overrides ?? {}).filter(([, value]) => value !== undefined),
+      ),
+    }),
+  );
 
   const to: Coordinate = { lat: listing.lat, lng: listing.lng };
   const citySlug = listing.city.slug;
