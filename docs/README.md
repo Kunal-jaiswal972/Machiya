@@ -7,6 +7,7 @@ first sentence whether you are in the right place.
 
 | Document                             | Read it when                                                       |
 | ------------------------------------ | ------------------------------------------------------------------ |
+| [why.md](why.md)                     | You are new, or a decision looks arbitrary and you want the reason |
 | [setup.md](setup.md)                 | Getting the stack running, or a compose profile is not behaving    |
 | [architecture.md](architecture.md)   | You need the shape of the system, or the cache TTLs                |
 | [data-model.md](data-model.md)       | You are touching the schema, a migration, or a geo query           |

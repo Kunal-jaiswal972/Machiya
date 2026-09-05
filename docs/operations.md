@@ -5,15 +5,20 @@ or how to reset a piece of the stack.
 
 ## Queues
 
-Three BullMQ queues on the cache Redis, all produced by `apps/api` and consumed
+Four BullMQ queues on the cache Redis, all produced by `apps/api` and consumed
 by `apps/worker`. Default job options: 3 attempts, exponential backoff from 5 s,
 last 100 completions and 500 failures retained.
 
-| Queue         | Jobs                                 | Concurrency             |
-| ------------- | ------------------------------------ | ----------------------- |
-| `images`      | `process-image`                      | `IMAGE_CONCURRENCY` (3) |
-| `fuel-prices` | `scrape-fuel-prices`                 | 2                       |
-| `maintenance` | `cleanup-images`, `reconcile-images` | 1                       |
+| Queue           | Jobs                                                            | Concurrency             |
+| --------------- | --------------------------------------------------------------- | ----------------------- |
+| `images`        | `process-image`                                                 | `IMAGE_CONCURRENCY` (3) |
+| `fuel-prices`   | `scrape-fuel-prices`                                            | 2                       |
+| `notifications` | `enquiry-message`                                               | 2                       |
+| `maintenance`   | `cleanup-images`, `reconcile-images`, `reconcile-notifications` | 1                       |
+
+`notifications` runs at 2 rather than the default: SMTP servers rate-limit, and
+a burst of parallel sends is the fastest way to be told so. Nothing is waiting
+on it — that is why the job exists at all (D68).
 
 `sharp.concurrency(1)` is set in the worker on purpose. libvips is itself
 threaded, so left alone N concurrent jobs become N × cores threads and the
@@ -23,15 +28,20 @@ is not in the API.
 
 ## Schedules
 
-| Schedule             | Cadence            | Env                           | What it does                                    |
-| -------------------- | ------------------ | ----------------------------- | ----------------------------------------------- |
-| `fuel-prices-hourly` | hourly on the hour | `FUEL_SCRAPE_CRON`            | Scrapes petrol/diesel/CNG per city              |
-| `image-cleanup`      | hourly at :17      | `IMAGE_CLEANUP_CRON`          | Sweeps abandoned uploads and orphaned originals |
-| `image-reconcile`    | every 60 s         | `IMAGE_RECONCILE_INTERVAL_MS` | Drains `PENDING` rows nothing is processing     |
+| Schedule                 | Cadence            | Env                            | What it does                                    |
+| ------------------------ | ------------------ | ------------------------------ | ----------------------------------------------- |
+| `fuel-prices-hourly`     | hourly on the hour | `FUEL_SCRAPE_CRON`             | Scrapes petrol/diesel/CNG per city              |
+| `image-cleanup`          | hourly at :17      | `IMAGE_CLEANUP_CRON`           | Sweeps abandoned uploads and orphaned originals |
+| `image-reconcile`        | every 60 s         | `IMAGE_RECONCILE_INTERVAL_MS`  | Drains `PENDING` rows nothing is processing     |
+| `notification-reconcile` | every 120 s        | `NOTIFY_RECONCILE_INTERVAL_MS` | Sends enquiry mail the enqueue missed           |
 
-`image-reconcile` uses `every` rather than a cron pattern: cron's finest
+Both reconcilers use `every` rather than a cron pattern: cron's finest
 granularity is a minute anyway, and `every` keeps the interval honest across
-restarts. It is silent when there is nothing to do, which is almost always.
+restarts. Both are silent when there is nothing to do, which is almost always.
+
+The notification one is slower on purpose. The image reconciler's interval is
+set by how long somebody will stare at a spinner; a dropped notification is
+invisible to everyone, so nobody is waiting and the scan can be cheaper (D68).
 
 Schedules are registered with `upsertJobScheduler`, so a restart does not
 duplicate them and a changed cadence takes effect on the next boot.

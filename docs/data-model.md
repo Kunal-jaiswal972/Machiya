@@ -72,6 +72,38 @@ back (D15).
 the only thing that creates them. Without it, a completely fresh clone reports
 drift and demands a reset before the first migration can be written (D16).
 
+### A draft is incomplete, and the database says when it stops being one
+
+The listing columns the wizard fills on its later steps — `title`,
+`description`, `address`, `locality`, `propertyType`, `furnishing`, `bedrooms`,
+`bathrooms`, `areaSqft` — are **nullable**, because the wizard autosaves from a
+step that has only a pin. Placeholder values would have been worse: an empty
+title is a value every reader downstream then has to disbelieve.
+
+`listing_complete_when_live` is the CHECK that restores the invariant. It makes
+all nine NOT NULL the moment `status` leaves `DRAFT`, and carries the price rule
+with them — a live RENT listing has a `rentAmount`, a live SALE listing has a
+`salePrice`. Verified by trying it: a bare `PUBLISHED` insert is refused, the
+identical row inserts as `DRAFT`, and `UPDATE ... SET status='PUBLISHED'` on
+that draft is refused. See
+[D67](../DECISIONS.md#d67-a-draft-is-incomplete-in-the-database-not-padded-with-placeholders).
+
+`listingType` is defaulted to `RENT` rather than nullable: a two-value enum has
+no honest null and the wizard shows the real choice on its second step.
+
+### `EnquiryMessage` is its own outbox
+
+`notifyOwed`, `notifiedAt` and `notifyFails` make the message row the durable
+record of intent for its email — the same arrangement `ListingImage.status`
+provides for derivation (D40). The mail is enqueued strictly after the commit
+and a reconciler drains what the enqueue missed.
+
+`notifyOwed` is the column that earns its place: without it, "this message never
+needed a mail" (a reply inside an active conversation) and "this message needed
+one and never got it" look identical, and the reconciler would either email
+every chatty reply or nothing at all. See
+[D68](../DECISIONS.md#d68-first-message-in-a-thread-is-not-the-rule-people-expect-and-the-message-row-is-its-own-outbox).
+
 ## Models
 
 Grouped by what they are for.

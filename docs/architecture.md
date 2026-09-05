@@ -24,13 +24,25 @@ or the cache TTL for something.
       │             │ BullMQ         │
       │             ▼                │
       └──────  apps/worker  ─────────┘
-              sharp, scrapers,
-              reconciler, cleanup
+              sharp, scrapers, mail,
+              reconcilers, cleanup
 ```
 
 `packages/shared` holds everything both sides need: Zod schemas, the geo
-provider interfaces, and the image derivation code. `packages/db` holds the
-Prisma schema, the client, and every line of raw SQL in the repo.
+provider interfaces, the image derivation code, and the Better Auth
+access-control map that the server and the browser client must agree on.
+`packages/db` holds the Prisma schema, the client, and every line of raw SQL in
+the repo.
+
+Three of those are **subpaths** rather than package-index exports —
+`@machiya/shared/images`, `/cities` and `/auth-access` — because each reaches
+for something the browser bundle must never pull in: sharp, `node:crypto`, and
+better-auth respectively.
+
+`apps/e2e` is tests only. It carries one path through every subsystem against
+the real stack and lives in its own package because sharp must not enter
+`apps/api` (D34), and because a suite that needs Redis, MinIO and OSRM up does
+not belong among the fast hermetic ones.
 
 ## Why the worker is a separate process
 
@@ -44,7 +56,8 @@ sharp in the API (D34):
    memory-capped and restarted independently.
 3. It keeps sharp's platform-specific native binaries out of the API image.
 4. BullMQ, retries and backoff were needed for the fuel scrapers anyway. Image
-   derivation is the same shape of work.
+   derivation is the same shape of work — and so, later, was outbound enquiry
+   mail: a slow SMTP server must not hold a request open either (D68).
 
 The API therefore reads no image bytes at all. It signs uploads, confirms with
 `headObject` that the object landed, and enqueues.

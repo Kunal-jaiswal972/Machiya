@@ -8,8 +8,15 @@ document, the component is wrong.
 
 Someone in Patna, Bengaluru or Pune has a job at a fixed address and is deciding
 where to live. Every listing site shows them rent. Rent is not the number they
-will pay: a ₹14,000 flat 9 km away costs more per month than a ₹17,000 flat they
-can walk to, and nobody shows them that.
+will pay: a ₹14,000 flat 12 km away costs ₹17,991 a month to a car commuter
+against ₹17,000 for one they can walk to, and nobody shows them that.
+
+The distance in that sentence used to be 9 km, which does not survive the
+arithmetic — run through `computeCommuteCost` at the scrapers' own Patna petrol
+price, 9 km by car is ₹2,993 a month and the two flats land within ₹10 of each
+other. A design document whose opening example overstates the product's own
+argument is the last place that should happen, so the number is the measured
+one. See [why.md](why.md) for the full table.
 
 **The page's single job: make total monthly cost — rent plus real commute —
 comparable at a glance, anchored to one point on a map.**

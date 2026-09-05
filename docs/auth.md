@@ -116,12 +116,43 @@ BETTER_AUTH_URL=http://localhost:4000 pnpm auth:routes   # live route list
 `auth:routes` needs the API running. `auth:check` needs only the schema and the
 config.
 
+## The admin plugin needs an access-control map, or it does nothing
+
+`adminRoles: ['ADMIN']` gets a caller past the "is this an admin" gate. It is
+**not** the permission check. Every admin endpoint then asks
+`roles[session.role]` for a specific statement, and the plugin's built-in map
+holds only `admin` and `user` — so with our role names the lookup missed and
+`list-users`, `ban-user` and `set-role` all answered 403 while the config looked
+correct.
+
+The map lives in `@machiya/shared/auth-access` and is passed to **both** ends:
+the server as `{ ac, roles }`, the browser client as `{ roles }` alone. Two
+copies would let the runtime allow what the types forbade. Impersonation is
+granted to nobody — the endpoint exists and answers 403, deliberately. See
+[D70](../DECISIONS.md#d70-the-admin-plugin-was-mounted-and-inert-because-adminroles-is-not-the-permission-check).
+
+Neither `auth:check` nor `auth:routes` catches this: the schema is right and the
+routes exist. Only a live call does.
+
 ## After a Better Auth upgrade
 
 1. `pnpm auth:generate`, then read the diff rather than trusting it.
 2. `pnpm auth:check` — it is the check that catches what the CLI missed.
 3. `pnpm auth:routes` and compare against `rateLimit.customRules`.
-4. Sign up, verify, sign in, reset a password, sign out. Confirm a `Session` row
-   appears in Postgres and disappears on sign-out.
-5. `pnpm test` — the guard suite needs no infrastructure and runs in
-   milliseconds.
+4. **Call three admin endpoints as an admin**, because nothing else catches a
+   broken permission map:
+
+   ```bash
+   curl -sb cookies.txt -H 'origin: http://localhost:5173'      'http://localhost:4000/api/auth/admin/list-users?limit=1' -o /dev/null -w '%{http_code}
+   ```
+
+'
+
+# ban-user and set-role the same way. 200 each, and 403 for impersonate-user.
+
+```
+5. Sign up, verify, sign in, reset a password, sign out. Confirm a `Session` row
+appears in Postgres and disappears on sign-out.
+6. `pnpm test` — the guard suite needs no infrastructure and runs in
+milliseconds, and `@machiya/e2e` walks the credential path for real.
+```

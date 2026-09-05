@@ -10,11 +10,9 @@ fixes it**. A list nobody prunes is a list nobody reads.
 
 ## Deferred work
 
-- **The wizard's three address rules are unimplemented** — prefill only the
-  locality on a locality-level reverse geocode, leave the street line empty and
-  editable, refuse to complete the location step without a placed pin. Waiting
-  on the wizard itself, which is brief step 9.
-  ([D59](../DECISIONS.md#d59-what-the-geocoder-did-is-said-out-loud-and-the-box-asks-for-what-the-data-has))
+- **Transit fares are configuration and go stale silently.** No free API
+  publishes them reliably, so they live in each city record and nothing warns
+  when they age. A commute costed by transit is only as current as that table.
 - **No orientation-tag test fixture.** The EXIF strip is tested; applying an
   orientation tag is not, because `withExif` cannot produce a non-1 orientation
   and a real fixture means committing binary image data.
