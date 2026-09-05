@@ -78,7 +78,12 @@ services:
       start_period: 15s
 
   minio-init:
-    image: minio/mc:latest
+    # Pinned like every other image. It was the one exception on the grounds
+    # that it only creates a bucket and exits — but what it actually does is set
+    # the ANONYMOUS ACCESS POLICY (D35), so a silently newer `mc` changing how
+    # `anonymous set` behaves would change who can read the bucket. That is not
+    # a job to leave on a floating tag.
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     depends_on:
       minio:
         condition: service_healthy

@@ -69,6 +69,12 @@ export interface CityConfig {
   defaultFuelType: FuelType;
   /** Local bus fares, in whole rupees. No free API exposes these reliably. */
   transitFare: TransitFareConfig;
+  /**
+   * When somebody last checked this city's fares against the operator, as
+   * YYYY-MM-DD. `cities:validate` warns once it is older than
+   * `TRANSIT_FARE_STALE_AFTER_DAYS`. See DECISIONS.md D73.
+   */
+  transitFareReviewedOn: string;
   /** Where seeded listings cluster, so the map does not look uniformly random. */
   localities: Locality[];
   /**
@@ -98,6 +104,7 @@ const CITY_INPUTS: CityConfigInput[] = [
       minFare: 10,
       notes: 'Patna city bus (BSRTC), approximate slab fares',
     },
+    transitFareReviewedOn: '2026-09-05',
     localities: [
       { name: 'Boring Road', lat: 25.6127, lng: 85.1145 },
       { name: 'Kankarbagh', lat: 25.59, lng: 85.156 },
@@ -127,6 +134,7 @@ const CITY_INPUTS: CityConfigInput[] = [
       minFare: 6,
       notes: 'BMTC ordinary service, approximate slab fares',
     },
+    transitFareReviewedOn: '2026-09-05',
     localities: [
       { name: 'Koramangala', lat: 12.9352, lng: 77.6245 },
       { name: 'Indiranagar', lat: 12.9784, lng: 77.6408 },
@@ -161,6 +169,7 @@ const CITY_INPUTS: CityConfigInput[] = [
       minFare: 5,
       notes: 'PMPML ordinary service, approximate slab fares',
     },
+    transitFareReviewedOn: '2026-09-05',
     localities: [
       { name: 'Kothrud', lat: 18.5074, lng: 73.8077 },
       { name: 'Baner', lat: 18.5642, lng: 73.7769 },

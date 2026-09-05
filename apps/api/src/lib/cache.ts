@@ -140,6 +140,35 @@ export async function cached<T>(options: {
  * Without this, "Boring Road", "boring  road" and "BORING ROAD " are three
  * separate cache entries and three separate upstream calls for one answer.
  */
+/**
+ * Deletes every cache key matching a glob, and answers how many went.
+ *
+ * Here rather than at a call site because it is raw Redis access to the cache,
+ * and because it has to await `ready()` like every other operation in this file
+ * — a `scan` issued straight at the client rejects on a fresh process (D21,
+ * D46).
+ *
+ * Key by key rather than `DEL key1 key2 ...` in one shot: a geocode key
+ * contains the query text and therefore spaces, and D60 records a verification
+ * command that silently deleted nothing for exactly that reason.
+ */
+export async function cacheDeleteMatching(pattern: string): Promise<number> {
+  await ready();
+
+  let cursor = '0';
+  let deleted = 0;
+
+  do {
+    const [next, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 500);
+    cursor = next;
+    for (const key of keys) {
+      deleted += await redis.del(key);
+    }
+  } while (cursor !== '0');
+
+  return deleted;
+}
+
 export function normalizeQueryKey(query: string): string {
   return query.trim().toLowerCase().replace(/\s+/g, ' ');
 }

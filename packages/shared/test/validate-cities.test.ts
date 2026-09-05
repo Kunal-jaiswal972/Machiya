@@ -3,6 +3,7 @@ import { padBbox } from '../src/cities/bbox.js';
 import { CITIES, type CityConfig } from '../src/cities/config.js';
 import { FUEL_SOURCE_IDS } from '../src/cities/fuel-sources.js';
 import { validateCities } from '../src/cities/validate.js';
+import { TRANSIT_FARE_STALE_AFTER_DAYS } from '../src/geo/schemas.js';
 
 /**
  * The validator, against deliberately broken configs.
@@ -32,6 +33,9 @@ function baseCity(): CityConfig {
     boundary: null,
     defaultFuelType: 'PETROL',
     transitFare: { currency: 'INR', baseFare: 10, perKm: 1.5, minFare: 10 },
+    // Reviewed today, so a fixture cannot fail the staleness rule as it ages
+    // and send a future reader hunting for a bug in whatever they just changed.
+    transitFareReviewedOn: new Date().toISOString().slice(0, 10),
     localities: [
       { name: 'One', lat: 25.6127, lng: 85.1145 },
       { name: 'Two', lat: 25.59, lng: 85.156 },
@@ -122,3 +126,58 @@ describe('validateCities', () => {
     expect(rulesOf([])).toContain('non-empty');
   });
 });
+
+describe('transit fare staleness', () => {
+  /**
+   * The one commute input nothing can refresh on its own.
+   *
+   * Fuel prices are scraped hourly and the OSM artifacts have an epoch that
+   * makes stale answers unreachable. Bus fares have neither: no free API
+   * publishes them, so they sit in the city record and rot in total silence,
+   * and a transit commute costed from a three-year-old slab is wrong with no
+   * symptom anywhere. This is the only thing standing between that and a rent
+   * decision. See DECISIONS.md D73.
+   */
+  it('says nothing while the fares are recent', () => {
+    const fresh = withReviewDate(new Date().toISOString().slice(0, 10));
+
+    expect(validateCities(fresh).filter((issue) => issue.rule.startsWith('transit-fare'))).toEqual(
+      [],
+    );
+  });
+
+  it('warns once per city when they are older than the threshold', () => {
+    const past = new Date(Date.now() - (TRANSIT_FARE_STALE_AFTER_DAYS + 5) * 86_400_000);
+    const stale = withReviewDate(past.toISOString().slice(0, 10));
+
+    const warnings = validateCities(stale).filter((issue) => issue.rule === 'transit-fare-stale');
+
+    expect(warnings).toHaveLength(stale.length);
+    expect(warnings[0]?.severity).toBe('warning');
+    // A warning, not an error: stale fares are a prompt to go and check, not a
+    // reason to fail a build that has nothing to do with them.
+    expect(warnings[0]?.message).toContain('bump transitFareReviewedOn');
+  });
+
+  it('does not warn one day before the threshold', () => {
+    const past = new Date(Date.now() - (TRANSIT_FARE_STALE_AFTER_DAYS - 1) * 86_400_000);
+
+    expect(
+      validateCities(withReviewDate(past.toISOString().slice(0, 10))).filter(
+        (issue) => issue.rule === 'transit-fare-stale',
+      ),
+    ).toEqual([]);
+  });
+
+  it('errors rather than warns when the date is not a date', () => {
+    const issues = validateCities(withReviewDate('last tuesday'));
+
+    // A malformed date is a config bug, and treating it as merely stale would
+    // let it sit there being warned about forever.
+    expect(issues.some((issue) => issue.severity === 'error')).toBe(true);
+  });
+});
+
+function withReviewDate(transitFareReviewedOn: string) {
+  return CITIES.map((city) => ({ ...city, transitFareReviewedOn }));
+}

@@ -120,6 +120,19 @@ export async function validateAndDerive(bytes: Buffer): Promise<DeriveResult> {
   // subject is somebody's home.
   const upright = sharp(bytes).rotate();
 
+  // The reported size must describe the bytes we WRITE, not the bytes we read.
+  //
+  // `.rotate()` transposes a photo tagged 5-8, and `metadata()` reports the
+  // pre-rotation figures whether or not `autoOrient` is set — measured on sharp
+  // 0.35: a 400x200 JPEG tagged orientation 6 reads back 400x200 both ways and
+  // comes out 200x400. Reporting the input's numbers meant every portrait phone
+  // photo stored a landscape width and height, so the gallery reserved a box of
+  // the wrong shape and the API described a variant it was not describing.
+  // See DECISIONS.md D72.
+  const transposed = typeof metadata.orientation === 'number' && metadata.orientation >= 5;
+  const uprightWidth = transposed ? height : width;
+  const uprightHeight = transposed ? width : height;
+
   const stats = await upright.clone().stats();
   const dominantColor = `#${hex(stats.dominant.r)}${hex(stats.dominant.g)}${hex(stats.dominant.b)}`;
 
@@ -142,5 +155,5 @@ export async function validateAndDerive(bytes: Buffer): Promise<DeriveResult> {
     );
   }
 
-  return { width, height, dominantColor, lqip, variants };
+  return { width: uprightWidth, height: uprightHeight, dominantColor, lqip, variants };
 }

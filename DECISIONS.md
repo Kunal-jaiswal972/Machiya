@@ -2280,3 +2280,140 @@ Three decisions inside it:
 The page states the people-versus-asks distinction in words rather than leaving
 it to a column header, because "40 requests" and "40 people" are the same number
 for very different reasons and only one of them is a reason to build a city.
+
+## Correction 12 — closing what step 10 left open
+
+### D72. A rotated photo reported the dimensions of the bytes we did not write
+
+D66 left the orientation case untested and said so plainly: proving that
+`.rotate()` applies an EXIF orientation "needs a fixture carrying a real
+orientation tag, which means committing binary image data — left undone
+deliberately". That framing had one option too few. The APP1 segment can be
+**assembled in the test** — a 26-byte TIFF header with a single Orientation
+entry, spliced in after the SOI marker — which is generated, readable and
+diffable rather than an opaque blob in the repository.
+
+Writing it found the bug the gap had been hiding.
+
+`validateAndDerive` read `width` and `height` from `sharp(bytes).metadata()`
+and returned them unchanged, while every variant it wrote came from
+`sharp(bytes).rotate()`. For a photo tagged orientation 5-8 those are
+**transposed**: the stored numbers describe the input, and the servable bytes
+are the other way round.
+
+Measured on sharp 0.35.4, with a 400x200 JPEG tagged orientation 6:
+
+| Call                                            | Result        |
+| ----------------------------------------------- | ------------- |
+| `sharp(bytes).metadata()`                       | 400 x 200     |
+| `sharp(bytes, { autoOrient: true }).metadata()` | 400 x 200     |
+| `sharp(bytes).rotate().toBuffer(...)` → `info`  | **200 x 400** |
+
+Note the middle row: `autoOrient` does not transpose what `metadata()` reports
+in this version, so the obvious fix does not work and would have looked like it
+did.
+
+**Chosen: transpose the reported pair when `metadata.orientation >= 5`**, which
+is the EXIF definition of the four values that swap the axes, with the test
+asserting sharp agrees rather than taking the rule on faith. The alternative —
+materialising the rotated pipeline to read its real `info` — re-encodes a
+twelve-megabyte photo to learn two integers.
+
+Who this was hurting: **every portrait photo taken on a phone**, which is most
+of them. `ListingImage.width`/`height` are what the gallery reserves space with,
+so a portrait photo reserved a landscape box and the layout jumped when the real
+image arrived — and the API's `listingImageSchema` was describing a variant it
+was not describing.
+
+The test now asserts its own premise before what follows from it (the fixture
+really does read back orientation 6), the same discipline D66 introduced for the
+EXIF strip. Without that, a fixture that quietly carried orientation 1 would
+make the whole thing pass for the wrong reason — which is exactly how the two
+tests in D66 came to be worthless.
+
+### D73. Transit fares are the one commute input nothing can refresh, so CI watches the date
+
+Every other input to the commute engine has a freshness mechanism. Fuel prices
+are scraped hourly with per-adapter health (D62). Road distances come from OSM
+artifacts whose epoch makes stale answers unreachable (D46). Bus fares have
+neither: no free API publishes Indian city bus slabs, so they are configuration
+in the city record — and configuration rots in total silence. A transit commute
+costed from a three-year-old slab is wrong with no symptom anywhere, which is
+precisely the class of failure this project keeps recording.
+
+**Chosen: `CityConfig.transitFareReviewedOn`, and a `cities:validate` warning
+past `TRANSIT_FARE_STALE_AFTER_DAYS` (365).** It runs in CI, so the staleness
+surfaces there rather than in somebody's rent decision. A **warning**, not an
+error: stale fares are a prompt to go and check, not a reason to fail a build
+that has nothing to do with them. A malformed date IS an error, because treating
+it as merely stale would leave it warned about forever.
+
+**The field is on the city record, not on `transitFareConfigSchema`**, and the
+first attempt got that wrong. Putting it in the fare schema broke four commute
+tests immediately, and the breakage was the right answer to the wrong question:
+that schema is the **pricing contract** — the engine needs `baseFare`, `perKm`
+and `minFare`, and has no business knowing when somebody last checked them.
+Folding provenance into it forced every caller that prices a journey to carry a
+date it never reads. Provenance belongs to the record that holds the data, not
+to the data.
+
+Verified by backdating all three cities to 2023-01-01: three warnings, one per
+city, naming the age in days and the field to bump. With the real dates,
+`pnpm cities:validate` reports "OK — no issues".
+
+### D74. A live test that reads from cache is not a live test
+
+`known-issues.md` recorded that tier 2 of the autocomplete was stubbed in every
+suite — the gap that let D57, D58 and D60 all reach a live run undetected. So a
+suite was added against the real Nominatim, re-running those entries' own
+measurements.
+
+It passed. It also passed when pointed at the **public** instance, which answers
+403 to this project's contact string — the exact misconfiguration D57 is about.
+
+The provider caches every lookup in Redis for seven days. The whole file was
+being served from a previous local run: a live test that never went live, and
+one that would have reported everything healthy while the configured geocoder
+refused every request. Precisely the failure it was written to prevent.
+
+Two things came out of it:
+
+- **The suite flushes the geocode keys first**, and the flush goes through a new
+  `cacheDeleteMatching` in `lib/cache.ts` rather than raw ioredis. Two reasons:
+  the cache client is deliberately fail-fast with no offline queue, so a `scan`
+  issued straight at it rejects on a fresh process (D21, D46) — which is how the
+  first attempt failed — and D60 already records that deleting these keys with
+  `xargs` silently does nothing, because a geocode key contains the query text
+  and therefore spaces.
+- **The suite is now verifiable as a test.** Against the local instance: 6
+  passing. Against `https://nominatim.openstreetmap.org` with the same contact
+  string: 5 failing, led by `NOMINATIM_URL (…) refused the request`. A live
+  test that cannot be made to fail by breaking the thing it watches is not
+  evidence of anything, and checking that is now part of writing one here.
+
+One limit, stated rather than implied: the first assertion catches a **refusing**
+upstream, whatever the cause. It does not distinguish the local instance from a
+public one that happens to answer, so it is not a substitute for reading
+`NOMINATIM_URL`.
+
+### D75. `minio/mc` is pinned, because what it does is set an access policy
+
+D11 made `minio/mc:latest` the one unpinned image in the compose file, on the
+grounds that it "only creates a bucket and exits" and that `mc` release tags
+move faster than they are worth tracking. That description is incomplete, and
+the incompleteness is the whole argument.
+
+What `minio-init` actually does is run `mc anonymous set none` on the bucket and
+`mc anonymous set download` on `variants/` — it sets **who can read uploaded
+photographs**. D35 exists because an earlier version granted the whole bucket,
+which published every unvalidated upload. A silently newer `mc` changing how
+`anonymous set` parses its arguments, or what it does with a prefix, would move
+that boundary with nothing in the diff.
+
+Pinned to `RELEASE.2025-08-13T08-35-41Z` — the version `latest` currently
+resolves to, confirmed with `mc --version` against the local image and with
+`docker manifest inspect` for the tag. The same pin is used in the CI step that
+prepares the bucket for the end-to-end suite, so the two cannot drift.
+
+"It only creates a bucket" was the reasoning. "It decides what is public" is the
+job.

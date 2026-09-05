@@ -10,13 +10,9 @@ fixes it**. A list nobody prunes is a list nobody reads.
 
 ## Deferred work
 
-- **Transit fares are configuration and go stale silently.** No free API
-  publishes them reliably, so they live in each city record and nothing warns
-  when they age. A commute costed by transit is only as current as that table.
-- **No orientation-tag test fixture.** The EXIF strip is tested; applying an
-  orientation tag is not, because `withExif` cannot produce a non-1 orientation
-  and a real fixture means committing binary image data.
-  ([D66](../DECISIONS.md#d66-two-tests-that-could-not-fail))
+Nothing. The four items that stood here after step 10 — the wizard's address
+rules, the orientation fixture, the unpinned `mc`, and the unstubbed geocoder
+tier — are closed by D67, D72, D75 and D74.
 
 ## Workarounds still in force
 
@@ -29,9 +25,6 @@ fixes it**. A list nobody prunes is a list nobody reads.
   prebuilds ship without HEIF, so the worker probes at runtime and returns
   "export as JPEG instead" rather than a decode crash.
   ([D37](../DECISIONS.md#d37-the-declared-content-type-is-never-trusted-magic-bytes-decide))
-- **`minio/mc:latest` is the one unpinned image.** It creates a bucket and
-  exits; revisit if bucket setup becomes load-bearing.
-  ([D11](../DECISIONS.md#d11-minioumclatest-is-the-one-unpinned-image))
 - **`--max-table-size` is set on both OSRM services and bounds nothing we
   call.** Kept for the all-to-all shape it does bound; the real ceiling on the
   total-cost sort's `/table` is `TABLE_CHUNK` in the adapter.
@@ -39,11 +32,10 @@ fixes it**. A list nobody prunes is a list nobody reads.
 
 ## Bugs and gaps recorded, not fixed
 
-- **The autocomplete's tier 2 is still stubbed in every suite**, which is why
-  D57, D58 and D60 were all found by a live run. `apps/e2e` now walks sign-up to
-  enquiry against the real stack, but its geocoding is not on that path — the
-  wizard sends a pin, not a query.
-  ([D60](../DECISIONS.md#d60-three-bugs-the-live-run-found-that-the-tests-could-not))
+- **The live geocoder suite needs the geo profile up, and skips itself when it
+  is not.** So a machine that has never run `pnpm bootstrap` gets a green run
+  with tier 2 untested — the skip is loud in the output, and it is still a skip.
+  ([D74](../DECISIONS.md#d74-a-live-test-that-reads-from-cache-is-not-a-live-test))
 
 ## Not issues, recorded so they stop being rediscovered
 

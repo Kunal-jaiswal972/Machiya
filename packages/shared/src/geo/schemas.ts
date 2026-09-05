@@ -42,6 +42,24 @@ export const transitFareConfigSchema = z.object({
   notes: z.string().optional(),
 });
 
+/**
+ * A fare table older than this earns a warning from `pnpm cities:validate`.
+ *
+ * The review date lives on the CITY RECORD rather than in the schema above,
+ * because that schema is the commute engine's pricing contract: it needs
+ * `baseFare`, `perKm` and `minFare` and has no business knowing when somebody
+ * last checked them. Folding provenance into it made every caller that prices a
+ * journey — tests included — carry a date it never reads. See DECISIONS.md D73.
+ */
+export const TRANSIT_FARE_STALE_AFTER_DAYS = 365;
+
+/** How many days old a fare table is, or null when the date will not parse. */
+export function transitFareAgeDays(reviewedOn: string, now: Date = new Date()): number | null {
+  const reviewed = new Date(`${reviewedOn}T00:00:00Z`);
+  if (Number.isNaN(reviewed.getTime())) return null;
+  return Math.floor((now.getTime() - reviewed.getTime()) / 86_400_000);
+}
+
 export type TransitFareConfig = z.infer<typeof transitFareConfigSchema>;
 
 /**

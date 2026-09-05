@@ -27,6 +27,7 @@ import { z } from 'zod';
 import { bboxAreaSqKm, bboxIntersection, isInsideBbox } from './bbox.js';
 import { CITIES, GEOFABRIK_ZONES, type CityConfig } from './config.js';
 import { FUEL_SOURCE_IDS } from './fuel-sources.js';
+import { TRANSIT_FARE_STALE_AFTER_DAYS, transitFareAgeDays } from '../geo/schemas.js';
 
 /**
  * How much padded-bbox overlap is tolerated, in square kilometres.
@@ -75,6 +76,7 @@ const cityRecordSchema = z.object({
     minFare: z.number().nonnegative(),
     notes: z.string().optional(),
   }),
+  transitFareReviewedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be YYYY-MM-DD'),
   // A city with no localities would pass every other check and then seed no
   // listings and answer no autocomplete, which is the "looks healthy" failure
   // this script exists for.
@@ -117,6 +119,21 @@ export function validateCities(cities: readonly CityConfig[] = CITIES): Validati
       error('unique-slug', 'duplicate slug', city.slug);
     }
     seen.add(city.slug);
+
+    // Transit fares are the one commute input nothing can refresh on its own,
+    // so the only thing standing between a stale slab and a wrong monthly cost
+    // is somebody noticing. Make CI the somebody. See DECISIONS.md D73.
+    const age = transitFareAgeDays(city.transitFareReviewedOn);
+
+    if (age === null) {
+      error('transit-fare-date', 'transitFareReviewedOn is not a date', city.slug);
+    } else if (age > TRANSIT_FARE_STALE_AFTER_DAYS) {
+      warn(
+        'transit-fare-stale',
+        `transit fares were last reviewed ${String(age)} days ago (${city.transitFareReviewedOn}) — check them against the operator and bump transitFareReviewedOn`,
+        city.slug,
+      );
+    }
 
     // 2. Every source must know what this city is called in its own URLs.
     for (const sourceId of FUEL_SOURCE_IDS) {
