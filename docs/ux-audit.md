@@ -383,6 +383,24 @@ reload, reopened from the button, and closed on Escape. Light and dark both
 match the panel chrome; a phone in map view gets the view-toggle step and drops
 the card step, because the cards are not on screen. Library choice is D81.
 
+**The commute said one thing twice, and the S3 items about it are closed.**
+The panel had "Commute from your office" with a car/bike toggle and then
+"Commute cost" with a second one; there is one block now, one mode control, and
+the map's route profile follows it (1.11). The comparison is rows with a
+difference in rupees rather than bars scaled to the dearest mode, which had the
+bike — the option most likely to change the answer — rendering as a sliver
+(1.12). The fuel line names the city, says how many sources agreed, and gives
+"checked 7 h ago" instead of a raw timestamp (1.13). Driven on
+`patna-boring-road-2bhk-02`: `Bike ₹304 · ₹1,012 less a month`, `Bus ₹1,141 ·
+₹175 less`, `Car ₹1,316 · ₹1,012 more than bike`, and `Petrol in Patna at ₹113
+/litre — checked 7 h ago, from one source, goodreturns`.
+
+**A listing can now be read full screen**, at `/listings/:slug/full` — D82. The
+gallery gets the width, back leaves full screen rather than the listing, focus
+is trapped (0 of 20 Tabs escaped) and the page behind it stops scrolling. Two of
+the copy leaks went with it: the address no longer repeats the state (1.15) and
+the gallery credit no longer prints a repo path (1.14).
+
 Account deletion is covered by `apps/api/test/account.test.ts` rather than
 driven in the browser: the only account to drive it with is a seeded dev one,
 and proving it works means destroying it. See D80 for what it does.

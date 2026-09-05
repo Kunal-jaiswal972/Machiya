@@ -2650,3 +2650,31 @@ steps are about results — and the help button beside the office field starts i
 again whenever. Seen-ness is `localStorage`, per device: it is about whether
 this browser has seen the product, and pushing it to the account would mean a
 signed-out visitor either never gets the tour or gets it on every visit.
+
+## D82 — Full screen is a child route, not a query parameter
+
+A listing can be read two ways: as the panel over the map, and full screen for
+the photographs and the facts. The second needs a URL — it is a thing people
+send each other — and there were two shapes available.
+
+**`?expand=1` on the search query.** Rejected, and not on taste: the search
+query is parsed and rebuilt by `parseSearchQuery`/`buildSearchParams`, which
+know every key by name. An unknown one survives until the next filter change and
+then silently disappears, so the expanded state would evaporate the first time
+someone moved the price slider.
+
+**Chosen: `/listings/:slug/full`, a child of `/listings/:slug`.** A child rather
+than a sibling so the panel component — and the WebGL map above it, per D45 —
+stays mounted through the toggle instead of being torn down and rebuilt. The
+child renders nothing of its own; its presence in the match IS the state.
+
+Consequences that fall out of it and are the reason for the shape:
+
+- back leaves full screen rather than leaving the listing, because expanding
+  pushed an entry;
+- the URL is shareable and lands in full screen;
+- closing from a link that arrived directly still returns to the search, since
+  D79's test is on the router key rather than the tab's history;
+- full screen is modal at every width — nothing is behind it — so it traps focus
+  and locks the page scroll, where the desktop panel deliberately does neither
+  (D78).

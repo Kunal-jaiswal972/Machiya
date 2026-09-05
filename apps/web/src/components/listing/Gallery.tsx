@@ -127,12 +127,13 @@ export function Gallery({ images, title, className }: GalleryProps) {
         </div>
       ) : null}
 
-      {/* Dev-only, and gated on the build flag so it can never ship: the seeded
-          photographs come from Unsplash and their terms require credit. Per
-          photographer in docs/attribution.md. */}
+      {/* Dev-only and gated on the build flag: the seeded photographs are from
+          Unsplash, whose terms require credit. The per-photographer list lives
+          in docs/attribution.md, which is a path for us and not a thing to show
+          anyone (docs/ux-audit.md 1.14). */}
       {import.meta.env.DEV ? (
         <p className="text-data text-ink-faint">
-          Seed photos via{' '}
+          Sample photos from{' '}
           <a
             href="https://unsplash.com"
             target="_blank"
@@ -140,8 +141,7 @@ export function Gallery({ images, title, className }: GalleryProps) {
             className="underline underline-offset-2"
           >
             Unsplash
-          </a>{' '}
-          — credits in docs/attribution.md
+          </a>
         </p>
       ) : null}
     </div>

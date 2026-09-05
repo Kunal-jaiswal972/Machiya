@@ -1,5 +1,5 @@
 import { motion, useReducedMotion, type PanInfo } from 'motion/react';
-import { X } from 'lucide-react';
+import { Maximize2, Minimize2, X } from 'lucide-react';
 import { useEffect, useRef, type ReactNode } from 'react';
 import { DESKTOP_QUERY, useMediaQuery } from '../../hooks/use-media-query';
 import { useSearchUi } from '../../stores/search-ui';
@@ -23,6 +23,14 @@ import { cn } from '../../lib/utils';
  */
 export interface DetailPanelProps {
   onClose: () => void;
+  /**
+   * Full-screen reading, driven by the `full` child route (D82). Modal at every
+   * width — there is nothing behind it to press — so it traps focus and dims
+   * what it covers.
+   */
+  expanded?: boolean;
+  /** Toggles into and out of `expanded`; both directions are a navigation. */
+  onToggleExpanded?: () => void;
   children: ReactNode;
 }
 
@@ -32,7 +40,12 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 type Snap = keyof typeof SNAP_POINTS;
 
-export function DetailPanel({ onClose, children }: DetailPanelProps) {
+export function DetailPanel({
+  onClose,
+  expanded = false,
+  onToggleExpanded,
+  children,
+}: DetailPanelProps) {
   const reduced = useReducedMotion();
   // ONE of the two, never both. Rendering both and hiding one with `lg:hidden`
   // put the entire listing in the DOM twice — two landmarks, every control
@@ -58,6 +71,18 @@ export function DetailPanel({ onClose, children }: DetailPanelProps) {
     };
   }, []);
 
+  // Full screen scrolls itself, so the page behind it must not: two scrollbars
+  // side by side is the tell that an overlay forgot to say it was one.
+  useEffect(() => {
+    if (!expanded) return;
+
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [expanded]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
@@ -65,9 +90,10 @@ export function DetailPanel({ onClose, children }: DetailPanelProps) {
         return;
       }
 
-      // The sheet is modal — it covers the page — so Tab wraps inside it
-      // rather than walking into a list nobody can see (docs/ux-audit.md 1.8).
-      if (event.key !== 'Tab' || isDesktop) return;
+      // Modal surfaces trap Tab: the sheet and the expanded view both cover
+      // the page, so wrapping keeps focus where the eye is (docs/ux-audit.md
+      // 1.8). The desktop sidebar deliberately does not — D78.
+      if (event.key !== 'Tab' || (isDesktop && !expanded)) return;
 
       const panel = panelRef.current;
       if (!panel) return;
@@ -92,7 +118,7 @@ export function DetailPanel({ onClose, children }: DetailPanelProps) {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose, isDesktop]);
+  }, [onClose, isDesktop, expanded]);
 
   const onDragEnd = (_event: unknown, info: PanInfo): void => {
     const flickDown = info.velocity.y > 600;
@@ -124,6 +150,32 @@ export function DetailPanel({ onClose, children }: DetailPanelProps) {
     setSheet(nearest[0]);
   };
 
+  if (expanded) {
+    return (
+      /* Full screen: the same panel, read like a page. Above the app header on
+         purpose — the point is the photographs and the facts, without the map
+         taking two thirds of the width. */
+      <motion.div
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Listing detail"
+        initial={reduced ? false : { opacity: 0, scale: 0.99 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={reduced ? { opacity: 0 } : { opacity: 0, scale: 0.99 }}
+        transition={reduced ? { duration: 0 } : { duration: 0.18, ease: 'easeOut' }}
+        className="fixed inset-0 z-50 overflow-y-auto bg-paper outline-none"
+      >
+        <div className="mx-auto max-w-3xl">{children}</div>
+        <CloseButton onClose={onClose} className="fixed top-3 right-3" />
+        {onToggleExpanded ? (
+          <ExpandButton expanded onToggle={onToggleExpanded} className="fixed top-3 right-14" />
+        ) : null}
+      </motion.div>
+    );
+  }
+
   if (isDesktop) {
     return (
       /* Desktop: a sidebar over the map. */
@@ -140,6 +192,9 @@ export function DetailPanel({ onClose, children }: DetailPanelProps) {
         className="chrome absolute top-2 right-2 bottom-2 z-30 w-[420px] overflow-y-auto outline-none"
       >
         <CloseButton onClose={onClose} />
+        {onToggleExpanded ? (
+          <ExpandButton expanded={false} onToggle={onToggleExpanded} className="top-2 right-12" />
+        ) : null}
         {children}
       </motion.aside>
     );
@@ -196,11 +251,41 @@ export function DetailPanel({ onClose, children }: DetailPanelProps) {
               {sheet === 'full' ? 'Shrink this panel' : 'Expand this panel'}
             </span>
           </button>
+          {onToggleExpanded ? (
+            <ExpandButton
+              expanded={false}
+              onToggle={onToggleExpanded}
+              className="absolute top-1.5 right-11"
+            />
+          ) : null}
           <CloseButton onClose={onClose} className="absolute top-1.5 right-2" />
         </div>
         {children}
       </motion.div>
     </>
+  );
+}
+
+function ExpandButton({
+  expanded,
+  onToggle,
+  className,
+}: {
+  expanded: boolean;
+  onToggle: () => void;
+  className?: string;
+}) {
+  const Icon = expanded ? Minimize2 : Maximize2;
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={cn('chrome absolute z-10 grid size-8 place-items-center', className)}
+    >
+      <Icon className="size-4" aria-hidden />
+      <span className="sr-only">{expanded ? 'Back to the map' : 'Open full screen'}</span>
+    </button>
   );
 }
 

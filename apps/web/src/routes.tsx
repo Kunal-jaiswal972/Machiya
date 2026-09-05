@@ -46,6 +46,11 @@ export const router = createBrowserRouter([
             path: 'listings/:slug',
             element: <ListingDetailRoute />,
             errorElement: <RouteError />,
+            // `full` is a child rather than a sibling so the panel stays
+            // mounted through the expand — and so does the map above it. It
+            // renders nothing of its own; its presence IS the state. See
+            // DECISIONS.md D82.
+            children: [{ path: 'full', element: null }],
           },
         ],
       },

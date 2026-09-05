@@ -1,4 +1,5 @@
 import { AUTH_ERROR_MESSAGES, AuthError } from '@machiya/shared';
+import { CircleUser } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { toast } from 'sonner';
@@ -43,9 +44,22 @@ export function UserMenu() {
 
   return (
     <div className="flex items-center gap-2">
-      <span className="hidden text-xs text-muted-foreground sm:inline">
+      {/* The name IS the way into the account — it was plain text, so the
+          account page had no entrance from anywhere in the product. The icon
+          carries it below `sm`, where the name is hidden. */}
+      <Link
+        to="/account"
+        className="hidden text-xs text-ink-soft hover:text-ink hover:underline underline-offset-4 sm:inline"
+      >
         {user.name} · {user.role.toLowerCase()}
-      </span>
+      </Link>
+
+      <Button variant="ghost" size="icon" asChild className="sm:hidden">
+        <Link to="/account">
+          <CircleUser aria-hidden />
+          <span className="sr-only">Your account</span>
+        </Link>
+      </Button>
 
       {/* Offered to a SEEKER too, because publishing is what makes someone a
           lister — gating the entrance on the role they earn by walking through

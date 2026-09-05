@@ -1,8 +1,8 @@
-import type { RouteProfile } from '@machiya/shared';
+import { routeProfileForMode } from '@machiya/shared';
 import { AnimatePresence } from 'motion/react';
-import { BadgeCheck, Bike, Car, TriangleAlert } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router';
+import { BadgeCheck } from 'lucide-react';
+import { useEffect } from 'react';
+import { Link, useMatch, useNavigate, useParams, useSearchParams } from 'react-router';
 import { DetailPanel } from '../components/listing/DetailPanel';
 import { EnquiryForm } from '../components/listing/EnquiryForm';
 import { Gallery } from '../components/listing/Gallery';
@@ -26,11 +26,9 @@ import {
   formatAvailability,
   formatBedrooms,
   formatDistance,
-  formatDuration,
   formatRupees,
   humanizeEnum,
 } from '../lib/format';
-import { cn } from '../lib/utils';
 import { useCloseDetail } from '../hooks/use-close-detail';
 import { useDetailOverlay } from '../stores/detail-overlay';
 
@@ -43,20 +41,41 @@ import { useDetailOverlay } from '../stores/detail-overlay';
  * refetch its tiles and lose the camera. Closing goes back when this app pushed
  * the entry, so the search returns exactly as it was.
  */
+/**
+ * The address, with the state added only when it is not already the end of it.
+ *
+ * A seeded address ends "…, Patna, Bihar", and appending the state produced
+ * "Boring Road, Patna, Bihar · Bihar" (docs/ux-audit.md 1.15).
+ */
+function addressLine(address: string | null, state: string | null): string {
+  if (!address) return state ?? '';
+  if (!state) return address;
+
+  const ending = address.trim().toLowerCase().endsWith(state.trim().toLowerCase());
+  return ending ? address : `${address} · ${state}`;
+}
+
 export function ListingDetailRoute() {
   const { slug = '' } = useParams();
   const [searchParams] = useSearchParams();
   const { office } = useSearchState();
-  const [profile, setProfile] = useState<RouteProfile>('car');
 
   const close = useCloseDetail();
+  const navigate = useNavigate();
+  const isExpanded = useMatch('/listings/:slug/full') !== null;
 
   const detail = useListingDetail(slug);
   const pois = useListingPois(slug);
   const similar = useSimilarListings(slug);
   const { commute } = useListingCommute({ slug, office });
   const commutePreferences = useCommutePreferences();
-  const route = useListingRoute({ slug, from: office, profile });
+  // The line drawn on the map is the mode being priced. One choice, not two
+  // (docs/ux-audit.md 1.11).
+  const route = useListingRoute({
+    slug,
+    from: office,
+    profile: routeProfileForMode(commutePreferences.preferences.mode),
+  });
   const recordView = useRecordView();
 
   const setListing = useDetailOverlay((state) => state.setListing);
@@ -94,9 +113,26 @@ export function ListingDetailRoute() {
 
   const searchSuffix = searchParams.size > 0 ? `?${searchParams.toString()}` : '';
 
+  // Expanding is a navigation, so back leaves full screen rather than leaving
+  // the listing — and a full-screen listing is a link somebody can send (D82).
+  const toggleExpanded = (): void => {
+    void navigate(
+      {
+        pathname: isExpanded ? `/listings/${slug}` : `/listings/${slug}/full`,
+        search: searchSuffix,
+      },
+      { replace: false },
+    );
+  };
+
   return (
     <AnimatePresence>
-      <DetailPanel key={slug} onClose={close}>
+      <DetailPanel
+        key={slug}
+        onClose={close}
+        expanded={isExpanded}
+        onToggleExpanded={toggleExpanded}
+      >
         {detail.isPending ? (
           <DetailSkeleton />
         ) : detail.isError || !listing ? (
@@ -134,13 +170,8 @@ export function ListingDetailRoute() {
                     />
                   ) : null}
                 </h2>
-                {/* The address already carries the locality and city, so the
-                    city name is not repeated — only the state, which it does
-                    not include. */}
                 <p className="text-data mt-0.5 text-ink-soft">
-                  {[listing.address ?? listing.locality, listing.city.state]
-                    .filter(Boolean)
-                    .join(' · ')}
+                  {addressLine(listing.address ?? listing.locality, listing.city.state)}
                 </p>
               </div>
 
@@ -154,76 +185,23 @@ export function ListingDetailRoute() {
               ) : null}
             </header>
 
-            {/* --- commute -------------------------------------------------- */}
             {office ? (
-              <section className="flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-title">Commute from your office</h3>
-                  <div className="flex items-center gap-0.5 rounded-chrome border border-edge p-0.5">
-                    {(
-                      [
-                        { value: 'car', label: 'Car', Icon: Car },
-                        { value: 'bike', label: 'Bike', Icon: Bike },
-                      ] as const
-                    ).map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setProfile(option.value)}
-                        aria-pressed={profile === option.value}
-                        className={cn(
-                          'flex items-center gap-1 rounded-inset px-2 py-1 text-label',
-                          profile === option.value ? 'bg-accent' : 'hover:bg-accent/60',
-                        )}
-                      >
-                        <option.Icon className="size-3.5" aria-hidden />
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {route.isPending ? (
-                  <p className="text-data text-ink-faint">measuring…</p>
-                ) : route.data ? (
-                  <>
-                    <dl className="grid grid-cols-2 gap-2">
-                      <Fact
-                        label="By road"
-                        value={formatDistance(route.data.route.distanceMeters)}
-                      />
-                      <Fact
-                        label="Travel time"
-                        value={formatDuration(route.data.route.durationSeconds)}
-                      />
-                    </dl>
-                    {route.data.route.degraded ? (
-                      // An estimate presented as a measurement would undermine
-                      // the one thing this product is selling.
-                      <p className="text-data flex items-start gap-1.5 text-ink-faint">
-                        <TriangleAlert className="mt-px size-3 shrink-0 text-clay" aria-hidden />
-                        Estimated from straight-line distance — the routing service is unavailable,
-                        so this is not a measured road route.
-                      </p>
-                    ) : null}
-                  </>
-                ) : null}
-              </section>
+              commute ? (
+                <CommutePanel
+                  commute={commute}
+                  preferences={commutePreferences.preferences}
+                  onChange={commutePreferences.update}
+                  isPersisted={commutePreferences.isPersisted}
+                  cityName={listing.city.name}
+                />
+              ) : (
+                <p className="text-data text-ink-faint">Working out the commute…</p>
+              )
             ) : (
               <p className="text-sm text-ink-soft">
                 Set an office on the search to see the commute from it.
               </p>
             )}
-
-            {/* Cost follows distance, because it is computed from it. */}
-            {commute ? (
-              <CommutePanel
-                commute={commute}
-                preferences={commutePreferences.preferences}
-                onChange={commutePreferences.update}
-                isPersisted={commutePreferences.isPersisted}
-              />
-            ) : null}
 
             {/* --- the facts ------------------------------------------------ */}
             <section>

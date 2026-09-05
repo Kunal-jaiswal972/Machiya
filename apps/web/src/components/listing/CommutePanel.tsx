@@ -1,19 +1,23 @@
 import { COMMUTE_MODES, type CommuteMode, type CommutePreferences } from '@machiya/shared';
-import { motion, useReducedMotion } from 'motion/react';
-import { Bike, Bus, Car, Fuel, Info } from 'lucide-react';
+import { Bike, Bus, Car, Fuel, Info, TriangleAlert } from 'lucide-react';
 import { useCountUp } from '../../hooks/use-count-up';
-import { CommuteControls } from '../commute/CommuteControls';
 import type { ListingCommute } from '../../hooks/use-commute';
-import { formatRupees } from '../../lib/format';
+import { CommuteControls } from '../commute/CommuteControls';
+import { formatDuration, formatRelative, formatRupees } from '../../lib/format';
 import { cn } from '../../lib/utils';
 
 /**
- * Commute cost, and the argument the product is built on.
+ * The commute, whole: how far, how long, what it costs, and against what.
  *
- * Everything here is measured: the distance is a real road route from OSRM, the
- * fuel price is scraped and attributed, and the fares are the city's own. Where
- * a number is an estimate it says so — the whole case for the feature collapses
- * if an estimate is presented as a measurement.
+ * One block rather than two. The panel used to render "Commute from your
+ * office" with its own car/bike toggle and then "Commute cost" with a second
+ * one, so the same choice was offered twice and the two could disagree about
+ * which mode you had picked (docs/ux-audit.md 1.11). Mode is chosen once here
+ * and the map's route profile follows it.
+ *
+ * Everything is measured: a real road route from OSRM, a scraped fuel price
+ * with its source, the city's own fares. Where a number is an estimate it says
+ * so — the case for the feature collapses if an estimate reads as a measurement.
  */
 const MODE_ICON: Record<CommuteMode, typeof Car> = { car: Car, bike: Bike, transit: Bus };
 const MODE_LABEL: Record<CommuteMode, string> = { car: 'Car', bike: 'Bike', transit: 'Bus' };
@@ -24,6 +28,8 @@ export interface CommutePanelProps {
   onChange: (patch: Partial<CommutePreferences>) => void;
   /** False when signed out — the controls work, nothing is remembered. */
   isPersisted: boolean;
+  /** For the fuel line, which is a price in a city rather than a price. */
+  cityName: string;
   className?: string;
 }
 
@@ -40,27 +46,63 @@ export function CommutePanel({
   preferences,
   onChange,
   isPersisted,
+  cityName,
   className,
 }: CommutePanelProps) {
-  const reduced = useReducedMotion();
-
   const { selected, comparison, outlay, fuel, degraded } = commute;
 
   const priced = COMMUTE_MODES.map((mode) => ({ mode, cost: comparison[mode] })).filter(
     (entry): entry is { mode: CommuteMode; cost: NonNullable<typeof entry.cost> } =>
       entry.cost !== null && entry.cost.perMonth > 0,
   );
-  const worst = Math.max(...priced.map((entry) => entry.cost.perMonth), 1);
+
+  // Cheapest first, and each row says what it costs against the one you have
+  // chosen. The bars this replaces were scaled to the dearest mode, so the bike
+  // — the option most likely to change the answer — rendered as a sliver next
+  // to the car (docs/ux-audit.md 1.12). A difference in rupees per month is the
+  // comparison; a length is a decoration of it.
+  const ranked = [...priced].sort((a, b) => a.cost.perMonth - b.cost.perMonth);
+  const cheapest = ranked[0];
+
+  const reading = fuel?.prices.find((price) => price.fuelType === selected.fuelType);
+  const fuelName = selected.fuelType.charAt(0) + selected.fuelType.slice(1).toLowerCase();
 
   return (
-    <section className={cn('flex flex-col gap-3 border-t border-edge p-3', className)}>
+    <section className={cn('flex flex-col gap-3', className)}>
       <header className="flex items-baseline justify-between gap-2">
-        <h3 className="text-title">Commute cost</h3>
+        <h3 className="text-title">Your commute</h3>
         <span className="text-data text-ink-faint">
           {selected.distanceKm} km by road
-          {selected.durationMinutes > 0 ? ` · ${String(selected.durationMinutes)} min` : ''}
+          {selected.durationMinutes > 0
+            ? ` · ${formatDuration(selected.durationMinutes * 60)}`
+            : ''}
         </span>
       </header>
+
+      <div className="flex gap-1">
+        {COMMUTE_MODES.map((mode) => {
+          const Icon = MODE_ICON[mode];
+          const isSelected = preferences.mode === mode;
+
+          return (
+            <button
+              key={mode}
+              type="button"
+              aria-pressed={isSelected}
+              onClick={() => onChange({ mode })}
+              className={cn(
+                'flex flex-1 items-center justify-center gap-1.5 rounded-chrome border px-2 py-1.5 text-label',
+                isSelected
+                  ? 'border-water bg-water-soft text-ink'
+                  : 'border-edge text-ink-soft hover:text-ink',
+              )}
+            >
+              <Icon className="size-3.5" aria-hidden />
+              {MODE_LABEL[mode]}
+            </button>
+          );
+        })}
+      </div>
 
       {/* The two numbers the brief asks for first, largest. */}
       <div className="flex items-end gap-5">
@@ -104,50 +146,47 @@ export function CommutePanel({
         </p>
       )}
 
-      {/* Bike vs car vs transit. Bars animate their width; the labels do not
-          move, so the comparison stays readable mid-animation. */}
-      <div className="flex flex-col gap-1.5">
-        {priced.map(({ mode, cost }) => {
+      <ul className="flex flex-col divide-y divide-edge rounded-chrome border border-edge">
+        {ranked.map(({ mode, cost }) => {
           const Icon = MODE_ICON[mode];
-          const share = (cost.perMonth / worst) * 100;
           const isSelected = mode === preferences.mode;
+          const difference = cost.perMonth - selected.perMonth;
 
           return (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => onChange({ mode })}
-              aria-pressed={isSelected}
-              className={cn(
-                'group flex items-center gap-2 rounded-inset px-1.5 py-1 text-left',
-                isSelected ? 'bg-accent' : 'hover:bg-accent/60',
-              )}
-            >
-              <Icon
-                className={cn('size-4 shrink-0', isSelected ? 'text-water' : 'text-ink-faint')}
-                aria-hidden
-              />
-              <span className="w-10 shrink-0 text-label text-ink-soft">{MODE_LABEL[mode]}</span>
-
-              <span className="relative h-2 flex-1 overflow-hidden rounded-round bg-paper-sunken">
-                <motion.span
-                  className={cn(
-                    'absolute inset-y-0 left-0 rounded-round',
-                    isSelected ? 'bg-water' : 'bg-edge-strong',
-                  )}
-                  initial={reduced ? false : { width: 0 }}
-                  animate={{ width: `${String(share)}%` }}
-                  transition={reduced ? { duration: 0 } : { duration: 0.45, ease: 'easeOut' }}
+            <li key={mode}>
+              <button
+                type="button"
+                onClick={() => onChange({ mode })}
+                aria-pressed={isSelected}
+                className={cn(
+                  'flex w-full items-center gap-2 px-2.5 py-2 text-left',
+                  isSelected ? 'bg-accent' : 'hover:bg-accent/60',
+                )}
+              >
+                <Icon
+                  className={cn('size-4 shrink-0', isSelected ? 'text-water' : 'text-ink-faint')}
+                  aria-hidden
                 />
-              </span>
+                <span className="w-10 shrink-0 text-label text-ink-soft">{MODE_LABEL[mode]}</span>
 
-              <span className="w-20 shrink-0 text-right text-data tabular-nums">
-                {formatRupees(cost.perMonth)}
-              </span>
-            </button>
+                <span className="flex-1 text-data text-ink-faint">
+                  {isSelected
+                    ? mode === cheapest?.mode
+                      ? 'cheapest'
+                      : `${formatRupees(Math.abs(selected.perMonth - (cheapest?.cost.perMonth ?? 0)))} more than ${MODE_LABEL[cheapest?.mode ?? 'bike'].toLowerCase()}`
+                    : difference < 0
+                      ? `${formatRupees(Math.abs(difference))} less a month`
+                      : `${formatRupees(difference)} more a month`}
+                </span>
+
+                <span className="shrink-0 text-data tabular-nums text-ink">
+                  {formatRupees(cost.perMonth)}
+                </span>
+              </button>
+            </li>
           );
         })}
-      </div>
+      </ul>
 
       {/* Inputs. Every one of them moves the numbers above. */}
       <CommuteControls
@@ -158,31 +197,31 @@ export function CommutePanel({
 
       {/* Provenance and honesty, in one quiet line each. */}
       <div className="flex flex-col gap-1 text-data text-ink-faint">
-        {fuel ? (
+        {reading ? (
           <p className="flex items-start gap-1">
             <Fuel className="mt-px size-3 shrink-0" aria-hidden />
             <span>
-              {selected.fuelType.charAt(0) + selected.fuelType.slice(1).toLowerCase()} at{' '}
-              {formatRupees(fuel.prices.find((p) => p.fuelType === selected.fuelType)?.price ?? 0)}
-              /litre, from{' '}
+              {fuelName} in {cityName} at {formatRupees(reading.price)}/litre — checked{' '}
+              {formatRelative(fuel?.staleAt ?? reading.fetchedAt)}
+              {', '}
+              {reading.sources.length > 1
+                ? `${String(reading.sources.length)} sources agreeing, served from `
+                : 'from one source, '}
               <a
-                href={fuel.prices.find((p) => p.fuelType === selected.fuelType)?.sourceUrl}
+                href={reading.sourceUrl}
                 target="_blank"
                 rel="noreferrer noopener"
                 className="underline decoration-dotted underline-offset-2 hover:text-ink-soft"
               >
-                {fuel.prices.find((p) => p.fuelType === selected.fuelType)?.source}
+                {reading.source}
               </a>
-              {fuel.staleAt ? (
-                <> — last checked {new Date(fuel.staleAt).toLocaleString()}, refreshing now</>
-              ) : null}
             </span>
           </p>
         ) : null}
 
         {degraded ? (
           <p className="flex items-start gap-1 text-clay">
-            <Info className="mt-px size-3 shrink-0" aria-hidden />
+            <TriangleAlert className="mt-px size-3 shrink-0" aria-hidden />
             <span>
               No road route was available, so this is a straight-line estimate rather than a
               measured commute.
@@ -190,7 +229,12 @@ export function CommutePanel({
           </p>
         ) : null}
 
-        {!isPersisted ? <p>Sign in to keep these settings between visits.</p> : null}
+        {!isPersisted ? (
+          <p className="flex items-start gap-1">
+            <Info className="mt-px size-3 shrink-0" aria-hidden />
+            <span>These settings hold on this device. Sign in to keep them everywhere.</span>
+          </p>
+        ) : null}
       </div>
     </section>
   );
