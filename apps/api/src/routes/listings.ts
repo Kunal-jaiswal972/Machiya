@@ -14,15 +14,23 @@ import {
   reorderImages,
   requestImageUpload,
 } from '../services/listing-images.js';
+import { getListerAnalytics } from '../services/lister-analytics.js';
 import {
   changeStatus,
   createDraft,
   deleteListing,
+  duplicateListing,
   getDraft,
   getListingBySlug,
   listOwned,
   patchListing,
 } from '../services/listings.js';
+
+const analyticsQuerySchema = z.object({
+  days: z.coerce.number().int().min(7).max(90).optional(),
+  /** Honoured for admins only; see getListerAnalytics. */
+  ownerId: z.string().min(1).optional(),
+});
 
 const ownedQuerySchema = z.object({
   status: listingStatusSchema.optional(),
@@ -63,6 +71,19 @@ export function listingsRouter(resolve: SessionResolver): Router {
   router.get('/listings/:id/draft', authed, (req, res, next) => {
     getDraft(sessionOf(req), pathParam(req, 'id'))
       .then((draft) => res.json({ draft }))
+      .catch(next);
+  });
+
+  router.get('/listings/mine/analytics', authed, (req, res, next) => {
+    const query = analyticsQuerySchema.parse(req.query);
+    getListerAnalytics(sessionOf(req), query)
+      .then((analytics) => res.json(analytics))
+      .catch(next);
+  });
+
+  router.post('/listings/:id/duplicate', authed, (req, res, next) => {
+    duplicateListing(sessionOf(req), pathParam(req, 'id'))
+      .then((listing) => res.status(201).json({ listing }))
       .catch(next);
   });
 

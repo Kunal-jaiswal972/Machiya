@@ -570,16 +570,86 @@ export async function listOwned(
   const page = hasMore ? listings.slice(0, options.limit) : listings;
 
   return {
-    listings: page.map((listing) => ({
+    listings: page.map(({ _count, ...listing }) => ({
       ...listing,
-      enquiryCount: listing._count.enquiries,
-      favoriteCount: listing._count.favorites,
-      viewCount: listing.viewCount,
-      imageCount: listing._count.images,
-      _count: undefined,
+      createdAt: listing.createdAt.toISOString(),
+      updatedAt: listing.updatedAt.toISOString(),
+      publishedAt: listing.publishedAt?.toISOString() ?? null,
+      enquiryCount: _count.enquiries,
+      favoriteCount: _count.favorites,
+      imageCount: _count.images,
     })),
     nextCursor: hasMore ? (page.at(-1)?.id ?? null) : null,
   };
+}
+
+/**
+ * Copies a listing as a fresh draft.
+ *
+ * Photos are deliberately NOT copied. The variant objects belong to the source
+ * listing's key prefix, so pointing a second row at them would make deleting
+ * either listing blank the other's gallery — the exact hazard
+ * `isListingOwnedVariantBase` exists to prevent (D41). Re-uploading is a few
+ * seconds; a silently shared gallery is a bug that surfaces months later.
+ *
+ * Everything else is copied, including the amenities and the pin, because the
+ * reason to duplicate is almost always "the flat upstairs".
+ */
+export async function duplicateListing(
+  session: RequestSession,
+  listingId: string,
+): Promise<{ id: string; slug: string }> {
+  const source = await prisma.listing.findUnique({
+    where: { id: listingId },
+    include: {
+      city: { select: { slug: true } },
+      amenities: { select: { amenityId: true } },
+    },
+  });
+
+  if (!source) {
+    throw new HttpError(404, 'listing_not_found', 'No such listing');
+  }
+
+  assertOwnership(session, source.ownerId);
+
+  const copy = await prisma.listing.create({
+    data: {
+      // A draft slug, so publishing names the copy from ITS final title rather
+      // than from the original's (D67).
+      slug: buildDraftSlug(source.city.slug),
+      ownerId: source.ownerId,
+      cityId: source.cityId,
+      status: 'DRAFT',
+      title: source.title === null ? null : `${source.title} (copy)`,
+      description: source.description,
+      listingType: source.listingType,
+      propertyType: source.propertyType,
+      furnishing: source.furnishing,
+      address: source.address,
+      locality: source.locality,
+      lat: source.lat,
+      lng: source.lng,
+      bedrooms: source.bedrooms,
+      bathrooms: source.bathrooms,
+      floor: source.floor,
+      totalFloors: source.totalFloors,
+      areaSqft: source.areaSqft,
+      rentAmount: source.rentAmount,
+      salePrice: source.salePrice,
+      securityDeposit: source.securityDeposit,
+      maintenanceMonthly: source.maintenanceMonthly,
+      availableFrom: source.availableFrom,
+      rules: source.rules,
+      amenities: {
+        create: source.amenities.map((join) => ({ amenityId: join.amenityId })),
+      },
+    },
+    select: { id: true, slug: true },
+  });
+
+  logger.info({ listingId: copy.id, copiedFrom: listingId }, 'listing duplicated');
+  return copy;
 }
 
 /**

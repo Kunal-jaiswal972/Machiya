@@ -303,3 +303,72 @@ export const amenityGroupSchema = z.object({
 export type AmenityGroup = z.infer<typeof amenityGroupSchema>;
 
 export const amenityGroupsResponseSchema = z.object({ groups: z.array(amenityGroupSchema) });
+
+// --- the lister dashboard ---------------------------------------------------
+
+/**
+ * How long one viewer's view of one listing is deduplicated for.
+ *
+ * Shared so the chart's caption states the same number the recorder enforces.
+ * A caption that drifts from the rule is a chart that lies quietly. See D44.
+ */
+export const VIEW_DEDUPE_WINDOW_MINUTES = 30;
+
+export const listerAnalyticsSchema = z.object({
+  days: z.number().int().positive(),
+  /** Stated in the response so the UI cannot describe the number wrongly. */
+  viewWindowMinutes: z.number().int().positive(),
+  excludesOwner: z.boolean(),
+  series: z.array(
+    z.object({
+      /** YYYY-MM-DD, UTC. */
+      date: z.string(),
+      views: z.number().int().nonnegative(),
+      enquiries: z.number().int().nonnegative(),
+    }),
+  ),
+  totals: z.object({
+    views: z.number().int().nonnegative(),
+    enquiries: z.number().int().nonnegative(),
+    favorites: z.number().int().nonnegative(),
+    published: z.number().int().nonnegative(),
+    drafts: z.number().int().nonnegative(),
+    /**
+     * Enquiries per hundred views. Null when there were no views — "0 per 100"
+     * would claim a measurement nobody took.
+     */
+    enquiriesPerHundredViews: z.number().nonnegative().nullable(),
+  }),
+});
+
+export type ListerAnalytics = z.infer<typeof listerAnalyticsSchema>;
+
+export const ownedListingSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  /** Null on a draft that has not reached the step that names it (D67). */
+  title: z.string().nullable(),
+  status: listingStatusSchema,
+  listingType: listingTypeSchema,
+  propertyType: propertyTypeSchema.nullable(),
+  locality: z.string().nullable(),
+  bedrooms: z.number().int().nullable(),
+  areaSqft: z.number().int().nullable(),
+  rentAmount: z.number().int().nullable(),
+  salePrice: z.number().int().nullable(),
+  isVerified: z.boolean(),
+  viewCount: z.number().int(),
+  enquiryCount: z.number().int(),
+  favoriteCount: z.number().int(),
+  imageCount: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  publishedAt: z.string().nullable(),
+});
+
+export type OwnedListing = z.infer<typeof ownedListingSchema>;
+
+export const ownedListingsResponseSchema = z.object({
+  listings: z.array(ownedListingSchema),
+  nextCursor: z.string().nullable(),
+});

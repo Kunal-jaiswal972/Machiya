@@ -7,6 +7,7 @@ import { ForbiddenPage } from './pages/ForbiddenPage';
 import { FuelHealthPage } from './pages/admin/FuelHealthPage';
 import { ListingDetailRoute } from './pages/ListingDetailRoute';
 import { SearchPage } from './pages/SearchPage';
+import { DashboardPage } from './pages/lister/DashboardPage';
 import { WizardPage } from './pages/lister/WizardPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
@@ -60,6 +61,16 @@ export const router = createBrowserRouter([
           <RequireRole minimum="ADMIN">
             <FuelHealthPage />
           </RequireRole>
+        ),
+        errorElement: <RouteError />,
+      },
+
+      {
+        path: 'lister',
+        element: (
+          <RequireAuth>
+            <DashboardPage />
+          </RequireAuth>
         ),
         errorElement: <RouteError />,
       },

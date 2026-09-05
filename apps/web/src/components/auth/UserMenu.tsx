@@ -42,10 +42,26 @@ export function UserMenu() {
   }
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-2">
       <span className="hidden text-xs text-muted-foreground sm:inline">
         {user.name} · {user.role.toLowerCase()}
       </span>
+
+      {/* Offered to a SEEKER too, because publishing is what makes someone a
+          lister — gating the entrance on the role they earn by walking through
+          it is backwards. */}
+      <Button variant="ghost" size="sm" asChild>
+        <Link to="/lister">Listings</Link>
+      </Button>
+      <Button variant="ghost" size="sm" asChild>
+        <Link to="/enquiries">Enquiries</Link>
+      </Button>
+      {user.role === 'ADMIN' ? (
+        <Button variant="ghost" size="sm" asChild>
+          <Link to="/admin">Admin</Link>
+        </Button>
+      ) : null}
+
       <Button variant="outline" size="sm" disabled={isSigningOut} onClick={() => void signOut()}>
         {isSigningOut ? 'Signing out…' : 'Sign out'}
       </Button>
