@@ -2577,3 +2577,41 @@ we did; a fresh navigation to the search when we did not.
 It lives in `hooks/use-close-detail.ts` because two places close the panel now —
 the panel's own controls and a press on the map behind it — and two copies of
 this test would drift.
+
+## D80 — Closing an account scrubs the row; it does not delete it
+
+Every `User` relation cascades. `prisma.user.delete` therefore takes with it
+both sides of every `Enquiry` the person was party to, and every `Listing` they
+ever published — along with the favourites and views hanging off those listings.
+A lister leaving would silently erase a seeker's copy of a conversation the
+seeker is equally part of, and there is no version of "your right to leave" that
+includes deleting someone else's records.
+
+**Chosen: the row survives with nothing personal in it.** `deletedAt` is
+stamped, and in one transaction:
+
+|                                     | what happens                                                                                                  |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| name, email, phone, avatar          | replaced — email becomes `deleted-<id>@machiya.invalid`, a domain RFC 6761 reserves so it can never be mailed |
+| commute preferences                 | cleared                                                                                                       |
+| `Account` and `Session` rows        | deleted, so no password hash or live session remains                                                          |
+| offices, favourites, saved searches | deleted — nobody else is party to them                                                                        |
+| published listings                  | set to PAUSED, the product's "not visible, not gone" state                                                    |
+| enquiries and messages              | kept, attributed to an account with nobody behind it                                                          |
+| `banned`                            | set, which is what stops a social sign-in from reviving the id                                                |
+
+`banned` doing the sign-in blocking is why this needs no filter in the auth
+layer: the admin plugin already refuses a banned user, so there is no second
+place that has to remember what `deletedAt` means.
+
+**Considered and rejected: a hard delete with the counterparty's rows
+re-parented to a tombstone user.** It is the same anonymisation with an extra
+migration, an extra row nobody owns, and a foreign key that has to be right in
+seven places instead of one.
+
+**Considered and rejected: `onDelete: SetNull` on the enquiry sides.** Both
+columns are required, and making them optional would push the "is there a person
+here" question into every read of a thread.
+
+The page says all of this before the confirmation, in the words above — the
+listings come down, the threads stay, your side shows as a closed account.

@@ -199,6 +199,12 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// When the person asked for their account to be deleted. The row survives
+  /// with its personal fields scrubbed, because every enquiry thread belongs to
+  /// two people and deleting the row would take the other one's copy with it.
+  /// See DECISIONS.md D80.
+  deletedAt DateTime?
+
   offices           OfficeLocation[]
   listings          Listing[]
   favorites         Favorite[]

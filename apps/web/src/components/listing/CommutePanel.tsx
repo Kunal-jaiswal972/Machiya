@@ -1,15 +1,8 @@
-import {
-  COMMUTE_MODES,
-  VEHICLE_CLASSES,
-  effectiveMileage,
-  fuelTypeSchema,
-  type CommuteMode,
-  type CommutePreferences,
-} from '@machiya/shared';
+import { COMMUTE_MODES, type CommuteMode, type CommutePreferences } from '@machiya/shared';
 import { motion, useReducedMotion } from 'motion/react';
 import { Bike, Bus, Car, Fuel, Info } from 'lucide-react';
-import { useId } from 'react';
 import { useCountUp } from '../../hooks/use-count-up';
+import { CommuteControls } from '../commute/CommuteControls';
 import type { ListingCommute } from '../../hooks/use-commute';
 import { formatRupees } from '../../lib/format';
 import { cn } from '../../lib/utils';
@@ -50,9 +43,6 @@ export function CommutePanel({
   className,
 }: CommutePanelProps) {
   const reduced = useReducedMotion();
-  const mileageId = useId();
-  const tripsId = useId();
-  const daysId = useId();
 
   const { selected, comparison, outlay, fuel, degraded } = commute;
 
@@ -61,10 +51,6 @@ export function CommutePanel({
       entry.cost !== null && entry.cost.perMonth > 0,
   );
   const worst = Math.max(...priced.map((entry) => entry.cost.perMonth), 1);
-
-  const vehicles = VEHICLE_CLASSES.filter(
-    (vehicle) => vehicle.mode === (preferences.mode === 'transit' ? 'car' : preferences.mode),
-  );
 
   return (
     <section className={cn('flex flex-col gap-3 border-t border-edge p-3', className)}>
@@ -164,100 +150,11 @@ export function CommutePanel({
       </div>
 
       {/* Inputs. Every one of them moves the numbers above. */}
-      <div className="grid grid-cols-2 gap-2 border-t border-edge pt-2.5">
-        {preferences.mode !== 'transit' ? (
-          <>
-            <label className="flex flex-col gap-0.5">
-              <span className="text-label text-ink-soft">Vehicle</span>
-              <select
-                value={preferences.vehicleClass}
-                onChange={(event) =>
-                  onChange({
-                    vehicleClass: event.target.value as CommutePreferences['vehicleClass'],
-                    // Cleared so the new class's own figure takes effect; the
-                    // server does the same, and doing it here too stops the
-                    // field showing a stale number for one round trip.
-                    mileageKmPerLitre: null,
-                  })
-                }
-                className="h-8 rounded-inset border border-input bg-card px-1.5 text-sm"
-              >
-                {vehicles.map((vehicle) => (
-                  <option key={vehicle.id} value={vehicle.id}>
-                    {vehicle.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label htmlFor={mileageId} className="flex flex-col gap-0.5">
-              <span className="text-label text-ink-soft">Mileage (km/l)</span>
-              <input
-                id={mileageId}
-                type="number"
-                min={1}
-                max={100}
-                step={0.5}
-                value={effectiveMileage(preferences)}
-                onChange={(event) => {
-                  const next = Number(event.target.value);
-                  if (Number.isFinite(next) && next >= 1) onChange({ mileageKmPerLitre: next });
-                }}
-                className="h-8 rounded-inset border border-input bg-card px-1.5 text-sm tabular-nums"
-              />
-            </label>
-
-            <label className="flex flex-col gap-0.5">
-              <span className="text-label text-ink-soft">Fuel</span>
-              <select
-                value={preferences.fuelType}
-                onChange={(event) =>
-                  onChange({ fuelType: fuelTypeSchema.parse(event.target.value) })
-                }
-                className="h-8 rounded-inset border border-input bg-card px-1.5 text-sm"
-              >
-                {fuelTypeSchema.options.map((fuel) => (
-                  <option key={fuel} value={fuel}>
-                    {fuel.charAt(0) + fuel.slice(1).toLowerCase()}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </>
-        ) : null}
-
-        <label htmlFor={tripsId} className="flex flex-col gap-0.5">
-          <span className="text-label text-ink-soft">Trips per day</span>
-          <input
-            id={tripsId}
-            type="number"
-            min={1}
-            max={10}
-            value={preferences.tripsPerDay}
-            onChange={(event) => {
-              const next = Number(event.target.value);
-              if (Number.isInteger(next) && next >= 1) onChange({ tripsPerDay: next });
-            }}
-            className="h-8 rounded-inset border border-input bg-card px-1.5 text-sm tabular-nums"
-          />
-        </label>
-
-        <label htmlFor={daysId} className="flex flex-col gap-0.5">
-          <span className="text-label text-ink-soft">Working days</span>
-          <input
-            id={daysId}
-            type="number"
-            min={1}
-            max={31}
-            value={preferences.workingDaysPerMonth}
-            onChange={(event) => {
-              const next = Number(event.target.value);
-              if (Number.isInteger(next) && next >= 1) onChange({ workingDaysPerMonth: next });
-            }}
-            className="h-8 rounded-inset border border-input bg-card px-1.5 text-sm tabular-nums"
-          />
-        </label>
-      </div>
+      <CommuteControls
+        preferences={preferences}
+        onChange={onChange}
+        className="border-t border-edge pt-2.5"
+      />
 
       {/* Provenance and honesty, in one quiet line each. */}
       <div className="flex flex-col gap-1 text-data text-ink-faint">

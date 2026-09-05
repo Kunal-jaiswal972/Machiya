@@ -342,6 +342,43 @@ fixed and re-driven.
 The desktop panel keeps its non-modal behaviour on purpose and Tab still leaves
 it — that is D78, not an outstanding defect.
 
+## Built, not only repaired
+
+The brief's next two items were absent features rather than defects, so they are
+listed here with what was driven to prove them.
+
+**Saved offices had a surface and half a set of controls.** The dropdown listed
+them and the star saved one, but `useDeleteOffice` and `useSetDefaultOffice`
+existed with no caller anywhere in the app — an office, once saved, could not be
+removed or demoted. Both now live on the account page. Driven: a second office
+saved, promoted (the first demoted in the same render), then removed, with the
+survivor promoted by the server.
+
+**Profile and preferences had no surface at all.** `AccountPage` was a
+five-row debug table of the session. It is now four sections — details, how you
+travel, saved offices, and closing the account. Driven signed in as
+`seeker@dev.local`:
+
+| Probe                                           | Result                                                       |
+| ----------------------------------------------- | ------------------------------------------------------------ |
+| `98765 43210`, `+91 98765 43210`, `98765-43210` | all stored as `+919876543210`                                |
+| `12345`                                         | "That does not look like a mobile number", nothing sent      |
+| empty, saved                                    | phone cleared, and still clear after a reload                |
+| mode → Car, trips → 4                           | `/api/me/commute` returns car/hatchback/4; survives a reload |
+
+Two things the account page exposed on the way:
+
+- `GET /api/me` served `session.user`, which is cached for five minutes in the
+  cookie and behind that in Redis. Saving a phone number and reloading showed
+  the field empty. It reads the row now.
+- the form's phone field failed with `Invalid input: expected ""` for a bad
+  number — a zod union reporting the empty branch. `phoneFieldSchema` in
+  `@machiya/shared` carries the empty case with its own message.
+
+Account deletion is covered by `apps/api/test/account.test.ts` rather than
+driven in the browser: the only account to drive it with is a seeded dev one,
+and proving it works means destroying it. See D80 for what it does.
+
 ## What I did not get to
 
 Listed so the next session starts from the gap rather than rediscovering it:
@@ -351,8 +388,7 @@ Listed so the next session starts from the gap rather than rediscovering it:
 - the lister dashboard and its analytics;
 - the enquiry thread, both sides;
 - the admin queue, users and coverage-demand pages;
-- saved searches and the saved-office flow (the brief reports it has no surface
-  at all — unverified);
+- saved searches;
 - keyboard-only traversal of a whole flow;
 - the list-only fallback view;
 - skeleton and empty-state coverage outside the search.
