@@ -1,9 +1,10 @@
 import { createBrowserRouter } from 'react-router';
 import { App } from './App';
-import { RequireAuth } from './components/RequireAuth';
+import { RequireAuth, RequireRole } from './components/RequireAuth';
 import { RouteError } from './components/RouteError';
 import { AccountPage } from './pages/AccountPage';
 import { ForbiddenPage } from './pages/ForbiddenPage';
+import { FuelHealthPage } from './pages/admin/FuelHealthPage';
 import { ListingDetailRoute } from './pages/ListingDetailRoute';
 import { SearchPage } from './pages/SearchPage';
 import { NotFoundPage } from './pages/NotFoundPage';
@@ -50,6 +51,16 @@ export const router = createBrowserRouter([
             <AccountPage />
           </RequireAuth>
         ),
+      },
+
+      {
+        path: 'admin/fuel',
+        element: (
+          <RequireRole minimum="ADMIN">
+            <FuelHealthPage />
+          </RequireRole>
+        ),
+        errorElement: <RouteError />,
       },
 
       { path: 'forbidden', element: <ForbiddenPage /> },

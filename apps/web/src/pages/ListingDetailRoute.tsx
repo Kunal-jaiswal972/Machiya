@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { DetailPanel } from '../components/listing/DetailPanel';
 import { Gallery } from '../components/listing/Gallery';
+import { CommutePanel } from '../components/listing/CommutePanel';
 import { PoiPanel } from '../components/listing/PoiPanel';
 import { RingGauge } from '../components/RingGauge';
 import { DetailSkeleton } from '../components/Skeletons';
@@ -17,6 +18,7 @@ import {
   useRecordView,
   useSimilarListings,
 } from '../hooks/use-listing';
+import { useCommutePreferences, useListingCommute } from '../hooks/use-commute';
 import { useSearchState } from '../hooks/use-search-state';
 import {
   formatArea,
@@ -49,6 +51,8 @@ export function ListingDetailRoute() {
   const detail = useListingDetail(slug);
   const pois = useListingPois(slug);
   const similar = useSimilarListings(slug);
+  const { commute } = useListingCommute({ slug, office });
+  const commutePreferences = useCommutePreferences();
   const route = useListingRoute({ slug, from: office, profile });
   const recordView = useRecordView();
 
@@ -215,6 +219,16 @@ export function ListingDetailRoute() {
                 Set an office on the search to see the commute from it.
               </p>
             )}
+
+            {/* Cost follows distance, because it is computed from it. */}
+            {commute ? (
+              <CommutePanel
+                commute={commute}
+                preferences={commutePreferences.preferences}
+                onChange={commutePreferences.update}
+                isPersisted={commutePreferences.isPersisted}
+              />
+            ) : null}
 
             {/* --- the facts ------------------------------------------------ */}
             <section>

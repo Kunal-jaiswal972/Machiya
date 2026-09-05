@@ -1,7 +1,8 @@
-import { coverageSetSchema, type CoveredCity } from '@machiya/shared';
-import { useQuery } from '@tanstack/react-query';
+import { coverageSetSchema, type CoveredCity, type CoverageRequestInput } from '@machiya/shared';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { apiFetch } from '../lib/api';
+import { requestCoverage } from '../lib/coverage';
 
 /**
  * The cities the product covers, read from the API rather than written down.
@@ -79,4 +80,36 @@ function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: num
     Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
 
   return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/**
+ * "Tell me when you cover Mumbai."
+ *
+ * Kept beside `useCoverage` rather than inside the notice component, because
+ * the component's job is the designed state and this is a network write — and
+ * because the two are the read and the write of the same concept.
+ *
+ * No retry: the two failure modes are a 409 for a point already covered and a
+ * 429 from the hourly rate limit, and repeating either is pointless.
+ */
+export interface CoverageRequestState {
+  submit: (input: CoverageRequestInput) => void;
+  /** How many people have asked about somewhere near that point. */
+  requests: number | null;
+  isSaving: boolean;
+  error: Error | null;
+}
+
+export function useCoverageRequest(): CoverageRequestState {
+  const mutation = useMutation({
+    mutationFn: (input: CoverageRequestInput) => requestCoverage(input),
+    retry: false,
+  });
+
+  return {
+    submit: mutation.mutate,
+    requests: mutation.data?.requests ?? null,
+    isSaving: mutation.isPending,
+    error: mutation.error,
+  };
 }

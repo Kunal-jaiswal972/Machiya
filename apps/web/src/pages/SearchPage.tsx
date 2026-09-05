@@ -5,7 +5,6 @@ import {
   type MatchPrecision,
   type OutOfCoverage,
 } from '@machiya/shared';
-import { useMutation } from '@tanstack/react-query';
 import { List, Map as MapIcon, Star } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Outlet, useNavigate, useSearchParams } from 'react-router';
@@ -18,11 +17,12 @@ import { ResultList } from '../components/search/ResultList';
 import { SearchMap } from '../components/search/SearchMap';
 import { Button } from '../components/ui/button';
 import { useCoverage, nearestCoveredCity } from '../hooks/use-coverage';
+import { useReverseGeocode } from '../hooks/use-reverse-geocode';
 import { useListingSearch } from '../hooks/use-listing-search';
 import { useOffices, useSaveOffice } from '../hooks/use-offices';
 import { useSearchState } from '../hooks/use-search-state';
 import { useAuth } from '../lib/auth-context';
-import { describeCoordinate, reverseGeocode } from '../lib/places';
+import { describeCoordinate } from '../lib/places';
 import { cn } from '../lib/utils';
 import { useSearchUi } from '../stores/search-ui';
 
@@ -120,39 +120,23 @@ export function SearchPage() {
   /**
    * Naming a point after it is picked.
    *
-   * The office moves immediately and the reverse geocode fills the label when
-   * it arrives: making the user wait on a network round trip before the rings
-   * move would be backwards, and a pin over an unmapped field is a legitimate
-   * office that the geocoder simply cannot name.
+   * The office moves immediately and the label arrives when it arrives — see
+   * `useReverseGeocode`. A dropped pin IS the exact spot whatever the geocoder
+   * manages to call it, so the precision note is cleared: the label describes
+   * the point, it is not the source of its precision.
    */
-  const nameOffice = useMutation({
-    mutationFn: (point: { lat: number; lng: number }) => reverseGeocode(point),
-    onSuccess: ({ place, coverage }, point) => {
-      // `coverage` present means the pin is somewhere the product does not
-      // reach. That is a different answer from "no address here", which is what
-      // a bare null used to conflate it with.
-      setPinCoverage(coverage ?? null);
-      // A dropped or dragged pin IS the exact spot, whatever the reverse
-      // geocode managed to name it — so there is nothing to caveat. The label
-      // is a description of the point, not the source of its precision.
+  const nameOffice = useReverseGeocode({
+    onNamed: (label) => {
       setOfficePrecision(null);
-      setOfficeLabel(
-        place?.label
-          ? [place.label, place.context].filter(Boolean).join(', ')
-          : describeCoordinate(point),
-      );
+      setOfficeLabel(label);
     },
-    onError: (_error, point) => {
-      setPinCoverage(null);
-      setOfficePrecision(null);
-      setOfficeLabel(describeCoordinate(point));
-    },
+    onCoverage: setPinCoverage,
   });
 
   const pickOffice = useCallback(
     (point: { lat: number; lng: number }) => {
       setOffice(point);
-      nameOffice.mutate(point);
+      nameOffice.name(point);
     },
     [setOffice, nameOffice],
   );

@@ -1,6 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
-import { healthResponseSchema, helloResponseSchema } from '@machiya/shared';
-import { apiFetch } from '../lib/api';
+import { useStatusProbe } from '../hooks/use-status';
 import { cn } from '../lib/utils';
 
 /**
@@ -8,16 +6,7 @@ import { cn } from '../lib/utils';
  * Replaced by the real search panel in step 6.
  */
 export function StatusCard() {
-  const hello = useQuery({
-    queryKey: ['hello'],
-    queryFn: () => apiFetch('/api/hello', helloResponseSchema),
-  });
-
-  const health = useQuery({
-    queryKey: ['health'],
-    queryFn: () => apiFetch('/health', healthResponseSchema),
-    refetchInterval: 15_000,
-  });
+  const { hello, health } = useStatusProbe();
 
   return (
     <section

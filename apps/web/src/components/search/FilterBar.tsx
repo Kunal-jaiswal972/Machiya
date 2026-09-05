@@ -122,7 +122,13 @@ function activeChips(query: SearchQuery): ActiveChip[] {
   return chips;
 }
 
+/**
+ * `Total monthly cost` is listed first: it is what the product exists to rank
+ * by, and burying it under `Nearest` would make the differentiator the option
+ * nobody finds.
+ */
 const SORTS: Array<{ value: NonNullable<SearchQuery['sort']>; label: string }> = [
+  { value: 'total_cost', label: 'Total monthly cost' },
   { value: 'distance', label: 'Nearest' },
   { value: 'price_asc', label: 'Cheapest' },
   { value: 'price_desc', label: 'Dearest' },

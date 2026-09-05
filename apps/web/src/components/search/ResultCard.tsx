@@ -96,6 +96,28 @@ export function ResultCard({
           ) : null}
         </div>
 
+        {/*
+          Total true monthly cost: the second-loudest thing on the card, per
+          docs/design.md, because it is the product's argument. Absent rather
+          than zero when it could not be computed — a city with no scraped fuel
+          price yet — since a Rs0 commute would read as a claim.
+        */}
+        {listing.totalMonthlyCost !== null ? (
+          <p className="text-data text-ink-soft">
+            <span className="font-medium tabular-nums text-ink">
+              {formatRupees(listing.totalMonthlyCost)}
+            </span>{' '}
+            all-in
+            {listing.commuteMonthly !== null ? (
+              <span className="text-ink-faint">
+                {' · '}
+                {formatRupees(listing.commuteMonthly)} commute
+                {listing.commuteEstimated ? ' (est.)' : ''}
+              </span>
+            ) : null}
+          </p>
+        ) : null}
+
         {/* Clamped to two lines rather than truncated to one: a 420px panel
             cuts "1 BHK studio in Koramangala" mid-word, and the locality is the
             part someone is scanning for. */}

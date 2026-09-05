@@ -1,4 +1,5 @@
 import type { ListingCard } from '@machiya/shared';
+import { motion, useReducedMotion } from 'motion/react';
 import { useEffect, useRef } from 'react';
 import { EmptyState } from '../EmptyState';
 import { ResultListSkeleton } from '../Skeletons';
@@ -44,6 +45,7 @@ export function ResultList({
   onToggleFavorite,
 }: ResultListProps) {
   const sentinel = useRef<HTMLDivElement>(null);
+  const reduced = useReducedMotion();
 
   useEffect(() => {
     const node = sentinel.current;
@@ -89,14 +91,30 @@ export function ResultList({
 
   return (
     <div>
+      {/*
+        A re-sort ANIMATES as a reorder rather than repainting in place. That is
+        the point of the total-cost sort: watching a cheap flat far out sink past
+        a pricier one nearby is what makes the inversion legible.
+
+        `layout="position"` and a stable `layoutId` per listing let motion
+        interpolate the positions instead of swapping the DOM. Position only —
+        no width or height — so sixty cards reshuffling stays a transform on the
+        compositor rather than sixty layout passes.
+      */}
       {listings.map((listing) => (
-        <ResultCard
+        <motion.div
           key={listing.id}
-          listing={listing}
-          searchSuffix={searchSuffix}
-          isFavorite={favoriteIds?.has(listing.id) ?? false}
-          {...(onToggleFavorite ? { onToggleFavorite } : {})}
-        />
+          layoutId={`result-${listing.id}`}
+          layout={reduced ? false : 'position'}
+          transition={reduced ? { duration: 0 } : { type: 'spring', stiffness: 380, damping: 34 }}
+        >
+          <ResultCard
+            listing={listing}
+            searchSuffix={searchSuffix}
+            isFavorite={favoriteIds?.has(listing.id) ?? false}
+            {...(onToggleFavorite ? { onToggleFavorite } : {})}
+          />
+        </motion.div>
       ))}
 
       <div ref={sentinel} aria-hidden className="h-px" />
