@@ -21,6 +21,7 @@ import { useReverseGeocode } from '../hooks/use-reverse-geocode';
 import { useListingSearch } from '../hooks/use-listing-search';
 import { useOffices, useSaveOffice } from '../hooks/use-offices';
 import { useSearchState } from '../hooks/use-search-state';
+import { useFavoriteIds, useToggleFavorite } from '../hooks/use-seeker';
 import { useAuth } from '../lib/auth-context';
 import { describeCoordinate } from '../lib/places';
 import { cn } from '../lib/utils';
@@ -42,6 +43,8 @@ export function SearchPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isSignedIn } = useAuth();
+  const favoriteIds = useFavoriteIds();
+  const toggleFavorite = useToggleFavorite();
   const { cities, maxBounds } = useCoverage();
   const { offices, defaultOffice } = useOffices();
   const saveOffice = useSaveOffice();
@@ -333,6 +336,17 @@ export function SearchPage() {
               searchSuffix={searchSuffix}
               hasFilters={activeFilterCount > 0}
               onClearFilters={clearFilters}
+              favoriteIds={favoriteIds}
+              onToggleFavorite={(listingId) => {
+                if (!isSignedIn) {
+                  toast.info('Sign in to keep a place');
+                  return;
+                }
+                toggleFavorite.mutate({
+                  listingId,
+                  next: !favoriteIds.has(listingId),
+                });
+              }}
             />
           ) : (
             <EmptyState

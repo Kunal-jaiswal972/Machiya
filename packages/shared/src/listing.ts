@@ -9,6 +9,8 @@ import {
 import {
   OUT_OF_COVERAGE_CODE,
   coordinateSchema,
+  latitudeSchema,
+  longitudeSchema,
   outOfCoverageSchema,
   radiusMetersSchema,
   ringSchema,
@@ -441,3 +443,77 @@ export const enquiryMessageInputSchema = z.object({
 });
 
 export type EnquiryMessageInput = z.input<typeof enquiryMessageInputSchema>;
+
+// --- the seeker's shelves ---------------------------------------------------
+
+export const favoriteListingSchema = z.object({
+  favoritedAt: z.string(),
+  id: z.string(),
+  slug: z.string(),
+  title: z.string().nullable(),
+  locality: z.string().nullable(),
+  listingType: listingTypeSchema,
+  /**
+   * Carried so a saved listing that has been paused or rented can say so.
+   * Dropping it from the list instead would lose information the person put
+   * there deliberately.
+   */
+  status: listingStatusSchema,
+  rentAmount: z.number().int().nullable(),
+  salePrice: z.number().int().nullable(),
+  maintenanceMonthly: z.number().int().nullable(),
+  bedrooms: z.number().int().nullable(),
+  areaSqft: z.number().int().nullable(),
+  lat: z.number(),
+  lng: z.number(),
+  citySlug: z.string(),
+  cityName: z.string(),
+  coverUrl: z.string().nullable(),
+});
+
+export type FavoriteListing = z.infer<typeof favoriteListingSchema>;
+
+export const favoritesResponseSchema = z.object({ favorites: z.array(favoriteListingSchema) });
+export const favoriteIdsResponseSchema = z.object({ listingIds: z.array(z.string()) });
+export const favoriteToggleResponseSchema = z.object({
+  listingId: z.string(),
+  favorited: z.boolean(),
+});
+
+export const savedSearchInputSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  filters: listingFiltersSchema.default({}),
+  officeLat: latitudeSchema,
+  officeLng: longitudeSchema,
+  radiusMeters: z.coerce.number().int().min(100).max(10_000).default(3_000),
+  notifyEnabled: z.boolean().default(false),
+});
+
+export type SavedSearchInput = z.input<typeof savedSearchInputSchema>;
+
+export const savedSearchViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  filters: listingFiltersSchema,
+  officeLat: z.number(),
+  officeLng: z.number(),
+  radiusMeters: z.number().int(),
+  notifyEnabled: z.boolean(),
+  createdAt: z.string(),
+  /**
+   * Whether the saved office is still inside the served area.
+   *
+   * A saved search holds coordinates, so it outlives the coverage it was saved
+   * under. Re-running an uncovered one would read as "this search found
+   * nothing", which is the exact confusion correction 9 removed everywhere
+   * else — so the card says so instead and offers the nearest served city.
+   */
+  covered: z.boolean(),
+  nearestCity: z.object({ slug: z.string(), name: z.string() }).nullable(),
+});
+
+export type SavedSearchView = z.infer<typeof savedSearchViewSchema>;
+
+export const savedSearchesResponseSchema = z.object({
+  searches: z.array(savedSearchViewSchema),
+});

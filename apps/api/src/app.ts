@@ -22,6 +22,7 @@ import { meRouter } from './routes/me.js';
 import { officesRouter } from './routes/offices.js';
 import { placesRouter } from './routes/places.js';
 import { searchRouter } from './routes/search.js';
+import { seekerRouter } from './routes/seeker.js';
 
 export interface CreateAppOptions {
   /** Injectable so tests can exercise routes without live infrastructure. */
@@ -126,6 +127,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
     app.use('/api', listingDetailRouter(sessionResolver));
     app.use('/api', officesRouter(sessionResolver));
     app.use('/api', enquiriesRouter(sessionResolver));
+    app.use('/api', seekerRouter(sessionResolver));
     // Fuel prices are public, but the commute preferences and the scrape
     // health page in the same router are not, so it mounts with the resolver.
     app.use('/api', fuelRouter(sessionResolver));

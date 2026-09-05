@@ -54,6 +54,9 @@ export function UserMenu() {
         <Link to="/lister">Listings</Link>
       </Button>
       <Button variant="ghost" size="sm" asChild>
+        <Link to="/saved">Saved</Link>
+      </Button>
+      <Button variant="ghost" size="sm" asChild>
         <Link to="/enquiries">Enquiries</Link>
       </Button>
       {user.role === 'ADMIN' ? (

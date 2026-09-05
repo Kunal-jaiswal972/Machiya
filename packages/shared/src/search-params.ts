@@ -25,6 +25,13 @@ import { listingSortSchema, type ListingFilters } from './listing.js';
  * Written as an explicit `superRefine`-free transform rather than
  * `.pipe(z.array(item))` because zod 4's `pipe` requires the downstream input
  * type to be `string[]`, which a `ZodArray<T>` is not.
+ *
+ * The result is a plain array, not a `[T, ...T[]]` tuple. It used to be cast to
+ * one — a leftover from zod 3, where `.nonempty()` inferred a tuple and this had
+ * to match. In zod 4 `.nonempty()` on the filter schemas infers `T[]`, so the
+ * cast made the two sides of the same value disagree and every conversion
+ * between them needed a second cast to paper over it. Emptiness is still
+ * refused, by the check below rather than by the type.
  */
 const csvArray = <T extends z.ZodType<string>>(item: T) =>
   z
@@ -40,7 +47,7 @@ const csvArray = <T extends z.ZodType<string>>(item: T) =>
         return z.NEVER;
       }
 
-      const parsed: Array<z.infer<T>> = [];
+      const parsed: z.infer<T>[] = [];
 
       for (const part of parts) {
         const result = item.safeParse(part);
@@ -51,7 +58,7 @@ const csvArray = <T extends z.ZodType<string>>(item: T) =>
         parsed.push(result.data);
       }
 
-      return parsed as [z.infer<T>, ...Array<z.infer<T>>];
+      return parsed;
     })
     .optional();
 
@@ -194,6 +201,47 @@ export function buildSearchParams(query: SearchQuery): URLSearchParams {
   // link carrying `limit=100` would be a shared link that loads differently.
 
   return params;
+}
+
+/**
+ * A saved search back into a search URL.
+ *
+ * Here rather than in the page that renders the "re-run" link, because a saved
+ * search IS a search query and this is the inverse of `searchQueryToInput`. Two
+ * copies of the mapping would drift the first time a filter is added, and the
+ * one in the client would be the copy nobody notices is stale.
+ *
+ * The office travels with it. That is the whole point: a saved search that
+ * forgot where you work would be a saved filter.
+ */
+export function savedSearchToQuery(saved: {
+  officeLat: number;
+  officeLng: number;
+  radiusMeters: number;
+  filters: ListingFilters;
+}): SearchQuery {
+  const { filters } = saved;
+
+  return {
+    lat: saved.officeLat,
+    lng: saved.officeLng,
+    radius: saved.radiusMeters,
+    ...(filters.citySlug ? { city: filters.citySlug } : {}),
+    ...(filters.listingType ? { type: filters.listingType } : {}),
+    ...(filters.propertyType?.length ? { property: filters.propertyType } : {}),
+    ...(filters.furnishing?.length ? { furnishing: filters.furnishing } : {}),
+    ...(filters.amenitySlugs?.length ? { amenities: filters.amenitySlugs } : {}),
+    ...(filters.priceMin !== undefined ? { priceMin: filters.priceMin } : {}),
+    ...(filters.priceMax !== undefined ? { priceMax: filters.priceMax } : {}),
+    ...(filters.bedroomsMin !== undefined ? { bedsMin: filters.bedroomsMin } : {}),
+    ...(filters.bedroomsMax !== undefined ? { bedsMax: filters.bedroomsMax } : {}),
+    ...(filters.bathroomsMin !== undefined ? { bathsMin: filters.bathroomsMin } : {}),
+    ...(filters.areaSqftMin !== undefined ? { areaMin: filters.areaSqftMin } : {}),
+    ...(filters.areaSqftMax !== undefined ? { areaMax: filters.areaSqftMax } : {}),
+    ...(filters.ring ? { ring: filters.ring } : {}),
+    ...(filters.verifiedOnly ? { verified: true } : {}),
+    ...(filters.query ? { q: filters.query } : {}),
+  };
 }
 
 /** How many filters are active, for the "3 filters" badge on the chip row. */
