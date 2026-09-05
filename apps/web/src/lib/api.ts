@@ -1,4 +1,4 @@
-import { apiErrorSchema } from '@machiya/shared';
+import { apiErrorSchema, type ApiError, type OutOfCoverage } from '@machiya/shared';
 import type { z } from 'zod';
 import { env } from '../env';
 
@@ -7,9 +7,21 @@ export class ApiRequestError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    /**
+     * Field-level detail and the served-city list, when the API sent them.
+     *
+     * Carried rather than flattened into the message because the wizard renders
+     * the covered cities as one-tap buttons and highlights the field that
+     * failed — see the note on `coverage` in `apiErrorSchema`.
+     */
+    readonly detail: Omit<ApiError['error'], 'code' | 'message'> = {},
   ) {
     super(message);
     this.name = 'ApiRequestError';
+  }
+
+  get coverage(): OutOfCoverage | undefined {
+    return this.detail.coverage;
   }
 }
 
@@ -39,11 +51,13 @@ export async function apiFetch<TSchema extends z.ZodType>(
 
   if (!response.ok) {
     const parsedError = apiErrorSchema.safeParse(payload);
-    throw new ApiRequestError(
-      response.status,
-      parsedError.success ? parsedError.data.error.code : 'unknown_error',
-      parsedError.success ? parsedError.data.error.message : response.statusText,
-    );
+
+    if (!parsedError.success) {
+      throw new ApiRequestError(response.status, 'unknown_error', response.statusText);
+    }
+
+    const { code, message, ...detail } = parsedError.data.error;
+    throw new ApiRequestError(response.status, code, message, detail);
   }
 
   return schema.parse(payload);

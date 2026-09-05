@@ -7,6 +7,7 @@ import { ForbiddenPage } from './pages/ForbiddenPage';
 import { FuelHealthPage } from './pages/admin/FuelHealthPage';
 import { ListingDetailRoute } from './pages/ListingDetailRoute';
 import { SearchPage } from './pages/SearchPage';
+import { WizardPage } from './pages/lister/WizardPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
 import { ResetPasswordPage } from './pages/auth/ResetPasswordPage';
@@ -59,6 +60,28 @@ export const router = createBrowserRouter([
           <RequireRole minimum="ADMIN">
             <FuelHealthPage />
           </RequireRole>
+        ),
+        errorElement: <RouteError />,
+      },
+
+      // No role gate: a seeker drafts a listing and becomes a lister by
+      // publishing one. The upgrade happens server-side inside the publish
+      // transaction, never here.
+      {
+        path: 'lister/listings/new',
+        element: (
+          <RequireAuth>
+            <WizardPage />
+          </RequireAuth>
+        ),
+        errorElement: <RouteError />,
+      },
+      {
+        path: 'lister/listings/:id/edit',
+        element: (
+          <RequireAuth>
+            <WizardPage />
+          </RequireAuth>
         ),
         errorElement: <RouteError />,
       },

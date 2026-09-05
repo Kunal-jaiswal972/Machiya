@@ -279,3 +279,27 @@ export const searchResponseSchema = z.discriminatedUnion('status', [
 ]);
 
 export type SearchResponse = z.infer<typeof searchResponseSchema>;
+
+export const amenitySchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  name: z.string(),
+  icon: z.string().nullable(),
+  category: z.string(),
+});
+
+export type Amenity = z.infer<typeof amenitySchema>;
+
+/**
+ * Amenities as the wizard's checklist wants them: grouped by category, because
+ * the grouping is the form's structure and two clients grouping the same rows
+ * differently would be two different forms.
+ */
+export const amenityGroupSchema = z.object({
+  category: z.string(),
+  amenities: z.array(amenitySchema),
+});
+
+export type AmenityGroup = z.infer<typeof amenityGroupSchema>;
+
+export const amenityGroupsResponseSchema = z.object({ groups: z.array(amenityGroupSchema) });

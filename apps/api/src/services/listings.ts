@@ -15,6 +15,7 @@ import { logger } from '../logger.js';
 import { HttpError } from '../middleware/error-handler.js';
 import { deleteObjects } from '../lib/storage.js';
 import { assertOwnership, type RequestSession } from '../middleware/require-auth.js';
+import { resolveAmenityIds } from './amenities.js';
 import { assertCovered } from './coverage.js';
 import { listingObjectKeys, toImageView } from './listing-images.js';
 
@@ -111,24 +112,6 @@ async function resolveCityForListing(input: {
   }
 
   return { id: city.id, slug: city.slug };
-}
-
-async function resolveAmenityIds(slugs: string[]): Promise<string[]> {
-  if (slugs.length === 0) return [];
-
-  const amenities = await prisma.amenity.findMany({
-    where: { slug: { in: slugs } },
-    select: { id: true, slug: true },
-  });
-
-  const found = new Set(amenities.map((amenity) => amenity.slug));
-  const missing = slugs.filter((slug) => !found.has(slug));
-
-  if (missing.length > 0) {
-    throw new HttpError(400, 'unknown_amenity', `Unknown amenities: ${missing.join(', ')}`);
-  }
-
-  return amenities.map((amenity) => amenity.id);
 }
 
 /**

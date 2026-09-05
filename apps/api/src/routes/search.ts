@@ -2,6 +2,7 @@ import { parseSearchQuery, searchQueryToInput } from '@machiya/shared';
 import { Router } from 'express';
 import { HttpError } from '../middleware/error-handler.js';
 import { optionalAuth, type SessionResolver } from '../middleware/require-auth.js';
+import { listAmenities } from '../services/amenities.js';
 import { listCities, searchListings } from '../services/search.js';
 
 /**
@@ -17,6 +18,17 @@ export function searchRouter(resolve: SessionResolver): Router {
         // Three rows that change only when someone re-seeds.
         res.set('cache-control', 'public, max-age=300');
         res.json({ cities });
+      })
+      .catch(next);
+  });
+
+  // Public: the wizard's checklist and the search's amenity filter read the
+  // same list, and it changes only when someone re-seeds.
+  router.get('/amenities', (_req, res, next) => {
+    listAmenities()
+      .then((groups) => {
+        res.set('cache-control', 'public, max-age=300');
+        res.json({ groups });
       })
       .catch(next);
   });

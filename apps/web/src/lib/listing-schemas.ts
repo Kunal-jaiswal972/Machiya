@@ -1,11 +1,17 @@
 import {
+  amenityGroupsResponseSchema,
+  amenitySchema,
   furnishingTypeSchema,
+  imageUploadTicketSchema,
+  listingDraftResponseSchema,
   listingImageSchema,
   listingStatusSchema,
   listingTypeSchema,
   propertyTypeSchema,
 } from '@machiya/shared';
 import { z } from 'zod';
+
+export { amenityGroupsResponseSchema, listingDraftResponseSchema };
 
 /**
  * The shape `GET /api/listings/:slug` actually returns.
@@ -52,15 +58,7 @@ export const listingDetailSchema = z.object({
     publishedAt: z.string().nullable(),
     city: z.object({ slug: z.string(), name: z.string(), state: z.string() }),
     images: z.array(listingImageSchema),
-    amenities: z.array(
-      z.object({
-        id: z.string(),
-        slug: z.string(),
-        name: z.string(),
-        icon: z.string().nullable(),
-        category: z.string(),
-      }),
-    ),
+    amenities: z.array(amenitySchema),
     owner: z.object({
       id: z.string(),
       name: z.string(),
@@ -74,3 +72,24 @@ export const listingDetailSchema = z.object({
 });
 
 export type ListingDetail = z.infer<typeof listingDetailSchema>['listing'];
+
+// --- the lister's own endpoints --------------------------------------------
+
+export const createdListingSchema = z.object({
+  listing: z.object({ id: z.string(), slug: z.string() }),
+});
+
+export const listingStatusResponseSchema = z.object({
+  id: z.string(),
+  status: listingStatusSchema,
+  slug: z.string(),
+  /** True on the publish that turned a seeker into a lister. */
+  roleUpgraded: z.boolean(),
+});
+
+export const listingPatchedSchema = z.object({ id: z.string() });
+
+export const imageTicketResponseSchema = z.object({ ticket: imageUploadTicketSchema });
+export const imageUploadedResponseSchema = z.object({ image: listingImageSchema });
+export const imageOrderResponseSchema = z.object({ images: z.array(listingImageSchema) });
+export const imageDeletedSchema = z.object({ id: z.string() });
