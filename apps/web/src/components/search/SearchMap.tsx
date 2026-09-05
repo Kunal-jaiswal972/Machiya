@@ -15,6 +15,7 @@ import Map, {
 import 'maplibre-gl/dist/maplibre-gl.css';
 import '../../lib/maplibre-setup';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import { env } from '../../env';
 import { useMapPalette } from '../../hooks/use-map-palette';
 import { formatRupeesCompact } from '../../lib/format';
@@ -118,6 +119,32 @@ export function SearchMap({
   const [styleReady, setStyleReady] = useState(false);
   const [styleError, setStyleError] = useState<string | null>(null);
   const palette = useMapPalette();
+
+  /**
+   * Where a click landed, waiting to be confirmed as the office.
+   *
+   * Click-then-confirm rather than click-to-move: the gesture that used to
+   * destroy the search is now the gesture that offers to change it, and the
+   * offer is dismissible (D77).
+   */
+  const [pendingOffice, setPendingOffice] = useState<{ lat: number; lng: number } | null>(null);
+
+  useEffect(() => {
+    if (!pendingOffice) return;
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setPendingOffice(null);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [pendingOffice]);
+
+  // A confirmation anchored to a point the office has since left is a
+  // confirmation for a question nobody asked any more.
+  useEffect(() => {
+    setPendingOffice(null);
+  }, [office?.lat, office?.lng]);
   const hoveredId = useSearchUi((state) => state.hoveredId);
   const setHoveredId = useSearchUi((state) => state.setHoveredId);
   const lastHovered = useRef<string | null>(null);
@@ -354,11 +381,16 @@ export function SearchMap({
         return;
       }
 
-      // A click on the map itself moves the office. This is the second of the
-      // three ways to set one, alongside the field and dragging the pin.
-      onPickOffice({ lat: event.lngLat.lat, lng: event.lngLat.lng });
+      // A bare click does NOT move the office — it offers to.
+      //
+      // It used to move it outright, which meant one stray click silently
+      // re-anchored every distance, ring and commute figure on screen, ~2.4km
+      // away in the measured case, with no confirmation and no undo
+      // (docs/ux-audit.md 1.5). Setting the office is a deliberate act; a click
+      // on a map is not. See DECISIONS.md D77.
+      setPendingOffice({ lat: event.lngLat.lat, lng: event.lngLat.lng });
     },
-    [listings, onPickOffice, onSelectListing],
+    [listings, onSelectListing],
   );
 
   if (styleError) {
@@ -602,6 +634,47 @@ export function SearchMap({
             </Source>
           ) : null}
 
+          {pendingOffice ? (
+            <Marker
+              longitude={pendingOffice.lng}
+              latitude={pendingOffice.lat}
+              anchor="bottom"
+              // Otherwise the click that lands on this bubble reaches the map
+              // underneath it and moves the pending point out from under itself.
+              onClick={(event) => {
+                event.originalEvent.stopPropagation();
+              }}
+            >
+              <div
+                className="chrome-over flex items-center gap-1 p-1"
+                role="dialog"
+                aria-label="Set your office here?"
+              >
+                <button
+                  type="button"
+                  autoFocus
+                  className="text-label rounded-inset bg-water px-2 py-1 text-white"
+                  onClick={() => {
+                    onPickOffice(pendingOffice);
+                    setPendingOffice(null);
+                  }}
+                >
+                  Set office here
+                </button>
+                <button
+                  type="button"
+                  aria-label="Leave the office where it is"
+                  className="text-label rounded-inset px-1.5 py-1 text-ink-soft hover:bg-paper-sunken"
+                  onClick={() => {
+                    setPendingOffice(null);
+                  }}
+                >
+                  <X className="size-3.5" aria-hidden />
+                </button>
+              </div>
+            </Marker>
+          ) : null}
+
           {office ? (
             <Marker
               longitude={office.lng}
@@ -613,8 +686,18 @@ export function SearchMap({
               }}
             >
               {/* Round, because it is a map-native object — the one shape the
-                  radius scale reserves for them. */}
-              <span className="block size-4 cursor-grab rounded-round border-2 border-white bg-water shadow-[0_0_0_4px_var(--color-water-soft)] active:cursor-grabbing" />
+                  radius scale reserves for them.
+
+                  Bigger than the 16px dot it was, with a grab cursor and a
+                  title: dragging was already the safe way to move the office
+                  and was the one nobody could see, while the discoverable
+                  gesture was the destructive one (D77). */}
+              <span
+                title="Drag to move your office"
+                aria-label="Your office — drag to move it"
+                role="img"
+                className="block size-6 cursor-grab rounded-round border-2 border-white bg-water shadow-[0_0_0_5px_var(--color-water-soft)] transition-transform hover:scale-110 active:cursor-grabbing active:scale-95"
+              />
             </Marker>
           ) : null}
 

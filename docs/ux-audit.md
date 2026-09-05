@@ -320,6 +320,22 @@ unlabelled.
 
 ---
 
+## Fixed, and re-driven to prove it
+
+Each line below was re-run against the app after the change, with the same
+reproduction that produced the "before".
+
+| Item                | Before                                          | After                                                                   |
+| ------------------- | ----------------------------------------------- | ----------------------------------------------------------------------- |
+| 1.1 commute inputs  | mileage 18 then 36, panel frozen at ₹219        | 20 → ₹493, 40 → ₹247, 45 → ₹219 — and the card totals move with it      |
+| 1.2 signed out      | input snaps back, 401 in console, nothing moves | 30 → ₹329, 50 → ₹197, persisted to this device, no console error        |
+| 1.3 bike on a car   | mode bike kept sedan and 13 km/l                | bike selects scooter at 45 km/l, ₹152; the server coerces the same way  |
+| 1.5 office on click | one click moved the office 2.4 km silently      | bare click offers "Set office here"; Escape dismisses; confirm moves it |
+
+Still open from the list above: 1.6 (the rAF teardown race), 1.7 (close from a
+shared link), 1.8 (outside-click and focus trap), 1.10 (the office picker
+dropping the locality), and every S3 item.
+
 ## What I did not get to
 
 Listed so the next session starts from the gap rather than rediscovering it:

@@ -2482,3 +2482,39 @@ One implementation note worth keeping: composing the two query schemas with
 `.merge()` throws `Invalid input to extend: expected a plain object` at request
 time under zod 4, not at build time. They are parsed separately instead. The
 test suite caught it; the typechecker did not.
+
+### D77. Setting the office is click-then-confirm, and dragging is the thing made visible
+
+A single click anywhere on the map moved the office. Measured: one click
+2.4 km from the pin silently re-anchored every distance, ring and commute figure
+on screen, with no confirmation and no undo (docs/ux-audit.md 1.5). The code was
+deliberate about it — "A click on the map itself moves the office. This is the
+second of the three ways to set one."
+
+The trouble is that the three ways were not equal. Dragging the pin was already
+implemented and safe, and it was a 16px dot with no affordance; the field was
+discoverable; and the click was the one a person performs by accident while
+reading a map. The destructive gesture was the discoverable one.
+
+**Chosen: a click offers, it does not act.** The click drops a confirmation
+anchored at the point — "Set office here" and a dismiss — and the office moves
+only when that is pressed. Escape dismisses it, so does moving the office by any
+other route, and the bubble stops its own click from reaching the map beneath it
+(otherwise the confirmation walks out from under itself).
+
+Considered and rejected:
+
+- **A modifier or long-press.** Undiscoverable on a desktop and indistinguishable
+  from a slow tap on a phone.
+- **A mode the user enters.** A mode is a thing to leave, and this is a
+  once-a-session action.
+- **Nothing at all on click, drag only.** Correct about the danger and wrong
+  about the need: setting an office by dragging a pin across a city is worse
+  than pointing at where you work.
+
+The pin itself is now 24px with a grab cursor, a hover scale and a title, so the
+safe mechanism is the visible one. That is the actual repair — the click
+behaviour was a symptom of dragging being invisible.
+
+The office field and the saved-office list remain the other two ways in, and
+neither changed.
