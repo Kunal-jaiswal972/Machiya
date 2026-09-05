@@ -1,11 +1,13 @@
 import type { AdminListing } from '@machiya/shared';
 import { BadgeCheck, ExternalLink, ShieldOff } from 'lucide-react';
+import { useState } from 'react';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
 import { EmptyState } from '../../components/EmptyState';
 import { Button } from '../../components/ui/button';
 import { useModerationQueue, useVerifyListing } from '../../hooks/use-admin';
 import { formatRupees } from '../../lib/format';
+import { cn } from '../../lib/utils';
 
 /**
  * Newly published listings, oldest first.
@@ -15,54 +17,102 @@ import { formatRupees } from '../../lib/format';
  * list, which is what makes the count mean "outstanding" rather than "total".
  */
 export function ModerationPage() {
-  const queue = useModerationQueue();
+  const [showVerified, setShowVerified] = useState(false);
+  const queue = useModerationQueue(showVerified);
   const verify = useVerifyListing();
-
-  if (queue.isPending) return <QueueSkeleton />;
 
   const listings = queue.data ?? [];
 
-  if (listings.length === 0) {
-    return (
-      <EmptyState
-        illustration="rings"
-        title="Nothing waiting"
-        detail="Every published listing has been looked at. New ones appear here in the order they went live."
-      />
-    );
-  }
-
   return (
     <>
-      <p className="text-data text-ink-soft">{listings.length} waiting, oldest first.</p>
-      <ul className="grid gap-2">
-        {listings.map((listing) => (
-          <ModerationRow
-            key={listing.id}
-            listing={listing}
-            onVerify={() => {
-              verify.mutate(
-                { id: listing.id, isVerified: true },
-                {
-                  onSuccess: () => {
-                    toast.success('Verified');
-                  },
-                  onError: () => {
-                    toast.error('Could not verify that listing');
-                  },
-                },
-              );
-            }}
-          />
-        ))}
-      </ul>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="flex gap-1.5">
+          {(
+            [
+              { label: 'Waiting', value: false },
+              { label: 'Verified', value: true },
+            ] as const
+          ).map((option) => (
+            <button
+              key={option.label}
+              type="button"
+              aria-pressed={showVerified === option.value}
+              onClick={() => {
+                setShowVerified(option.value);
+              }}
+              className={cn(
+                'text-label rounded-[var(--radius-chrome)] border px-2.5 py-1',
+                showVerified === option.value
+                  ? 'border-water bg-water-soft'
+                  : 'border-edge-strong text-ink-soft hover:bg-paper-sunken',
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        {queue.isPending ? null : (
+          <p className="text-data text-ink-soft">
+            {listings.length} {showVerified ? 'verified, newest first' : 'waiting, oldest first'}
+          </p>
+        )}
+      </div>
+
+      {queue.isPending ? (
+        <QueueSkeleton />
+      ) : listings.length === 0 ? (
+        <EmptyState
+          illustration="rings"
+          title={showVerified ? 'Nothing verified yet' : 'Nothing waiting'}
+          detail={
+            showVerified
+              ? 'Verified listings appear here, so a badge given by mistake can be taken back.'
+              : 'Every published listing has been looked at. New ones appear here in the order they went live.'
+          }
+        />
+      ) : (
+        <ul className="grid gap-2">
+          {listings.map((listing) => (
+            <ModerationRow
+              key={listing.id}
+              listing={listing}
+              action={
+                listing.isVerified ? (
+                  <UnverifyButton id={listing.id} />
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      verify.mutate(
+                        { id: listing.id, isVerified: true },
+                        {
+                          onSuccess: () => {
+                            toast.success('Verified');
+                          },
+                          onError: () => {
+                            toast.error('Could not verify that listing');
+                          },
+                        },
+                      );
+                    }}
+                  >
+                    <BadgeCheck className="size-3.5" aria-hidden />
+                    Verify
+                  </Button>
+                )
+              }
+            />
+          ))}
+        </ul>
+      )}
     </>
   );
 }
 
 const NEW_ACCOUNT_DAYS = 2;
 
-function ModerationRow({ listing, onVerify }: { listing: AdminListing; onVerify: () => void }) {
+function ModerationRow({ listing, action }: { listing: AdminListing; action: React.ReactNode }) {
   const price = listing.listingType === 'RENT' ? listing.rentAmount : listing.salePrice;
 
   // A brand-new account publishing immediately is the shape of a spam run, so
@@ -105,22 +155,20 @@ function ModerationRow({ listing, onVerify }: { listing: AdminListing; onVerify:
             Open
           </Link>
         </Button>
-        <Button size="sm" onClick={onVerify}>
-          <BadgeCheck className="size-3.5" aria-hidden />
-          Verify
-        </Button>
+        {action}
       </div>
     </li>
   );
 }
 
 /**
- * Unverify, offered where the verified listings are rather than in the queue.
+ * Unverify, offered on the verified list rather than in the queue.
  *
- * The queue holds only unverified rows by definition, so a toggle there would
- * be a button that removes the row it sits on and can never be pressed again.
+ * The queue holds only unverified rows, so a toggle there would be a button
+ * that removes the row it sits on and can never be pressed again. Reachable
+ * because the same endpoint serves both sides of `isVerified`.
  */
-export function UnverifyButton({ id, onDone }: { id: string; onDone?: () => void }) {
+function UnverifyButton({ id, onDone }: { id: string; onDone?: () => void }) {
   const verify = useVerifyListing();
 
   return (

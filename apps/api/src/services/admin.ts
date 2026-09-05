@@ -28,21 +28,25 @@ function assertAdmin(session: RequestSession): void {
 }
 
 /**
- * Newly published listings, oldest first.
+ * Published listings, oldest first.
  *
  * Oldest first is the whole point of a queue: a moderator working newest-first
- * leaves the oldest unreviewed listing unreviewed forever. Unverified only,
- * because a verified listing has already been through here.
+ * leaves the oldest unreviewed listing unreviewed forever.
+ *
+ * `verified` defaults to false — the queue is the unreviewed ones. Asking for
+ * the verified side is what makes unverify reachable: the queue itself cannot
+ * offer that toggle, because it would be a button that removes the row it sits
+ * on and can never be pressed again.
  */
 export async function moderationQueue(
   session: RequestSession,
-  options: { limit?: number } = {},
+  options: { limit?: number; verified?: boolean } = {},
 ): Promise<AdminListing[]> {
   assertAdmin(session);
 
   const rows = await prisma.listing.findMany({
-    where: { status: 'PUBLISHED', isVerified: false },
-    orderBy: { publishedAt: 'asc' },
+    where: { status: 'PUBLISHED', isVerified: options.verified ?? false },
+    orderBy: { publishedAt: options.verified ? 'desc' : 'asc' },
     take: Math.min(options.limit ?? 50, 100),
     select: {
       id: true,

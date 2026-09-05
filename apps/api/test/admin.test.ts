@@ -101,17 +101,23 @@ describe('the moderation queue', () => {
     await expect(coverageDemand(world.strangerSession)).rejects.toMatchObject({ status: 403 });
   });
 
-  it('unverifies as well as verifies', async () => {
+  it('serves the verified side too, which is what makes unverify reachable', async () => {
     const id = await publish({
       slug: 'patna-toggle-aaa111',
       publishedAt: new Date(),
       isVerified: true,
     });
 
+    // Not in the queue, because the queue is the unreviewed ones.
+    expect(await moderationQueue(world.adminSession)).toHaveLength(0);
+
+    const verified = await moderationQueue(world.adminSession, { verified: true });
+    expect(verified.map((listing) => listing.id)).toEqual([id]);
+
     await setListingVerified(world.adminSession, id, false);
 
-    const row = await prisma.listing.findUniqueOrThrow({ where: { id } });
-    expect(row.isVerified).toBe(false);
+    expect(await moderationQueue(world.adminSession, { verified: true })).toHaveLength(0);
+    expect(await moderationQueue(world.adminSession)).toHaveLength(1);
   });
 });
 

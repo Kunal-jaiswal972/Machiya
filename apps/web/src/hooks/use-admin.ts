@@ -8,11 +8,16 @@ import { z } from 'zod';
 import { apiFetch } from '../lib/api';
 import { authClient } from '../lib/auth-client';
 
-export function useModerationQueue() {
+export function useModerationQueue(verified = false) {
   return useQuery({
-    queryKey: ['admin', 'moderation'],
+    queryKey: ['admin', 'moderation', verified],
     queryFn: async () =>
-      (await apiFetch('/api/admin/moderation', moderationQueueResponseSchema)).listings,
+      (
+        await apiFetch(
+          `/api/admin/moderation?verified=${String(verified)}`,
+          moderationQueueResponseSchema,
+        )
+      ).listings,
   });
 }
 

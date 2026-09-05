@@ -21,6 +21,14 @@ const usersQuerySchema = z.object({
 
 const verifySchema = z.object({ isVerified: z.boolean() });
 
+const moderationQuerySchema = z.object({
+  /** Absent means the queue: the listings still waiting. */
+  verified: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .optional(),
+});
+
 /**
  * Admin. Two guards deep on purpose: `requireAuth` establishes the session and
  * `requireRole('ADMIN')` gates the router, and every service re-checks the role
@@ -35,7 +43,11 @@ export function adminRouter(resolve: SessionResolver): Router {
   router.use('/admin', requireAuth(resolve), requireRole('ADMIN'));
 
   router.get('/admin/moderation', (req, res, next) => {
-    moderationQueue(sessionOf(req))
+    const query = moderationQuerySchema.parse(req.query);
+    moderationQueue(
+      sessionOf(req),
+      query.verified === undefined ? {} : { verified: query.verified },
+    )
       .then((listings) => res.json({ listings }))
       .catch(next);
   });
