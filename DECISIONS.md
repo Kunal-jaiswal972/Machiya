@@ -1718,6 +1718,192 @@ already-fixed code. The working form is
 `... | while IFS= read -r k; do redis-cli del "$k"; done`. The other was two
 `pnpm dev:api` processes, covered in D57.
 
+## Step 8 — the commute cost engine
+
+These four entries were **written after the fact**, in brief step 9, and that is
+itself the finding. Step 8 shipped with `D61`-`D64` cited in five source files —
+`apps/api/src/geo/osrm.ts`, `packages/shared/src/cities/fuel-sources.ts`,
+`apps/worker/src/fuel/index.ts`, `packages/db/prisma/schema.prisma` and
+`packages/shared/src/listing.ts` — and no such entries existed here. A pointer
+to a decision nobody wrote is worse than no pointer: it tells the reader the
+reasoning is recorded and sends them to an empty page.
+
+They are reconstructed from the shipped code and from the measurements the code
+itself records. Where a number below could not be re-measured in the session
+that wrote the entry, it says so rather than restating a comment as fact.
+
+### D61. One `/table` call prices a whole page of listings — and the `--max-table-size` pin does not bound it
+
+Sorting by total monthly cost (D64) needs a road distance for **every candidate
+in the radius**, not for the page being shown. One `/route` per listing would be
+200 sequential round trips per search, so the road distances come from a single
+`/table?sources=0` — one origin, every destination, one request — in
+`apps/api/src/geo/osrm.ts`.
+
+Step 8 recorded that `--max-table-size 1000` was declared on both OSRM services
+"rather than inherited, because this is the call that depends on it", and that a
+default below the candidate count would degrade the total-cost sort silently.
+**That is wrong, and this entry exists mostly to say so**, because the shape of
+the mistake is the one this project keeps finding: a knob that looks configured
+and is not (D26's flatnode file, D57's `PUBLIC_NOMINATIM_URL`).
+
+Measured against `osrm/osrm-backend:v5.25.0`, by starting a second instance on
+the project's own graph volume with `--max-table-size 10` and probing the
+boundary:
+
+| Request shape                           | Coordinates | Result                                    |
+| --------------------------------------- | ----------- | ----------------------------------------- |
+| all-to-all (`/table` with no `sources`) | 4           | `Ok 4x4`                                  |
+| all-to-all                              | 11          | **HTTP 400 "Too many table coordinates"** |
+| `sources=0`                             | 11          | `Ok 1x11`                                 |
+| `sources=0`                             | 12          | `Ok 1x12`                                 |
+
+So the limit is enforced **only for the all-to-all shape**. Given an explicit
+`sources`, v5.25 checks `sources.size() * destinations.size()`, and with
+`destinations` unset that product is zero — it can never exceed any limit. The
+production pin was confirmed to be equally inert: against the real `osrm-car`
+with its `--max-table-size 1000`, a `sources=0` request with 2,000 destinations
+answered `Ok 1x2001`, and 200 coordinates all-to-all (40,000 pairs) answered
+`Ok 200x200`.
+
+Two things follow:
+
+- **`TABLE_CHUNK = 200` in the adapter is the only bound that actually
+  exists.** It was recorded as "cheap insurance" against a hypothetical proxy
+  objecting to a 24 KB URL. It is not insurance; it is the limit. The chunk
+  results concatenate exactly, so chunking cannot change an answer, and the
+  comment at the constant now says what it is really doing.
+- **The compose flag stays anyway, with its comment corrected.** It costs
+  nothing, it is the right value if an all-to-all `/table` is ever added, and
+  removing it would mean re-deriving this measurement the next time somebody
+  wonders. What it must not do is keep claiming to protect a call it does not
+  reach.
+
+The performance numbers were re-measured at the same time, and the step-8
+figure was optimistic: a 300-destination `sources=0` request against `osrm-car`
+takes about 970 ms cold and 230-290 ms warm, not 170 ms. 1,000 destinations
+answer in about 840 ms warm. Still one round trip per search rather than two
+hundred, which is the point — but the honest number is a quarter of a second,
+not a sixth.
+
+### D62. Three fuel sources, two of them one feed, and every quote checked against the city the page names
+
+The brief named a set of fuel-price sources. Checking them against the live
+sites replaced most of it, and the checking matters more than the replacements.
+
+**Two originally configured sources were removed because they cannot work.**
+`mypetrolprice` serves the Delhi shell for every city slug — HTTP 200, a
+perfectly plausible price, the wrong city. And on `goodreturns`' Patna page a
+ticker carries the **national** petrol figure (111.31) next to Patna's real one
+(113.37), so a parser that takes the first price on the page is wrong by two
+rupees a litre with nothing on the page to indicate it.
+
+Neither failure is catchable by a plausibility band, because both numbers are
+plausible fuel prices. **The only defence is refusing a number the page does not
+itself attach to this city**, which is what `cityNameVariants` and `buildQuote`
+in `apps/worker/src/fuel/adapter.ts` exist for. Bengaluru carries both
+spellings, because every source indexes it as `bangalore` while the page text
+sometimes says Bengaluru — which is also why the per-source slug lives in the
+city record (D49) rather than being derived from the city slug.
+
+**What survived: `goodreturns`, `bankbazaar` and `petrolpriceindia` — but that
+is two feeds, not three.** `bankbazaar` and `petrolpriceindia` returned
+identical figures where `goodreturns` differed (Bengaluru diesel: 98.8 from both
+against 99.56), so they are one upstream behind two front doors. The registry
+records that as `sharesFeedWith`, and it is not decoration: `pickConsensus`
+takes a median, and without collapsing the shared pair into one vote the shared
+feed outvotes the independent one on every fuel, every hour, invisibly. They
+still earn their place for **availability** — either site can be down alone —
+which is a different thing from verification, and the registry says so in those
+words.
+
+`independentFeedCount` is the number that answers "would we notice if this price
+were wrong", and the admin scrape-health page reports it rather than a source
+count.
+
+**A median, with a real quote kept alongside it.** The served price is the
+median of what answered; the `source` and `sourceUrl` of one actual quote are
+kept, so attribution still points at a page a person can open. A median with no
+provenance is a number nobody can check.
+
+**Nothing in the scrape can fail the run.** Source failure is the normal case
+here, not the exception: adapters are asked in series per city — 27 requests
+fired at once is a burst on somebody else's server for no gain when the job has
+a whole hour — each failure is recorded as per-adapter health, and the job
+throws only if Redis and Postgres are both unusable. An adapter that has
+returned nothing for `FUEL_ADAPTER_DEAD_AFTER_RUNS` consecutive runs is reported
+dead, because the interesting failure is one source dying quietly while the
+others cover for it — exactly the failure a "did the job succeed" check cannot
+see.
+
+### D63. Commute preferences are one JSON column, parsed on the way out as well as in
+
+`User.commutePrefs` holds fuel type, vehicle class, mileage, trips per day and
+working days per month, as a `Json` column rather than five typed columns or a
+side table.
+
+The test for that shape is whether anything ever **queries or aggregates** the
+fields, and nothing does: they are read whole for one user and written whole by
+one form. Five columns would buy indexes nobody uses and a migration every time
+the commute engine gains a knob.
+
+Two rules keep the column from becoming the usual JSON-blob liability:
+
+- **It is parsed with `commutePreferencesSchema` on the way out, not cast.** A
+  blob written by an older shape is a real possibility on any long-lived row,
+  and a missing `mileageKmPerLitre` would otherwise reach the engine as
+  `undefined` and produce `NaN` rupees — a number that _renders_, which is the
+  worst kind of wrong. A blob that fails the parse is logged with the offending
+  paths and replaced by the defaults for that request.
+- **Updates are read-modify-write and validated as a whole**, not a JSON merge
+  in SQL, because the merged result is what has to make sense: `mode: 'bike'`
+  with a car's mileage is two individually valid fields and one nonsensical
+  setting. Changing vehicle class clears a pinned mileage unless the same patch
+  sets one — otherwise picking "SUV" silently keeps the hatchback's 15 km/l and
+  understates the commute, which is the one error this product must not make.
+
+**Null means "never touched", and that is different from "set to the
+defaults".** The panel says which, because a default the user has never seen is
+not a preference they have expressed.
+
+### D64. `total_cost` is an expression inside the search query, never a re-sort of a page
+
+Rent plus maintenance plus the real monthly commute, ranked ascending, computed
+in the same statement as the search.
+
+The alternative — fetch a page and sort it in the client — is not a smaller
+version of this feature, it is a different and wrong one. It would show the
+cheapest of the 24 listings that happened to be on screen rather than the
+cheapest of the 200 in the radius, and the listing whose rent looks high until
+you price the commute is _by construction_ the one a page-local sort buries.
+That inversion is the product's entire argument, so the sort has to see every
+candidate.
+
+Consequences, each of them deliberate:
+
+- **The road distances are joined in.** `roadDistanceJoin` builds a VALUES join
+  from the `/table` answer (D61), so the cost is an expression over columns
+  rather than a lookup per row. The moment one input needed a per-row fetch, the
+  sort would have to leave SQL.
+- **The commute parameters are supplied by the API, never by the client.** They
+  come from the caller's stored preferences (D63), the scraped fuel price and
+  the city's fare table. A client that names the fuel price its own commute is
+  costed with is a client that can rank itself first.
+- **Both halves or neither.** The cost columns exist only when the caller
+  supplied parameters _and_ distances; either alone would produce a number from
+  a missing input, which is worse than no number. Without them
+  `sort=total_cost` is a programming error and throws, rather than quietly
+  falling back to distance — a sort control that silently sorts by something
+  else is the failure this entry exists to prevent.
+- **A sale listing's total is NULL, not zero.** A monthly total for a purchase
+  needs an interest rate this product never asks for. `ORDER BY` sends the NULLs
+  last rather than treating them as free.
+
+Keyset pagination still applies (D19), so the ranking is correct **across
+pages** — which a page-local sort cannot be, even in principle.
+
+## Correction 11 — the typecheck gate
+
 ### D65. `pnpm typecheck` did not look at a single test file
 
 CLAUDE.md calls `pnpm typecheck` a hard gate that "exits 0 across every

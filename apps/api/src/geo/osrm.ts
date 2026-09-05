@@ -201,11 +201,10 @@ export class OsrmRoutingProvider implements RoutingProvider {
 /**
  * `/table` with `sources=0`: one origin, every destination, one request.
  *
- * `max-table-size` is pinned to 1000 on both services in compose rather than
- * inherited, because this is the call that depends on it — and a default below
- * the candidate count would degrade the total-cost sort silently. Measured
- * before relying on it: 300 destinations answer in about 170 ms, and 1000 are
- * accepted (D61).
+ * Do not add a bound here on the strength of compose's `--max-table-size`:
+ * v5.25 applies that limit only to the all-to-all shape, so this call is
+ * unbounded whatever the flag says. `TABLE_CHUNK` is the real limit. See
+ * DECISIONS D61.
  */
 const osrmTableSchema = z.object({
   code: z.string(),
@@ -216,10 +215,10 @@ const osrmTableSchema = z.object({
 /**
  * Beyond this many destinations the request is split.
  *
- * Below the pinned 1000 with room to spare: a URL carrying a thousand
- * coordinate pairs is roughly 24 KB, and while OSRM accepts it, a proxy in
- * front of it one day may not. Chunking is cheap insurance and the results
- * concatenate exactly.
+ * The only ceiling on a one-source `/table` that actually exists — OSRM does
+ * not enforce one for this shape (D61). A thousand coordinate pairs is roughly
+ * 24 KB of URL, which OSRM accepts and a proxy in front of it may not. The
+ * chunk results concatenate exactly, so this cannot change an answer.
  */
 const TABLE_CHUNK = 200;
 

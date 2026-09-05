@@ -17,6 +17,7 @@ first sentence whether you are in the right place.
 | [design.md](design.md)               | You are building or changing UI                                    |
 | [operations.md](operations.md)       | Queues, schedules, failure modes, or you need to reset something   |
 | [attribution.md](attribution.md)     | You are publishing a screenshot of seeded data                     |
+| [known-issues.md](known-issues.md)   | Something looks broken and you want to know if it already is       |
 | [audit-2026-09.md](audit-2026-09.md) | You want to know what is actually built versus specified           |
 
 Two documents live outside this directory on purpose:
