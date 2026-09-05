@@ -1,6 +1,14 @@
 import type { ListerAnalytics } from '@machiya/shared';
 import { motion, useReducedMotion } from 'motion/react';
-import { useId } from 'react';
+import { Bar, BarChart, CartesianGrid, Line, XAxis, YAxis } from 'recharts';
+import {
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from '../ui/chart';
 
 /**
  * Views over time and enquiry conversion, with the definition of "view"
@@ -12,8 +20,9 @@ import { useId } from 'react';
  * number typed here, so the two cannot drift apart. A chart that silently meant
  * page loads would flatter every listing and be worse than no chart.
  *
- * The cards animate in on load; the chart itself does not animate its bars,
- * because the numbers are what the reader came for.
+ * The cards animate in on load. The chart's own bars do not: `isAnimationActive`
+ * is off, because no animation may gate the appearance of content the reader is
+ * waiting for, and the numbers are what they came for.
  */
 export function AnalyticsCards({ analytics }: { analytics: ListerAnalytics }) {
   const reduced = useReducedMotion();
@@ -27,8 +36,8 @@ export function AnalyticsCards({ analytics }: { analytics: ListerAnalytics }) {
       value:
         totals.enquiriesPerHundredViews === null ? '—' : totals.enquiriesPerHundredViews.toFixed(1),
       // Not "conversion rate": an enquiry is a person and a view is a
-      // person-window, so the two are not the same denominator a funnel implies.
-      meta: totals.views === 0 ? 'no views yet' : 'not a funnel — see the note',
+      // person-window, so the two are not the denominators a funnel implies.
+      meta: totals.views === 0 ? 'no views yet' : 'a ratio, not a funnel',
     },
     { label: 'Saved by', value: String(totals.favorites), meta: 'people, all time' },
   ];
@@ -56,20 +65,25 @@ export function AnalyticsCards({ analytics }: { analytics: ListerAnalytics }) {
   );
 }
 
-function ViewsChart({ analytics }: { analytics: ListerAnalytics }) {
-  const titleId = useId();
-  const series = analytics.series;
-  const peak = Math.max(1, ...series.map((point) => point.views));
+/**
+ * Colours come from the design tokens, not from recharts' defaults.
+ *
+ * `water` is the colour of a measured thing everywhere else in this product,
+ * and `signal` is reserved for price and the active ring — an enquiry earns it
+ * here because it is the outcome a lister is actually reading the chart for.
+ */
+const CHART_CONFIG = {
+  views: { label: 'Views', color: 'var(--color-water)' },
+  enquiries: { label: 'Enquiries', color: 'var(--color-signal)' },
+} satisfies ChartConfig;
 
-  const width = 720;
-  const height = 120;
-  const gap = 2;
-  const barWidth = Math.max(1, width / Math.max(series.length, 1) - gap);
+function ViewsChart({ analytics }: { analytics: ListerAnalytics }) {
+  const empty = analytics.series.every((point) => point.views === 0 && point.enquiries === 0);
 
   return (
     <figure className="chrome p-3">
       <figcaption className="text-label mb-2 flex flex-wrap items-baseline justify-between gap-2">
-        <span>Views per day</span>
+        <span>Views and enquiries per day</span>
         <span className="text-data text-ink-faint">
           {/* Stated from the payload, not from a constant typed here. */}
           one viewer per {analytics.viewWindowMinutes} minutes
@@ -77,76 +91,58 @@ function ViewsChart({ analytics }: { analytics: ListerAnalytics }) {
         </span>
       </figcaption>
 
-      {series.every((point) => point.views === 0) ? (
-        <p className="text-data py-6 text-center text-ink-soft">
+      {empty ? (
+        <p className="text-data py-8 text-center text-ink-soft">
           Nothing yet. Views appear here the day after someone opens a listing.
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <svg
-            viewBox={`0 0 ${String(width)} ${String(height)}`}
-            className="h-[120px] w-full min-w-[420px]"
-            role="img"
-            aria-labelledby={titleId}
-            preserveAspectRatio="none"
-          >
-            <title id={titleId}>
-              {`Daily views over the last ${String(analytics.days)} days, peaking at ${String(peak)}`}
-            </title>
-
-            {series.map((point, index) => {
-              const barHeight = (point.views / peak) * (height - 18);
-              const x = index * (barWidth + gap);
-
-              return (
-                <g key={point.date}>
-                  <rect
-                    x={x}
-                    y={height - 14 - barHeight}
-                    width={barWidth}
-                    height={Math.max(barHeight, point.views > 0 ? 1.5 : 0)}
-                    fill="var(--color-water)"
-                    opacity={0.85}
-                  >
-                    <title>{`${point.date}: ${String(point.views)} views, ${String(point.enquiries)} enquiries`}</title>
-                  </rect>
-                  {/* An enquiry sits on its day as a mark rather than a second
-                      bar: there are far fewer of them, and a second scale on
-                      one axis is a chart nobody reads correctly. */}
-                  {point.enquiries > 0 ? (
-                    <circle
-                      cx={x + barWidth / 2}
-                      cy={height - 14 - barHeight - 4}
-                      r={2.5}
-                      fill="var(--color-signal)"
-                    />
-                  ) : null}
-                </g>
-              );
-            })}
-
-            <line
-              x1={0}
-              y1={height - 13}
-              x2={width}
-              y2={height - 13}
-              stroke="var(--color-edge-strong)"
-              strokeWidth={1}
+        <ChartContainer config={CHART_CONFIG} className="h-[180px] w-full">
+          <BarChart data={analytics.series} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+            <CartesianGrid vertical={false} stroke="var(--color-edge)" />
+            <XAxis
+              dataKey="date"
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              minTickGap={24}
+              tickFormatter={formatDayTick}
             />
-          </svg>
-        </div>
+            <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} />
+            <ChartTooltip
+              cursor={false}
+              content={<ChartTooltipContent labelFormatter={formatTooltipLabel} />}
+            />
+            <Bar dataKey="views" fill="var(--color-views)" radius={2} isAnimationActive={false} />
+            {/* A line rather than a second bar: enquiries are an order of
+                magnitude rarer than views, so two bars on one scale would make
+                them invisible and two scales would make the chart unreadable. */}
+            <Line
+              type="monotone"
+              dataKey="enquiries"
+              stroke="var(--color-enquiries)"
+              strokeWidth={2}
+              dot={false}
+              isAnimationActive={false}
+            />
+            <ChartLegend content={<ChartLegendContent />} />
+          </BarChart>
+        </ChartContainer>
       )}
-
-      <p className="text-data mt-1.5 flex flex-wrap gap-x-3 text-ink-faint">
-        <span className="flex items-center gap-1">
-          <span className="inline-block size-2 rounded-sm bg-water" aria-hidden />
-          views
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block size-2 rounded-full bg-signal" aria-hidden />a day with an
-          enquiry
-        </span>
-      </p>
     </figure>
   );
+}
+
+const DAY_TICK = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short' });
+const DAY_FULL = new Intl.DateTimeFormat('en-IN', {
+  weekday: 'short',
+  day: 'numeric',
+  month: 'short',
+});
+
+function formatDayTick(value: string): string {
+  return DAY_TICK.format(new Date(value));
+}
+
+function formatTooltipLabel(value: unknown): string {
+  return typeof value === 'string' ? DAY_FULL.format(new Date(value)) : String(value);
 }
