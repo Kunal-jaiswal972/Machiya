@@ -237,3 +237,18 @@ larger than the functional change, commit the cleanup separately with a
 
 Apply this to commit messages too: the subject line says what changed, the body
 says why only when why is not obvious, and neither restates the diff.
+
+## Known issues and deferrals
+
+docs/known-issues.md is a short, current list of what is broken, worked around,
+or deliberately deferred — one line each, with a link to the DECISIONS entry that
+explains it. It is an index, not a place for reasoning.
+
+Add an entry when you defer work to a later step, leave a workaround in place, or
+find a bug you are not fixing now. Remove the entry in the commit that fixes it —
+a list nobody prunes is a list nobody reads. The end-of-step report names what was
+added to or removed from it.
+
+Then have it seeded once:
+
+Create docs/known-issues.md and populate it from DECISIONS.md. Read every entry and extract anything still open: deferred work (D59's three wizard rules, waiting on step 9), workarounds still in force, bugs recorded but not fixed, and claims an entry makes that the code does not yet satisfy — D42 and D41 both document exactly that failure mode, so check for others. One line each, linking to the entry. Do not restate the reasoning. If the list is empty for a section, say so rather than padding it.
