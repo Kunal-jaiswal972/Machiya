@@ -53,6 +53,8 @@ export interface SearchMapProps {
   maxBounds?: [number, number, number, number] | undefined;
   onPickOffice: (point: { lat: number; lng: number }) => void;
   onSelectListing: (listing: ListingCard) => void;
+  /** Set only while the detail panel is open; a bare map press then closes it. */
+  onDismissDetail?: (() => void) | undefined;
 }
 
 const RINGS_SOURCE = 'machiya-rings';
@@ -114,6 +116,7 @@ export function SearchMap({
   maxBounds,
   onPickOffice,
   onSelectListing,
+  onDismissDetail,
 }: SearchMapProps) {
   const mapRef = useRef<MapRef | null>(null);
   const [styleReady, setStyleReady] = useState(false);
@@ -148,8 +151,6 @@ export function SearchMap({
   const hoveredId = useSearchUi((state) => state.hoveredId);
   const setHoveredId = useSearchUi((state) => state.setHoveredId);
   const lastHovered = useRef<string | null>(null);
-  const ringAnimation = useRef<number | null>(null);
-  const routeAnimation = useRef<number | null>(null);
   const everLoaded = useRef(false);
 
   // The detail panel is a child route rendered through an Outlet, so what it
@@ -296,14 +297,12 @@ export function SearchMap({
         }
       });
 
-      if (!done) ringAnimation.current = requestAnimationFrame(step);
+      if (!done) frame = requestAnimationFrame(step);
     };
 
-    ringAnimation.current = requestAnimationFrame(step);
+    let frame = requestAnimationFrame(step);
 
-    return () => {
-      if (ringAnimation.current !== null) cancelAnimationFrame(ringAnimation.current);
-    };
+    return () => cancelAnimationFrame(frame);
   }, [rings, styleReady]);
 
   // --- hover sync: feature-state, not a re-render ----------------------------
@@ -343,6 +342,11 @@ export function SearchMap({
     const duration = 700;
 
     const step = (now: number): void => {
+      // Re-checked every frame, not only before the first one. A style reload
+      // drops every layer while React still believes the route is mounted, and
+      // the loop then paints a layer that is gone (docs/ux-audit.md 1.6).
+      if (!map.getLayer('route-line')) return;
+
       const progress = Math.min(1, (now - start) / duration);
       const eased = 1 - (1 - progress) ** 3;
 
@@ -352,14 +356,12 @@ export function SearchMap({
         Math.max(0.01, (1 - eased) * 400),
       ]);
 
-      if (progress < 1) routeAnimation.current = requestAnimationFrame(step);
+      if (progress < 1) frame = requestAnimationFrame(step);
     };
 
-    routeAnimation.current = requestAnimationFrame(step);
+    let frame = requestAnimationFrame(step);
 
-    return () => {
-      if (routeAnimation.current !== null) cancelAnimationFrame(routeAnimation.current);
-    };
+    return () => cancelAnimationFrame(frame);
   }, [routeLine, styleReady]);
 
   const onClick = useCallback(
@@ -381,6 +383,14 @@ export function SearchMap({
         return;
       }
 
+      // With a listing open, the map is the outside of the panel, so pressing
+      // it dismisses — the desktop half of docs/ux-audit.md 1.8, and the reason
+      // the desktop panel needs no scrim of its own.
+      if (onDismissDetail) {
+        onDismissDetail();
+        return;
+      }
+
       // A bare click does NOT move the office — it offers to.
       //
       // It used to move it outright, which meant one stray click silently
@@ -390,7 +400,7 @@ export function SearchMap({
       // on a map is not. See DECISIONS.md D77.
       setPendingOffice({ lat: event.lngLat.lat, lng: event.lngLat.lng });
     },
-    [listings, onSelectListing],
+    [listings, onSelectListing, onDismissDetail],
   );
 
   if (styleError) {

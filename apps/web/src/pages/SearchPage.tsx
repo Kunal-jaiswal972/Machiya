@@ -7,7 +7,7 @@ import {
 } from '@machiya/shared';
 import { List, Map as MapIcon, Star } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Outlet, useNavigate, useSearchParams } from 'react-router';
+import { Outlet, useMatch, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { EmptyState } from '../components/EmptyState';
 import { CoverageNotice } from '../components/search/CoverageNotice';
@@ -16,6 +16,7 @@ import { OfficeField } from '../components/search/OfficeField';
 import { ResultList } from '../components/search/ResultList';
 import { SearchMap } from '../components/search/SearchMap';
 import { Button } from '../components/ui/button';
+import { useCloseDetail } from '../hooks/use-close-detail';
 import { useCoverage, nearestCoveredCity } from '../hooks/use-coverage';
 import { useReverseGeocode } from '../hooks/use-reverse-geocode';
 import { useListingSearch } from '../hooks/use-listing-search';
@@ -48,6 +49,8 @@ export function SearchPage() {
   const { cities, maxBounds } = useCoverage();
   const { offices, defaultOffice } = useOffices();
   const saveOffice = useSaveOffice();
+  const closeDetail = useCloseDetail();
+  const isDetailOpen = useMatch('/listings/:slug') !== null;
   const view = useSearchUi((state) => state.view);
   const setView = useSearchUi((state) => state.setView);
 
@@ -368,6 +371,7 @@ export function SearchPage() {
             maxBounds={maxBounds}
             onPickOffice={pickOffice}
             onSelectListing={onSelectListing}
+            onDismissDetail={isDetailOpen ? closeDetail : undefined}
           />
 
           {/* The detail panel renders over the map, inside its stacking

@@ -16,8 +16,10 @@ import { cn } from '../../lib/utils';
  * rid of this" and a long slow drag means "put it where I let go", and a
  * position-only threshold gets the first one wrong every time.
  *
- * Focus moves into the panel on open and returns to the invoking card on close
- * (the browser does the second half, because closing is a history navigation).
+ * Focus moves into the panel on open and back to whatever opened it on close.
+ * The mobile sheet covers the page, so it also traps Tab; the desktop panel
+ * deliberately does not, because the map behind it stays live and reaching the
+ * search field without closing the panel is the point (D78).
  */
 export interface DetailPanelProps {
   onClose: () => void;
@@ -25,6 +27,9 @@ export interface DetailPanelProps {
 }
 
 const SNAP_POINTS = { peek: 0.82, half: 0.42, full: 0.04 } as const;
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 type Snap = keyof typeof SNAP_POINTS;
 
 export function DetailPanel({ onClose, children }: DetailPanelProps) {
@@ -39,18 +44,55 @@ export function DetailPanel({ onClose, children }: DetailPanelProps) {
 
   // Focus the panel itself rather than its first control: a screen reader then
   // announces the listing, and a keyboard user's next Tab lands on the close
-  // button instead of skipping the price entirely.
+  // button instead of skipping the price entirely. On the way out, focus goes
+  // back to the card that opened it — the list stays mounted behind the panel,
+  // so that element is usually still there to receive it.
   useEffect(() => {
+    const trigger = document.activeElement;
     panelRef.current?.focus({ preventScroll: true });
+
+    return () => {
+      if (trigger instanceof HTMLElement && trigger.isConnected) {
+        trigger.focus({ preventScroll: true });
+      }
+    };
   }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') {
+        onClose();
+        return;
+      }
+
+      // The sheet is modal — it covers the page — so Tab wraps inside it
+      // rather than walking into a list nobody can see (docs/ux-audit.md 1.8).
+      if (event.key !== 'Tab' || isDesktop) return;
+
+      const panel = panelRef.current;
+      if (!panel) return;
+
+      const focusable = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+        (element) => element.offsetParent !== null || element === panel,
+      );
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) return;
+
+      const active = document.activeElement;
+
+      if (event.shiftKey && (active === first || active === panel)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
+
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  }, [onClose, isDesktop]);
 
   const onDragEnd = (_event: unknown, info: PanInfo): void => {
     const flickDown = info.velocity.y > 600;
@@ -104,45 +146,61 @@ export function DetailPanel({ onClose, children }: DetailPanelProps) {
   }
 
   return (
-    /* Mobile: a bottom sheet. Only the top corners are rounded — the radius
-       scale's one exception, because a sheet is hinged at the bottom. */
-    <motion.div
-      aria-label="Listing detail"
-      drag={reduced ? false : 'y'}
-      dragConstraints={{ top: 0, bottom: 0 }}
-      dragElastic={{ top: 0.02, bottom: 0.4 }}
-      onDragEnd={onDragEnd}
-      initial={reduced ? false : { y: '100%' }}
-      animate={{ y: `${String(SNAP_POINTS[sheet] * 100)}%` }}
-      exit={reduced ? { opacity: 0 } : { y: '100%' }}
-      transition={
-        reduced ? { duration: 0 } : { type: 'spring', stiffness: 300, damping: 32, mass: 0.8 }
-      }
-      ref={panelRef}
-      tabIndex={-1}
-      className={cn(
-        'chrome-over absolute inset-x-0 top-0 z-30 h-full overflow-y-auto rounded-t-sheet rounded-b-none outline-none',
-        // Dragging must not fight the scroll: the sheet scrolls only once it
-        // is at full height.
-        sheet === 'full' ? 'touch-pan-y' : 'overflow-hidden touch-none',
-      )}
-    >
-      <div className="sticky top-0 z-10 flex items-center justify-between bg-card/95 px-3 py-2 backdrop-blur">
-        {/* The grab handle is the affordance; it is also a button, so the
+    <>
+      {/* Pressing the map above the sheet dismisses it. Desktop has no scrim:
+          the map there is live, and a press on it closes the panel through the
+          map's own click handler instead. */}
+      <motion.button
+        type="button"
+        onClick={onClose}
+        initial={reduced ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={reduced ? { duration: 0 } : { duration: 0.2 }}
+        className="absolute inset-0 z-20 bg-scrim"
+        tabIndex={-1}
+        aria-hidden
+      />
+      {/* Mobile: a bottom sheet. Only the top corners are rounded — the radius
+       scale's one exception, because a sheet is hinged at the bottom. */}
+      <motion.div
+        aria-label="Listing detail"
+        drag={reduced ? false : 'y'}
+        dragConstraints={{ top: 0, bottom: 0 }}
+        dragElastic={{ top: 0.02, bottom: 0.4 }}
+        onDragEnd={onDragEnd}
+        initial={reduced ? false : { y: '100%' }}
+        animate={{ y: `${String(SNAP_POINTS[sheet] * 100)}%` }}
+        exit={reduced ? { opacity: 0 } : { y: '100%' }}
+        transition={
+          reduced ? { duration: 0 } : { type: 'spring', stiffness: 300, damping: 32, mass: 0.8 }
+        }
+        ref={panelRef}
+        tabIndex={-1}
+        className={cn(
+          'chrome-over absolute inset-x-0 top-0 z-30 h-full overflow-y-auto rounded-t-sheet rounded-b-none outline-none',
+          // Dragging must not fight the scroll: the sheet scrolls only once it
+          // is at full height.
+          sheet === 'full' ? 'touch-pan-y' : 'overflow-hidden touch-none',
+        )}
+      >
+        <div className="sticky top-0 z-10 flex items-center justify-between bg-card/95 px-3 py-2 backdrop-blur">
+          {/* The grab handle is the affordance; it is also a button, so the
               gesture is not the only way to change the sheet's height. */}
-        <button
-          type="button"
-          onClick={() => setSheet(sheet === 'full' ? 'half' : 'full')}
-          className="mx-auto h-1 w-10 rounded-round bg-edge-strong"
-        >
-          <span className="sr-only">
-            {sheet === 'full' ? 'Shrink this panel' : 'Expand this panel'}
-          </span>
-        </button>
-        <CloseButton onClose={onClose} className="absolute top-1.5 right-2" />
-      </div>
-      {children}
-    </motion.div>
+          <button
+            type="button"
+            onClick={() => setSheet(sheet === 'full' ? 'half' : 'full')}
+            className="mx-auto h-1 w-10 rounded-round bg-edge-strong"
+          >
+            <span className="sr-only">
+              {sheet === 'full' ? 'Shrink this panel' : 'Expand this panel'}
+            </span>
+          </button>
+          <CloseButton onClose={onClose} className="absolute top-1.5 right-2" />
+        </div>
+        {children}
+      </motion.div>
+    </>
   );
 }
 

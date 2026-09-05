@@ -2518,3 +2518,62 @@ behaviour was a symptom of dragging being invisible.
 
 The office field and the saved-office list remain the other two ways in, and
 neither changed.
+
+## D78 — The detail panel is modal on a phone and not on a desktop
+
+The brief asked for outside-press dismissal and a focus trap, and for shadcn
+components rather than bespoke ones. A shadcn `Sheet` is a Radix dialog, and a
+Radix dialog is modal: an overlay that swallows presses, focus trapped inside,
+the page behind it inert. Applied to both breakpoints that would have broken the
+product.
+
+On a desktop the map behind the panel is **live and load-bearing**. Pressing
+another marker switches listings, the office pin still drags, the ring counts
+still update. A modal overlay ends all of that, and trapping focus would put the
+search field out of reach without first closing the listing you are comparing
+against it.
+
+On a phone the sheet covers the page. There is nothing behind it to interact
+with, so everything a modal gives is right there.
+
+**Chosen: one component, two modes.**
+
+|               | desktop                                                  | mobile                          |
+| ------------- | -------------------------------------------------------- | ------------------------------- |
+| Escape        | closes                                                   | closes                          |
+| Outside press | the map's own click handler closes it                    | a scrim closes it               |
+| Focus trap    | no — 13 of 40 Tabs reach the search behind it, by design | yes — 30 of 30 Tabs stay inside |
+| Focus return  | to the card that opened it                               | to the card that opened it      |
+
+The desktop "outside press" lives in `SearchMap`'s click handler rather than in
+an overlay, because only the map knows whether the press landed on a marker, a
+cluster or bare ground. With a listing open, bare ground means dismiss; with
+none open, it means the office confirmation from D77. The two never fire at
+once.
+
+Focus return is explicit rather than left to the browser. Closing is a history
+navigation and the list behind the panel stays mounted, so the card element is
+still there — the panel captures `document.activeElement` on mount and restores
+it on unmount if it is still connected.
+
+**Why not shadcn anyway, with `modal={false}`.** A non-modal Radix dialog gives
+up the trap for both breakpoints, so the phone would lose the half that is
+correct there, and the drag-to-dismiss sheet with velocity-aware snap points has
+no equivalent in `Sheet`. The panel stays bespoke; the parts of it that are
+plain chrome — buttons, separators, cards — are shadcn already.
+
+## D79 — Closing the panel tests the router's key, not `window.history.length`
+
+`history.length` counts the entire tab, including entries this app never made.
+A listing opened from a link on another site had `length > 1`, so Close called
+`navigate(-1)` and sent the user **back to that site** (docs/ux-audit.md 1.7).
+The intent in D45 was right and the test for it was wrong.
+
+**Chosen: `useLocation().key !== 'default'`.** React Router stamps `default` on
+the entry the tab loaded with and generates a key for every entry it pushes
+itself, which is exactly the question being asked: did we push this? Back when
+we did; a fresh navigation to the search when we did not.
+
+It lives in `hooks/use-close-detail.ts` because two places close the panel now —
+the panel's own controls and a press on the map behind it — and two copies of
+this test would drift.

@@ -2,7 +2,7 @@ import type { RouteProfile } from '@machiya/shared';
 import { AnimatePresence } from 'motion/react';
 import { BadgeCheck, Bike, Car, TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
+import { Link, useParams, useSearchParams } from 'react-router';
 import { DetailPanel } from '../components/listing/DetailPanel';
 import { EnquiryForm } from '../components/listing/EnquiryForm';
 import { Gallery } from '../components/listing/Gallery';
@@ -31,6 +31,7 @@ import {
   humanizeEnum,
 } from '../lib/format';
 import { cn } from '../lib/utils';
+import { useCloseDetail } from '../hooks/use-close-detail';
 import { useDetailOverlay } from '../stores/detail-overlay';
 
 /**
@@ -39,15 +40,16 @@ import { useDetailOverlay } from '../stores/detail-overlay';
  *
  * It is a CHILD route of the search page, which is what keeps the map mounted:
  * navigating to a listing should not tear down and re-instantiate a WebGL map,
- * refetch its tiles and lose the camera. Closing is `navigate(-1)` when there
- * is history to go back to, so the search returns exactly as it was.
+ * refetch its tiles and lose the camera. Closing goes back when this app pushed
+ * the entry, so the search returns exactly as it was.
  */
 export function ListingDetailRoute() {
   const { slug = '' } = useParams();
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { office } = useSearchState();
   const [profile, setProfile] = useState<RouteProfile>('car');
+
+  const close = useCloseDetail();
 
   const detail = useListingDetail(slug);
   const pois = useListingPois(slug);
@@ -83,16 +85,6 @@ export function ListingDetailRoute() {
   useEffect(() => {
     setPois(pois.data?.pois ?? []);
   }, [pois.data, setPois]);
-
-  const close = (): void => {
-    // Back when there is somewhere to go back to, so the search restores with
-    // its scroll position; otherwise a fresh navigation to the same search.
-    if (window.history.length > 1) {
-      void navigate(-1);
-    } else {
-      void navigate({ pathname: '/', search: searchParams.toString() });
-    }
-  };
 
   const price = listing
     ? listing.listingType === 'RENT'
