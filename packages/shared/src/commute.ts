@@ -136,7 +136,17 @@ export const commuteCostInputSchema = z.object({
   transitFare: transitFareConfigSchema.optional(),
 });
 
-export type CommuteCostInput = z.infer<typeof commuteCostInputSchema>;
+/**
+ * What a CALLER passes, and what the engine works with after parsing.
+ *
+ * Two names because the schema has a default: `roadDurationSeconds` is optional
+ * going in and always present coming out. Typing the parameter as the output
+ * type — which the first version did — makes the default unreachable and forces
+ * every caller to supply a field the schema exists to fill in. Same split as
+ * `ListingSearchInput` / `ListingSearchOptions`, for the same reason.
+ */
+export type CommuteCostInput = z.input<typeof commuteCostInputSchema>;
+export type CommuteCostOptions = z.infer<typeof commuteCostInputSchema>;
 
 export const commuteCostSchema = z.object({
   mode: commuteModeSchema,
@@ -164,7 +174,7 @@ export type CommuteCost = z.infer<typeof commuteCostSchema>;
  * the Patna city buses actually charge, and no free API exposes their tables,
  * so the fares are per-city configuration (see `TransitFareConfig`).
  */
-function perTripCost(input: CommuteCostInput, distanceKm: number): number {
+function perTripCost(input: CommuteCostOptions, distanceKm: number): number {
   if (input.mode === 'transit') {
     const fare = input.transitFare;
     // No fare table configured for the city: zero rather than a guess. The UI

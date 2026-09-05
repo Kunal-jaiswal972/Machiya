@@ -46,7 +46,10 @@ three-city OSM extract. A public endpoint is a fallback, never a default.
 
 - Conventional commit per numbered item. The repo builds, typechecks and passes
   tests at every commit.
-- `pnpm typecheck` exits 0 across every package, including the tools tsconfig.
+- `pnpm typecheck` exits 0 across every package, including the tools tsconfig
+  **and the test sources**. Tests are a separate `tsconfig.test.json` per
+  package because the package's own config builds `src/` only; for a while that
+  meant the gate never compiled a test file, and it hid real errors (D65).
 - Nothing is silenced with `any` or `@ts-expect-error`. If a type is wrong, fix
   the type.
 - Run typecheck and build after every item and fix what they report before

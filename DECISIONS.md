@@ -1717,3 +1717,76 @@ then made a corrected score look uncorrected, which sent a diagnosis after
 already-fixed code. The working form is
 `... | while IFS= read -r k; do redis-cli del "$k"; done`. The other was two
 `pnpm dev:api` processes, covered in D57.
+
+### D65. `pnpm typecheck` did not look at a single test file
+
+CLAUDE.md calls `pnpm typecheck` a hard gate that "exits 0 across every
+package". It did — while never compiling a line of test code. Every package's
+`tsconfig.json` includes only `src/**/*.ts`, so `test/` was outside all of them,
+exactly the gap `tsconfig.tools.json` was created to close for root-level
+scripts.
+
+Found because two type errors were visible in an editor and invisible to the
+gate. Adding a `tsconfig.test.json` per package immediately surfaced five real
+errors, and **every one of them was introduced by this session's own work**:
+
+- `computeCommuteCost`'s parameter was typed `z.infer` (the parsed output)
+  instead of `z.input`, making `roadDurationSeconds`'s default unreachable and
+  forcing five call sites to pass a field the schema exists to fill in. Fixed at
+  the source with the `CommuteCostInput` / `CommuteCostOptions` split the repo
+  already uses for `ListingSearchInput`.
+- a stubbed `RoutingProvider` in `listing-detail.test.ts` was missing `table`
+  after correction 8 added it to the interface.
+- the `remote()` fixture in `places.test.ts` predated `matchPrecision`.
+- eighteen errors in `search.test.ts` from reading `listings` and `total` off the
+  discriminated union correction 9 introduced, without checking `status`.
+
+That last one is the one worth dwelling on. Those reads only worked because the
+`ok` arm happens to carry the same field names — so a test that received an
+out-of-coverage response would have read it as an empty result set, asserting
+precisely the confusion the union exists to prevent. They are now narrowed
+through an `ok()` helper that throws on the wrong arm.
+
+Two smaller notes. `rootDir` is widened to `.` in the test configs rather than
+moving tests under `src/`: it is inherited, it points at `./src`, and it is
+meaningless under `noEmit` — moving real files to satisfy a setting nothing
+emits from would be the wrong way round. And the configs are per-package rather
+than one at the root, because the packages differ in `types` and module
+resolution and a single config would have to flatten that.
+
+### D66. Two tests that could not fail
+
+Both found while fixing the type errors above, and both worse than the type
+errors.
+
+**The animated-image rejection asserted nothing.** It built its fixture with
+`sharp(buffer, { pages: 3, pageHeight: 64 })` — but `pageHeight` is not a
+`SharpOptions` field (it lives on `CreateRaw` and `Metadata`), so it was
+ignored, the image had one page, and the assertion sat behind
+`if ((meta.pages ?? 1) > 1)` and never ran. Verified: both that form and a
+`raw` + `pageHeight` form produce `pages: 1`.
+
+sharp cannot be persuaded to write a multi-page image from a tall single-page
+buffer, so the fixture is now a committed 200-byte two-frame animated **WebP**,
+built once from a hand-assembled 2-frame GIF89a. WebP specifically: an animated
+GIF is rejected for its _format_ before the animation check is ever reached, so
+it would have passed the test for the wrong reason — which the first attempt at
+this fix did, and the error message said so.
+
+**The EXIF strip test stripped nothing.** It set `GPS: { GPSLatitudeRef: 'N',
+... }`, and `GPS` is not a key in sharp's `Exif` type — only `IFD0` to `IFD3`.
+The key was silently ignored, so the test asserted that an image with **no
+location data** came out with none. `IFD3` is the GPS directory, and measured, it
+takes the EXIF block from 230 to 272 bytes. The test now asserts its own premise
+(`before.exif` is defined) before asserting the strip, so a future sharp that
+stopped writing EXIF here cannot make the strip look like it worked.
+
+That test also claimed to prove orientation handling — "a 400x200 source must
+come out 200x400, proving the rotation was applied". It never checked the
+dimensions, and could not have: sharp normalises orientation to 1 when it
+writes, whichever directory the tag goes in, so `withExif` cannot produce a
+non-1 orientation at all. Measured for `IFD0` and `IFD1`, both come back as 1,
+and `.rotate()` leaves 400x200 unchanged. Testing it properly needs a fixture
+carrying a real orientation tag, which means committing binary image data —
+left undone deliberately, and recorded in the test as undone rather than left
+looking finished.

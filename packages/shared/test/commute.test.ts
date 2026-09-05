@@ -201,10 +201,17 @@ describe('compareCommuteModes', () => {
       transitFare: PATNA_FARE,
     });
 
-    expect(comparison.car?.distanceKm).toBe(9.82);
-    expect(comparison.bike?.distanceKm).toBe(10.33);
+    const { car, bike } = comparison;
+    // Narrowed rather than asserted with `!`: if either mode were missing, the
+    // interesting assertion below would silently not run.
+    expect(car).not.toBeNull();
+    expect(bike).not.toBeNull();
+    if (!car || !bike) throw new Error('both modes were priced, so both must be present');
+
+    expect(car.distanceKm).toBe(9.82);
+    expect(bike.distanceKm).toBe(10.33);
     // The bike is further AND much cheaper, which is the point of showing both.
-    expect(comparison.bike!.perMonth).toBeLessThan(comparison.car!.perMonth / 2);
+    expect(bike.perMonth).toBeLessThan(car.perMonth / 2);
   });
 
   it('prices transit off the car distance, since a bus uses roads', () => {

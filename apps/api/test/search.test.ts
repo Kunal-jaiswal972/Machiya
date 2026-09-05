@@ -86,6 +86,22 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+/**
+ * Narrows the search response to its `ok` arm.
+ *
+ * The response is a discriminated union since correction 9, so reading
+ * `listings` without checking `status` is a type error — and the check is worth
+ * making loudly rather than with a cast: a test that silently read an
+ * out-of-coverage response as an empty result set would be asserting the exact
+ * confusion the union exists to prevent.
+ */
+function ok(result: Awaited<ReturnType<typeof searchListings>>) {
+  if (result.status !== 'ok') {
+    throw new Error(`expected an ok search, got ${result.status}`);
+  }
+  return result;
+}
+
 describe('searchListings', () => {
   it('bounds results by the radius and reports the ring per listing', async () => {
     await publish({ slug: 'near', metersAway: 400 });
@@ -93,7 +109,7 @@ describe('searchListings', () => {
     await publish({ slug: 'far', metersAway: 2_500 });
     await publish({ slug: 'outside', metersAway: 4_000 });
 
-    const result = await searchListings({ office: OFFICE, radiusMeters: 3000 });
+    const result = ok(await searchListings({ office: OFFICE, radiusMeters: 3000 }));
 
     expect(result.total).toBe(3);
     expect(result.ringCounts).toEqual({ 1: 1, 2: 1, 3: 1 });
@@ -105,7 +121,7 @@ describe('searchListings', () => {
       await publish({ slug: `ring1-${String(n)}`, metersAway: 200 + n });
     }
 
-    const result = await searchListings({ office: OFFICE, radiusMeters: 3000, limit: 3 });
+    const result = ok(await searchListings({ office: OFFICE, radiusMeters: 3000, limit: 3 }));
 
     expect(result.listings).toHaveLength(3);
     // The point of the counts is showing what picking each ring would give, so
@@ -119,11 +135,13 @@ describe('searchListings', () => {
     await publish({ slug: 'draft', metersAway: 300, status: 'DRAFT' });
 
     // A client cannot widen the status set: search is a public surface.
-    const result = await searchListings({
-      office: OFFICE,
-      radiusMeters: 3000,
-      statuses: ['PUBLISHED', 'DRAFT'],
-    });
+    const result = ok(
+      await searchListings({
+        office: OFFICE,
+        radiusMeters: 3000,
+        statuses: ['PUBLISHED', 'DRAFT'],
+      }),
+    );
 
     expect(result.listings.map((l) => l.slug)).toEqual(['live']);
   });
@@ -131,7 +149,7 @@ describe('searchListings', () => {
   it('resolves the cover photo to a variant URL, not the original key', async () => {
     await publish({ slug: 'with-photo', metersAway: 300, withReadyPhoto: true });
 
-    const result = await searchListings({ office: OFFICE, radiusMeters: 3000 });
+    const result = ok(await searchListings({ office: OFFICE, radiusMeters: 3000 }));
     const card = result.listings[0];
 
     // The original is deleted after derivation, so a URL built from objectKey
@@ -155,7 +173,7 @@ describe('searchListings', () => {
       },
     });
 
-    const result = await searchListings({ office: OFFICE, radiusMeters: 3000 });
+    const result = ok(await searchListings({ office: OFFICE, radiusMeters: 3000 }));
 
     // A PENDING row has no servable bytes; a URL for it would 404.
     expect(result.listings[0]?.coverUrl).toBeNull();
@@ -166,7 +184,9 @@ describe('searchListings', () => {
     await publish({ slug: 'dear', metersAway: 300, rentAmount: 30_000 });
     await publish({ slug: 'unpriced', metersAway: 300, rentAmount: null });
 
-    const result = await searchListings({ office: OFFICE, radiusMeters: 3000, sort: 'price_asc' });
+    const result = ok(
+      await searchListings({ office: OFFICE, radiusMeters: 3000, sort: 'price_asc' }),
+    );
 
     expect(result.listings.map((l) => l.slug)).toEqual(['cheap', 'dear', 'unpriced']);
   });
@@ -183,11 +203,13 @@ describe('searchListings', () => {
 
     // A price range in rupees would otherwise compare a monthly rent against a
     // purchase price, which is meaningless.
-    const rentals = await searchListings({
-      office: OFFICE,
-      radiusMeters: 3000,
-      filters: { priceMax: 25_000 },
-    });
+    const rentals = ok(
+      await searchListings({
+        office: OFFICE,
+        radiusMeters: 3000,
+        filters: { priceMax: 25_000 },
+      }),
+    );
 
     expect(rentals.listings.map((l) => l.slug)).toEqual(['rental']);
   });
@@ -201,12 +223,14 @@ describe('searchListings', () => {
     let cursor: string | undefined;
 
     for (let page = 0; page < 5; page += 1) {
-      const result = await searchListings({
-        office: OFFICE,
-        radiusMeters: 3000,
-        limit: 4,
-        ...(cursor ? { cursor } : {}),
-      });
+      const result = ok(
+        await searchListings({
+          office: OFFICE,
+          radiusMeters: 3000,
+          limit: 4,
+          ...(cursor ? { cursor } : {}),
+        }),
+      );
       seen.push(...result.listings.map((l) => l.slug));
       if (!result.nextCursor) break;
       cursor = result.nextCursor;
@@ -220,11 +244,13 @@ describe('searchListings', () => {
     await publish({ slug: 'r1', metersAway: 500 });
     await publish({ slug: 'r2', metersAway: 1_600 });
 
-    const result = await searchListings({
-      office: OFFICE,
-      radiusMeters: 3000,
-      filters: { ring: 2 },
-    });
+    const result = ok(
+      await searchListings({
+        office: OFFICE,
+        radiusMeters: 3000,
+        filters: { ring: 2 },
+      }),
+    );
 
     expect(result.listings.map((l) => l.slug)).toEqual(['r2']);
     // The counts still describe the whole radius, so the ring chips stay usable.

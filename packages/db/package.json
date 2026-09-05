@@ -19,7 +19,7 @@
   "scripts": {
     "build": "pnpm generate && tsc -p tsconfig.json",
     "generate": "pnpm -w run db:generate",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.seed.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.seed.json && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "clean": "rimraf dist generated",
     "test:watch": "vitest"

@@ -31,6 +31,10 @@ vi.mock('../src/geo/osrm.js', async (importOriginal) => {
         routeCalls += 1;
         return routeAnswer;
       },
+      // Unused here — the detail panel routes one listing at a time — but part
+      // of the interface, and the typecheck now says so. It answers null, which
+      // is the "no matrix" case every caller already handles by estimating.
+      table: async () => null,
     }),
   };
 });

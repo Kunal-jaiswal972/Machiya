@@ -1,0 +1,20 @@
+// Test sources, which the package's own tsconfig deliberately does not build.
+//
+// Without this they were invisible to `pnpm typecheck` — the same gap
+// tsconfig.tools.json exists to close for root-level scripts, and it hid real
+// errors: a `computeCommuteCost` call missing a field the schema defaults, a
+// `GPS` EXIF key sharp does not accept (so the test asserted nothing was
+// stripped from an image that had nothing), and a `pageHeight` option that is
+// not part of SharpOptions (so the "rejects an animated image" test built a
+// single-page image and skipped its own assertion behind a guard).
+//
+// noEmit, because nothing here ships. See DECISIONS.md D65.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "rootDir": "."
+  },
+  "include": ["test/**/*.ts"]
+}

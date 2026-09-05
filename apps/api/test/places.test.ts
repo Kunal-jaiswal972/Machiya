@@ -46,6 +46,10 @@ function remote(overrides: Partial<GeocodeResult> = {}): GeocodeResult {
     lng: 85.14,
     kind: 'address',
     source: 'nominatim',
+    // Every suggestion carries one since correction 10. A remote row defaults
+    // to `exact` here because the fixtures stand in for direct matches; the
+    // tests that care about the capped retry set it explicitly.
+    matchPrecision: 'exact',
     score: 0.5,
     ...overrides,
   };
