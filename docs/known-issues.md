@@ -15,10 +15,6 @@ fixes it**. A list nobody prunes is a list nobody reads.
   editable, refuse to complete the location step without a placed pin. Waiting
   on the wizard itself, which is brief step 9.
   ([D59](../DECISIONS.md#d59-what-the-geocoder-did-is-said-out-loud-and-the-box-asks-for-what-the-data-has))
-- **Owner contact is masked to nobody in particular.** `getListingBySlug`
-  returns `phone: null` unconditionally, with a comment deferring the real rule
-  — reveal it once an enquiry exists — to step 9. Today no phone number is ever
-  shown to anyone, so the mask is accidentally correct and the rule is missing.
 - **No orientation-tag test fixture.** The EXIF strip is tested; applying an
   orientation tag is not, because `withExif` cannot produce a non-1 orientation
   and a real fixture means committing binary image data.

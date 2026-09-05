@@ -18,6 +18,7 @@ connection.on('error', (error: Error) => {
 export const QUEUE_NAMES = {
   images: 'images',
   fuelPrices: 'fuel-prices',
+  notifications: 'notifications',
 } as const;
 
 export interface ProcessImageJob {
@@ -96,9 +97,42 @@ export async function enqueueFuelRefresh(citySlug: string): Promise<void> {
   logger.info({ citySlug, jobId: `refresh-${hour}` }, 'fuel refresh enqueued');
 }
 
+/**
+ * Outbound mail, producer side.
+ *
+ * The API never sends an enquiry notification itself, for the same reason it
+ * never resizes an image (D34): SMTP is somebody else's server and a slow one
+ * must not hold a request open. The message row is committed first and this
+ * enqueue happens after it, so a failure here is recoverable rather than lost —
+ * see `reconcile-notifications` in the worker and DECISIONS.md D68.
+ */
+const notificationsQueue = new Queue<EnquiryNotificationJob>(QUEUE_NAMES.notifications, {
+  connection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 15_000 },
+    removeOnComplete: { count: 200 },
+    removeOnFail: { count: 500 },
+  },
+});
+
+export interface EnquiryNotificationJob {
+  messageId: string;
+}
+
+/**
+ * The job id IS the message id, so a redelivered request or a reconciler racing
+ * the original enqueue collapses onto one job instead of sending two emails.
+ */
+export async function enqueueEnquiryNotification(job: EnquiryNotificationJob): Promise<void> {
+  await notificationsQueue.add('enquiry-message', job, { jobId: job.messageId });
+  logger.info({ messageId: job.messageId }, 'enquiry notification enqueued');
+}
+
 export async function closeQueues(): Promise<void> {
   await fuelQueue.close();
   await imagesQueue.close();
+  await notificationsQueue.close();
   if (connection.status !== 'end') {
     await connection.quit();
   }

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  enquiryStatusSchema,
   furnishingTypeSchema,
   listingStatusSchema,
   listingTypeSchema,
@@ -372,3 +373,71 @@ export const ownedListingsResponseSchema = z.object({
   listings: z.array(ownedListingSchema),
   nextCursor: z.string().nullable(),
 });
+
+// --- enquiries --------------------------------------------------------------
+
+export const enquiryMessageSchema = z.object({
+  id: z.string(),
+  senderId: z.string(),
+  senderName: z.string(),
+  body: z.string(),
+  createdAt: z.string(),
+  readAt: z.string().nullable(),
+  /** True when the signed-in reader wrote it. */
+  mine: z.boolean(),
+});
+
+export type EnquiryMessage = z.infer<typeof enquiryMessageSchema>;
+
+export const enquiryThreadSchema = z.object({
+  id: z.string(),
+  status: enquiryStatusSchema,
+  createdAt: z.string(),
+  lastMessageAt: z.string(),
+  /** Messages the reader has not read, written by the other party. */
+  unreadCount: z.number().int().nonnegative(),
+  /** Which side of the thread the reader is on. */
+  role: z.enum(['seeker', 'lister']),
+  counterpart: z.object({
+    id: z.string(),
+    name: z.string(),
+    /**
+     * Revealed only once an enquiry exists between these two people, which is
+     * what "masked until an enquiry is sent" means in practice. Null when the
+     * user has not given one.
+     */
+    phone: z.string().nullable(),
+    email: z.string().nullable(),
+  }),
+  listing: z.object({
+    id: z.string(),
+    slug: z.string(),
+    title: z.string().nullable(),
+    locality: z.string().nullable(),
+    rentAmount: z.number().int().nullable(),
+    salePrice: z.number().int().nullable(),
+    listingType: listingTypeSchema,
+    coverUrl: z.string().nullable(),
+  }),
+  /** The most recent message, for the list view. */
+  preview: z.string().nullable(),
+});
+
+export type EnquiryThread = z.infer<typeof enquiryThreadSchema>;
+
+export const enquiryListResponseSchema = z.object({
+  threads: z.array(enquiryThreadSchema),
+  /** Total unread across every thread, for the nav badge. */
+  unreadTotal: z.number().int().nonnegative(),
+});
+
+export const enquiryDetailResponseSchema = z.object({
+  thread: enquiryThreadSchema,
+  messages: z.array(enquiryMessageSchema),
+});
+
+export const enquiryMessageInputSchema = z.object({
+  body: z.string().trim().min(2, 'Say a little more').max(4_000),
+});
+
+export type EnquiryMessageInput = z.input<typeof enquiryMessageInputSchema>;

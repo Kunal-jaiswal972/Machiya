@@ -64,11 +64,15 @@ export const listingDetailSchema = z.object({
       name: z.string(),
       avatarUrl: z.string().nullable(),
       memberSince: z.string(),
-      /** Masked until an enquiry is sent. */
+      /**
+       * Null until this reader has an open conversation with the owner. The
+       * server decides; the client never receives a masked-but-present value.
+       */
       phone: z.string().nullable(),
     }),
   }),
   viewerIsOwner: z.boolean(),
+  viewerHasEnquired: z.boolean().default(false),
 });
 
 export type ListingDetail = z.infer<typeof listingDetailSchema>['listing'];

@@ -4,6 +4,7 @@ import { BadgeCheck, Bike, Car, TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { DetailPanel } from '../components/listing/DetailPanel';
+import { EnquiryForm } from '../components/listing/EnquiryForm';
 import { Gallery } from '../components/listing/Gallery';
 import { CommutePanel } from '../components/listing/CommutePanel';
 import { PoiPanel } from '../components/listing/PoiPanel';
@@ -321,6 +322,13 @@ export function ListingDetailRoute() {
                 </span>
               </span>
             </section>
+
+            <EnquiryForm
+              listingSlug={listing.slug}
+              ownerName={listing.owner.name}
+              viewerIsOwner={detail.data.viewerIsOwner}
+              viewerHasEnquired={detail.data.viewerHasEnquired}
+            />
 
             {/* --- similar -------------------------------------------------- */}
             {similar.data && similar.data.listings.length > 0 ? (

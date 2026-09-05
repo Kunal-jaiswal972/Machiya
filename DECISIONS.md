@@ -2061,3 +2061,117 @@ candidate built with `amenitySlugs: []` rather than the listing's real
 amenities. Nothing in the strict schema reads them, so it changed no outcome —
 but handing a validator a value that is not true is how a future rule gets
 written against a lie.
+
+### D68. "First message in a thread" is not the rule people expect, and the message row is its own outbox
+
+Two decisions, and they are separate.
+
+**When a notification is owed.** The brief asks for an email on the first
+message in a thread and not on every message, which is right about the failure
+it is avoiding — a lister who replies four times in ten minutes must not send
+the seeker four emails — and wrong about the rule. Taken literally, a thread
+that goes quiet for a week and then resumes sends nothing at all, and the person
+who was waiting learns about it only if they happen to open the site.
+
+So the rule is **first message in a while**: a mail is owed when the thread has
+no previous message, or when the previous message is older than
+`ENQUIRY_NOTIFY_QUIET_HOURS` (24). One boundary, one constant, and it is a
+property of the conversation rather than of the recipient — so it needs no
+per-user state and no "have we emailed this person lately" table.
+
+The email says the rule out loud, in two lines at the bottom, because somebody
+who gets one mail for a four-message exchange will otherwise conclude the
+notifications are broken.
+
+`notificationIsOwed(previousMessageAt, now)` is a pure function and is tested on
+both sides of the boundary, including the one-minute-inside case.
+
+**Whether a lost notification is worth reconciling.** D40 left this open —
+"the enqueue-after-commit and reconcile pattern applies if a lost notification
+matters; decide whether it does". It does, and more than a lost image job did:
+
+- an enquiry notification is the supply side's **only** signal that a seeker is
+  waiting, and nothing else in the product surfaces it;
+- nobody can tell it was lost. A dropped image job shows its owner a spinner
+  that never resolves; a dropped notification is invisible to the sender, the
+  recipient and the operator alike. Unfalsifiable, which D48 already names as
+  the worst property a failure can have;
+- it is not retried by anything else. The seeker will not send the same message
+  twice on the off-chance.
+
+**No outbox table**, for exactly the reason D40 gives. `EnquiryMessage` is
+already the durable record of intent; what it lacked was somewhere to record
+that a mail was owed and whether it was sent. Three columns —
+`notifyOwed`, `notifiedAt`, `notifyFails` — and the job id is the message id, so
+enqueueing is idempotent by construction and a reconciler racing the original
+enqueue collapses onto one job rather than sending twice.
+
+`notifyOwed` is the column that earns its place. Without it, "this message never
+needed a mail" (a reply inside an active conversation) and "this message needed
+one and never got it" look identical, and the reconciler would either email
+every chatty reply or nothing at all.
+
+The rest is D40's shape, deliberately: enqueue strictly after the commit, a
+failed enqueue logged and swallowed rather than failing the sender's request, a
+two-minute grace period so the reconciler does not race an enqueue in flight,
+and the finished-job corpse removed before its id is reused — because BullMQ
+keeps completed jobs and `add` with an existing id is a **silent no-op**, which
+would strand the row permanently.
+
+Two differences from the image reconciler, both deliberate:
+
+- **Two minutes rather than one.** The image reconciler's interval is set by how
+  long a user will stare at a spinner. Nobody is watching this one, so the scan
+  can be cheaper.
+- **The worker's mailer throws where the API's swallows.** A failed verification
+  email must not fail the sign-up that triggered it, so
+  `apps/api/src/lib/mailer.ts` returns `{ sent: false }` and logs. Here the send
+  IS the job, so it throws and BullMQ backs off; after
+  `ENQUIRY_NOTIFY_MAX_ATTEMPTS` the row stops being owed a mail, because a row
+  the reconciler picks up every run and cannot deliver is a loop rather than a
+  safety net.
+
+**Verified against the real stack, not only the suite.** A message was inserted
+straight into Postgres with `notifyOwed: true` and no job enqueued for it — the
+exact hole this exists to close — and the running worker's reconciler picked it
+up and delivered it to MailHog **110 seconds later**, addressed to
+`lister@dev.local`, subject "New enquiry about 1 BHK apartment in Boring Road",
+with `notifiedAt` stamped on the row afterwards. Seven tests in
+`apps/worker/test/reconcile-notifications.test.ts` cover the rest against real
+Postgres and real Redis, including the finished-job case, which asserts its own
+premise first: it adds a duplicate job under a completed id and checks the add
+was a no-op before asserting the reconciler gets past it.
+
+### D69. The owner's number is revealed by the conversation, not by a button
+
+"Masked until an enquiry is sent" has three plausible readings and only one of
+them is worth building.
+
+Not **"until you sign in"**: a signed-in stranger is still a stranger, and it
+would make every listing page a scrape target for anyone with an account.
+
+Not **a reveal button** that shows the number after a click and calls the click
+an enquiry. That is a mask in appearance only — the number is already in the
+response — and a client that never renders the button still has it.
+
+**Chosen: the number is absent from the payload until a thread exists between
+these two people, and the server decides.** `viewerHasEnquiry` is the single
+question the listing read asks, and the phone field is `null` for everyone else,
+including a signed-in reader looking at somebody else's conversation. A client
+cannot leak what it was never sent.
+
+Three consequences worth stating:
+
+- **It re-masks.** The check requires an `OPEN` or `RESPONDED` thread, so a
+  lister who marks a conversation `SPAM` or `CLOSED` takes their number back
+  with it. Consent that cannot be withdrawn is not consent, and a test asserts
+  the number disappears again.
+- **It is symmetric.** The thread carries both parties' details, so the seeker's
+  number reaches the lister at the same moment and by the same act. A mask that
+  protected only one side would be a mask on the wrong thing.
+- **An admin sees it.** Moderating a listing without being able to reach its
+  owner is not moderation.
+
+`viewerHasEnquired` travels with the listing so the panel can say "you have a
+conversation open" and link to it, rather than offering a form that would create
+a second place to write into the same thread.

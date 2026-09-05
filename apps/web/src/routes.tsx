@@ -3,6 +3,7 @@ import { App } from './App';
 import { RequireAuth, RequireRole } from './components/RequireAuth';
 import { RouteError } from './components/RouteError';
 import { AccountPage } from './pages/AccountPage';
+import { EnquiriesPage } from './pages/EnquiriesPage';
 import { ForbiddenPage } from './pages/ForbiddenPage';
 import { FuelHealthPage } from './pages/admin/FuelHealthPage';
 import { ListingDetailRoute } from './pages/ListingDetailRoute';
@@ -61,6 +62,25 @@ export const router = createBrowserRouter([
           <RequireRole minimum="ADMIN">
             <FuelHealthPage />
           </RequireRole>
+        ),
+        errorElement: <RouteError />,
+      },
+
+      {
+        path: 'enquiries',
+        element: (
+          <RequireAuth>
+            <EnquiriesPage />
+          </RequireAuth>
+        ),
+        errorElement: <RouteError />,
+      },
+      {
+        path: 'enquiries/:id',
+        element: (
+          <RequireAuth>
+            <EnquiriesPage />
+          </RequireAuth>
         ),
         errorElement: <RouteError />,
       },

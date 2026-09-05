@@ -14,6 +14,7 @@ export const QUEUE_NAMES = {
   images: 'images',
   fuelPrices: 'fuel-prices',
   maintenance: 'maintenance',
+  notifications: 'notifications',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];

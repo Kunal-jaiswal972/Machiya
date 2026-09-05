@@ -413,12 +413,26 @@ model EnquiryMessage {
   readAt    DateTime?
   createdAt DateTime  @default(now())
 
+  /// When the recipient's email was sent, or null if none was owed.
+  ///
+  /// This column makes the row its own outbox, exactly as `ListingImage.status`
+  /// does for derivation (D40): the mail is enqueued strictly after the commit,
+  /// and a reconciler drains anything the enqueue missed. `notifyOwed` is what
+  /// separates "no mail was due for this message" from "one was due and has not
+  /// been sent" — without it a chatty thread would look identical to a dropped
+  /// notification. See DECISIONS.md D68.
+  notifyOwed  Boolean   @default(false)
+  notifiedAt  DateTime?
+  notifyFails Int       @default(0)
+
   enquiry Enquiry @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
   sender  User    @relation(fields: [senderId], references: [id], onDelete: Cascade)
 
   @@index([enquiryId])
   @@index([senderId])
   @@index([enquiryId, createdAt])
+  /// The reconciler's scan: messages owed a mail that has not been sent.
+  @@index([notifyOwed, notifiedAt, createdAt])
 }
 
 model Favorite {

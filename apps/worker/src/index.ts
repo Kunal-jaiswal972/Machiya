@@ -5,9 +5,16 @@ import sharp from 'sharp';
 import { env } from './env.js';
 import { cleanupImages } from './jobs/cleanup-images.js';
 import { markImageFailed, processImageJob, type ProcessImageJob } from './jobs/process-image.js';
+import {
+  markNotificationFailed,
+  notifyEnquiry,
+  type EnquiryNotificationJob,
+} from './jobs/notify-enquiry.js';
 import { reconcileImages } from './jobs/reconcile-images.js';
+import { reconcileNotifications } from './jobs/reconcile-notifications.js';
 import { scrapeFuelPrices } from './jobs/scrape-fuel-prices.js';
 import { logger } from './logger.js';
+import { closeMailer } from './lib/mailer.js';
 import { closeWorkerRedis } from './lib/redis.js';
 import { QUEUE_NAMES, createConnection, createQueue, createWorker } from './queues.js';
 
@@ -26,6 +33,10 @@ const connection = createConnection();
 const imagesQueue = createQueue(QUEUE_NAMES.images, connection) as Queue<ProcessImageJob>;
 const fuelQueue = createQueue(QUEUE_NAMES.fuelPrices, connection);
 const maintenanceQueue = createQueue(QUEUE_NAMES.maintenance, connection);
+const notificationsQueue = createQueue(
+  QUEUE_NAMES.notifications,
+  connection,
+) as Queue<EnquiryNotificationJob>;
 
 const imageWorker = createWorker(
   QUEUE_NAMES.images,
@@ -69,6 +80,31 @@ const fuelWorker = createWorker(
   { concurrency: 1 },
 );
 
+/**
+ * Outbound enquiry mail.
+ *
+ * Concurrency 2 rather than the default: SMTP servers rate-limit, and a burst
+ * of parallel sends is the fastest way to be told so. There is no hurry — the
+ * job exists precisely so nobody is waiting on it.
+ */
+const notificationWorker = createWorker(
+  QUEUE_NAMES.notifications,
+  (job) => notifyEnquiry(job as Job<EnquiryNotificationJob>),
+  connection,
+  { concurrency: 2 },
+);
+
+notificationWorker.on('failed', (job, error) => {
+  const attemptsLeft = (job?.opts.attempts ?? 1) - (job?.attemptsMade ?? 0);
+  logger.error({ jobId: job?.id, err: error, attemptsLeft }, 'enquiry notification failed');
+
+  // Only once BullMQ has given up. Before that a retry may still deliver, and
+  // marking it failed early would stop the reconciler from ever trying again.
+  if (job?.id && attemptsLeft <= 0) {
+    void markNotificationFailed(job.id);
+  }
+});
+
 const maintenanceWorker = createWorker(
   QUEUE_NAMES.maintenance,
   async (job) => {
@@ -82,6 +118,11 @@ const maintenanceWorker = createWorker(
       // Runs every minute and is silent when there is nothing to do, which is
       // almost always. See DECISIONS.md D40.
       return await reconcileImages(imagesQueue);
+    }
+
+    if (job.name === 'reconcile-notifications') {
+      // Same shape, same silence, same reason. See DECISIONS.md D68.
+      return await reconcileNotifications(notificationsQueue);
     }
 
     return undefined;
@@ -117,11 +158,18 @@ async function registerSchedules(): Promise<void> {
     { name: 'reconcile-images' },
   );
 
+  await maintenanceQueue.upsertJobScheduler(
+    'notification-reconcile',
+    { every: env.NOTIFY_RECONCILE_INTERVAL_MS },
+    { name: 'reconcile-notifications' },
+  );
+
   logger.info(
     {
       fuel: env.FUEL_SCRAPE_CRON,
       imageCleanup: env.IMAGE_CLEANUP_CRON,
       imageReconcileMs: env.IMAGE_RECONCILE_INTERVAL_MS,
+      notifyReconcileMs: env.NOTIFY_RECONCILE_INTERVAL_MS,
     },
     'schedules registered',
   );
@@ -140,6 +188,7 @@ const health = createServer((req, res) => {
           images: imageWorker.isRunning(),
           fuelPrices: fuelWorker.isRunning(),
           maintenance: maintenanceWorker.isRunning(),
+          notifications: notificationWorker.isRunning(),
         },
         uptimeSeconds: Math.round(process.uptime()),
         timestamp: new Date().toISOString(),
@@ -167,13 +216,20 @@ async function shutdown(signal: string): Promise<void> {
   health.close();
 
   // Close workers before queues so an in-flight image finishes writing.
-  await Promise.allSettled([imageWorker.close(), fuelWorker.close(), maintenanceWorker.close()]);
+  await Promise.allSettled([
+    imageWorker.close(),
+    fuelWorker.close(),
+    maintenanceWorker.close(),
+    notificationWorker.close(),
+  ]);
   await Promise.allSettled([
     imagesQueue.close(),
     fuelQueue.close(),
     maintenanceQueue.close(),
+    notificationsQueue.close(),
     disconnectPrisma(),
     closeWorkerRedis(),
+    closeMailer(),
   ]);
   await connection.quit();
   process.exit(0);

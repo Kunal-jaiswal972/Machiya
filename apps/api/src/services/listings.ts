@@ -17,6 +17,7 @@ import { deleteObjects } from '../lib/storage.js';
 import { assertOwnership, type RequestSession } from '../middleware/require-auth.js';
 import { resolveAmenityIds } from './amenities.js';
 import { assertCovered } from './coverage.js';
+import { viewerHasEnquiry } from './enquiries.js';
 import { listingObjectKeys, toImageView } from './listing-images.js';
 
 function slugify(value: string): string {
@@ -665,7 +666,7 @@ export async function getListingBySlug(slug: string, session?: RequestSession) {
       city: { select: { slug: true, name: true, state: true } },
       images: { orderBy: [{ isCover: 'desc' }, { sortOrder: 'asc' }] },
       amenities: { include: { amenity: true } },
-      owner: { select: { id: true, name: true, avatarUrl: true, createdAt: true } },
+      owner: { select: { id: true, name: true, avatarUrl: true, createdAt: true, phone: true } },
     },
   });
 
@@ -681,23 +682,35 @@ export async function getListingBySlug(slug: string, session?: RequestSession) {
     throw new HttpError(404, 'listing_not_found', 'No such listing');
   }
 
+  // The owner's number appears once this reader has actually opened a
+  // conversation with them — not merely on signing in, and not behind a
+  // "reveal" button that would make the mask decorative. That is the moment the
+  // lister has consented to being contacted by this particular person.
+  //
+  // The owner sees their own, and an admin sees it because moderating a listing
+  // without being able to reach its owner is not moderation.
+  const canSeeContact = isOwner || isAdmin || (await viewerHasEnquiry(session?.userId, listing.id));
+
   // Shaping happens here, not in the route: the image view decides what is
   // publicly fetchable and the owner card decides what is masked, and both must
   // be identical for every caller.
+  const { phone, ...ownerRest } = listing.owner;
+
   return {
     listing: {
       ...listing,
       images: listing.images.map((image) => toImageView(image, listing.id)),
       amenities: listing.amenities.map((join) => join.amenity),
       owner: {
-        id: listing.owner.id,
-        name: listing.owner.name,
-        avatarUrl: listing.owner.avatarUrl,
-        memberSince: listing.owner.createdAt,
-        // Contact details stay masked until an enquiry is sent (step 9).
-        phone: null,
+        id: ownerRest.id,
+        name: ownerRest.name,
+        avatarUrl: ownerRest.avatarUrl,
+        memberSince: ownerRest.createdAt,
+        phone: canSeeContact ? phone : null,
       },
     },
     viewerIsOwner: isOwner || isAdmin,
+    /** So the detail panel can say "sent" rather than offering the form again. */
+    viewerHasEnquired: !isOwner && canSeeContact,
   };
 }

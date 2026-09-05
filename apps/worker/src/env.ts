@@ -56,6 +56,16 @@ const envSchema = z.object({
    * user should be shorter than their patience with a spinner. See D40.
    */
   IMAGE_RECONCILE_INTERVAL_MS: z.coerce.number().int().min(5_000).max(600_000).default(60_000),
+
+  /**
+   * How often the notification reconciler looks for enquiry messages owed a
+   * mail that nothing is sending.
+   *
+   * Two minutes rather than the image reconciler's one: a dropped notification
+   * is invisible to everybody, so nobody is watching a spinner, and the scan
+   * costs a query per interval. See D68.
+   */
+  NOTIFY_RECONCILE_INTERVAL_MS: z.coerce.number().int().min(10_000).max(900_000).default(120_000),
 });
 
 export type Env = z.infer<typeof envSchema>;
