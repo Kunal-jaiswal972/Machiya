@@ -8,6 +8,8 @@ export class HttpError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    /** Field-level detail, when the caller can act on it per field. */
+    private readonly extra: Partial<ApiError['error']> = {},
   ) {
     super(message);
     this.name = 'HttpError';
@@ -16,13 +18,13 @@ export class HttpError extends Error {
   /**
    * Extra fields this error contributes to the `error` object in the response.
    *
-   * Empty for every ordinary `HttpError`. `OutOfCoverageError` overrides it to
-   * carry the served-city list, so the handler below stays the single place a
-   * client-facing body is assembled rather than growing a special case per
-   * error type.
+   * Whatever the thrower passed, which is nothing for most errors.
+   * `OutOfCoverageError` overrides it to carry the served-city list, so the
+   * handler below stays the single place a client-facing body is assembled
+   * rather than growing a special case per error type.
    */
   body(): Partial<ApiError['error']> {
-    return {};
+    return this.extra;
   }
 }
 

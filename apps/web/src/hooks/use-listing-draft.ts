@@ -1,7 +1,7 @@
 import type { ListingDraftView, ListingPatchInput } from '@machiya/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useRef, useState } from 'react';
-import { apiFetch } from '../lib/api';
+import { ApiRequestError, apiFetch } from '../lib/api';
 import {
   amenityGroupsResponseSchema,
   createdListingSchema,
@@ -43,9 +43,16 @@ export function useOpenDraft() {
  * the listing on a phone — the requirement browser storage cannot meet, and the
  * reason the columns are nullable at all (DECISIONS.md D67).
  */
+export interface FieldRejection {
+  /** The field the server refused, as its own name for it. */
+  field: string;
+  message: string;
+}
+
 export function useListingDraft(id: string | undefined) {
   const queryClient = useQueryClient();
   const [saveState, setSaveState] = useState<SaveState>('idle');
+  const [rejections, setRejections] = useState<FieldRejection[]>([]);
 
   const query = useQuery({
     queryKey: draftKey(id),
@@ -89,15 +96,39 @@ export function useListingDraft(id: string | undefined) {
         previous ? { ...previous, ...(patch as Partial<ListingDraftView>) } : previous,
       );
     },
-    onError: () => {
+    onError: (error) => {
       setSaveState('failed');
+      // WHY the save failed, not just that it did. The server rejects a short
+      // title or an area below the floor with a per-field message, and
+      // dropping it left the wizard blaming the connection for a value the
+      // person could fix in two seconds — then saying "Saved" on Next while
+      // the value was never written (docs/ux-audit.md W-01).
+      setRejections(
+        error instanceof ApiRequestError && error.detail.issues
+          ? error.detail.issues.map((issue) => ({ field: issue.path, message: issue.message }))
+          : [],
+      );
     },
   });
 
   const save = useCallback(
     (patch: ListingPatchInput) => {
       if (!id) return;
+      setRejections([]);
       mutation.mutate(patch);
+    },
+    [id, mutation],
+  );
+
+  /**
+   * Awaitable, for the Next button that must not advance through a failed
+   * write. Resolves once the write lands and REJECTS when the server refuses.
+   */
+  const saveAsync = useCallback(
+    async (patch: ListingPatchInput) => {
+      if (!id) return;
+      setRejections([]);
+      await mutation.mutateAsync(patch);
     },
     [id, mutation],
   );
@@ -107,9 +138,9 @@ export function useListingDraft(id: string | undefined) {
     isLoading: query.isPending && Boolean(id),
     error: query.error,
     save,
+    saveAsync,
+    rejections,
     saveState,
-    /** Awaitable, for the "next" button that must not advance on a failed save. */
-    saveAsync: (patch: ListingPatchInput) => mutation.mutateAsync(patch),
     refetch: query.refetch,
   };
 }

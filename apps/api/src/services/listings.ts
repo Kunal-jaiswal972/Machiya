@@ -441,12 +441,21 @@ export async function changeStatus(
   const validated = publishableListingSchema.safeParse(candidate);
 
   if (!validated.success) {
+    // The messages alone, without the column names in front of them: the
+    // refusal reached the lister as "rentAmount: A rental needs a monthly rent;
+    // floor: The floor cannot be above the top of the building" (see
+    // docs/ux-audit.md W-07). The paths still travel in `issues`, which is what
+    // the wizard uses to point at the step.
     throw new HttpError(
       422,
       'listing_incomplete',
-      validated.error.issues
-        .map((issue) => `${issue.path.join('.') || 'listing'}: ${issue.message}`)
-        .join('; '),
+      validated.error.issues.map((issue) => issue.message).join('. '),
+      {
+        issues: validated.error.issues.map((issue) => ({
+          path: issue.path.join('.') || 'listing',
+          message: issue.message,
+        })),
+      },
     );
   }
 

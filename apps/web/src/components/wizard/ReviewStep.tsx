@@ -1,8 +1,9 @@
+import { missingPublishFields } from '@machiya/shared';
 import type { ListingDraftView } from '@machiya/shared';
 import { Check, Loader2, TriangleAlert } from 'lucide-react';
 import { formatArea, formatBedrooms, formatRupees, humanizeEnum } from '../../lib/format';
 import { Button } from '../ui/button';
-import { WIZARD_STEPS, outstandingSteps, type WizardStepId } from './steps';
+import { WIZARD_STEPS, type WizardStepId } from './steps';
 
 /**
  * Exactly what goes live, and nothing that does not.
@@ -25,7 +26,7 @@ export function ReviewStep({
   isPublishing: boolean;
   publishError: string | null;
 }) {
-  const outstanding = outstandingSteps(draft);
+  const missing = missingPublishFields(draft);
   const ready = draft.images.filter((image) => image.status === 'READY');
   const pending = draft.images.filter((image) => image.status === 'PENDING');
   const cover = ready.find((image) => image.isCover) ?? ready[0];
@@ -39,18 +40,30 @@ export function ReviewStep({
 
   return (
     <div className="mx-auto grid max-w-3xl gap-4 pb-4">
-      {outstanding.length > 0 ? (
+      {missing.length > 0 ? (
         <section className="chrome border-clay/40 p-3">
           <h2 className="text-label flex items-center gap-1.5 text-clay">
             <TriangleAlert className="size-3.5" aria-hidden />
             Still to do
           </h2>
+          {/*
+            The FIELD that is missing, not the step's blurb. This listed "Drop a
+            pin where the property is" while the pin was plainly on the map,
+            because the step's hint stood in for whichever of its fields was
+            empty (docs/ux-audit.md W-05). `missingPublishFields` has carried
+            the per-field copy since D33.
+          */}
           <ul className="mt-1.5 grid gap-1">
-            {outstanding.map((step) => {
+            {missing.map((requirement) => {
+              const step = requirement.step as WizardStepId;
               const meta = WIZARD_STEPS.find((candidate) => candidate.id === step);
+
               return (
-                <li key={step} className="flex items-center justify-between gap-2 text-sm">
-                  <span className="text-ink-soft">{meta?.hint}</span>
+                <li
+                  key={requirement.field}
+                  className="flex items-center justify-between gap-2 text-sm"
+                >
+                  <span className="text-ink-soft">{requirement.message}</span>
                   <Button
                     size="sm"
                     variant="secondary"

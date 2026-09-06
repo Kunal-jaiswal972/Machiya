@@ -1,7 +1,7 @@
 import type { Coordinate, ListingDraftView, OutOfCoverage } from '@machiya/shared';
 import { coverageMessage } from '@machiya/shared';
 import { MapPin, TriangleAlert } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useCoverage, nearestCoveredCity } from '../../hooks/use-coverage';
 import { describeCoordinate, reverseGeocode } from '../../lib/places';
 import { Button } from '../ui/button';
@@ -68,8 +68,19 @@ export function LocationStep({
   const [precisionNote, setPrecisionNote] = useState<string | null>(null);
   const [localCoverage, setLocalCoverage] = useState<OutOfCoverage | null>(null);
 
+  /**
+   * Seeded from the draft ONCE per draft, not on every change to it.
+   *
+   * `draft` gets a fresh object identity after each autosave, so keying this on
+   * the object re-ran it while someone was typing in the other box: the
+   * locality's save landed, this fired, and the half-typed street address was
+   * replaced by the server's copy mid-word (docs/ux-audit.md W-02). The draft
+   * id is what actually means "a different listing".
+   */
+  const seededFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!draft) return;
+    if (!draft || seededFor.current === draft.id) return;
+    seededFor.current = draft.id;
     setPin({ lat: draft.lat, lng: draft.lng });
     setLocality(draft.locality ?? '');
     setAddress(draft.address ?? '');
@@ -131,7 +142,15 @@ export function LocationStep({
       if (draft) {
         // The server re-resolves the city from the coordinates whenever the pin
         // moves, so the slug sent here is only the hint D50 describes.
-        onPatch({ lat: point.lat, lng: point.lng, citySlug, locality: resolvedLocality ?? null });
+        // The locality is only written when the lookup produced one. Sending
+        // `null` because THIS point resolved no further than the city wiped a
+        // locality the lister had typed by hand (docs/ux-audit.md W-03).
+        onPatch({
+          lat: point.lat,
+          lng: point.lng,
+          citySlug,
+          ...(resolvedLocality ? { locality: resolvedLocality } : {}),
+        });
       } else {
         await onOpenDraft({
           citySlug,

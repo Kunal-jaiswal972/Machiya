@@ -2,6 +2,7 @@ import type { ListingPatchInput, OutOfCoverage } from '@machiya/shared';
 import { ArrowLeft, ArrowRight, Loader2 } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { missingPublishFields } from '@machiya/shared';
 import { toast } from 'sonner';
 import { AmenitiesStep } from '../../components/wizard/AmenitiesStep';
 import { AvailabilityStep } from '../../components/wizard/AvailabilityStep';
@@ -47,7 +48,7 @@ export function WizardPage() {
   const stepParam = params.get('step') ?? undefined;
   const step: WizardStepId = isWizardStep(stepParam) ? stepParam : 'location';
 
-  const { draft, isLoading, save, saveState, saveAsync } = useListingDraft(id);
+  const { draft, isLoading, save, saveState, rejections } = useListingDraft(id);
   const openDraft = useOpenDraft();
   const publish = usePublishDraft(id);
 
@@ -94,26 +95,46 @@ export function WizardPage() {
   );
 
   /**
-   * Advance, saving first.
+   * Advance, but never through a value the server refused.
    *
-   * `saveAsync` rather than the fire-and-forget `save`, because a step that
-   * advanced through a failed write would show the next screen while quietly
-   * losing the last one — and the promise the wizard makes is that nothing is
-   * lost.
+   * This used to send an EMPTY patch — which the server always accepts — so the
+   * chip flipped from "Not saved" back to "Saved" and the wizard moved on with
+   * the rejected value never written (docs/ux-audit.md W-01). Going forward now
+   * asks the last refusal to be dealt with first; going back never does,
+   * because retreating must never be blocked.
    */
   const advance = async (delta: number) => {
     const next = WIZARD_STEP_IDS[stepIndex(step) + delta];
     if (!next) return;
 
+    if (delta > 0 && rejections.length > 0) {
+      toast.error(rejections[0]?.message ?? 'That step has something to fix first.');
+      return;
+    }
+
+    // Forward is gated on the step being finished, and the message names the
+    // field rather than the step: "Add the street address", not "where it is".
+    // `missingPublishFields` has carried that copy since D33 and had no caller.
+    if (delta > 0 && draft) {
+      const missing = missingPublishFields(draft).filter(
+        (requirement) => requirement.step === step,
+      );
+      const first = missing[0];
+
+      if (first) {
+        toast.error(first.message);
+        return;
+      }
+    }
+
     try {
-      if (id) await saveAsync({});
       goTo(next);
     } catch (error) {
       if (error instanceof ApiRequestError && error.coverage) {
         setCoverageRefusal(error.coverage);
         return;
       }
-      toast.error('Could not save that step — nothing was lost, try again');
+      toast.error('That step did not save. Nothing was lost — try again.');
     }
   };
 
@@ -154,11 +175,18 @@ export function WizardPage() {
       step={step}
       direction={direction}
       saveState={saveState}
+      rejections={rejections}
       completed={(candidate) => stepComplete(candidate, draft)}
       onJump={(next) => {
         // Jumping ahead before a draft exists has nothing to write into.
         if (!draft) return;
-        goTo(next);
+        // Backwards and to the review step is always allowed; forwards runs
+        // the same gate the Next button does.
+        if (stepIndex(next) <= stepIndex(step) || next === 'review') {
+          goTo(next);
+          return;
+        }
+        void advance(stepIndex(next) - stepIndex(step));
       }}
       footer={
         <>

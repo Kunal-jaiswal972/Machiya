@@ -2,7 +2,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Check, CircleAlert, CloudUpload, Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { cn } from '../../lib/utils';
-import type { SaveState } from '../../hooks/use-listing-draft';
+import type { FieldRejection, SaveState } from '../../hooks/use-listing-draft';
 import { WIZARD_STEPS, stepIndex, type WizardStepId } from './steps';
 
 /**
@@ -18,6 +18,8 @@ export interface WizardShellProps {
   /** +1 forward, -1 back. Decides which side the panel enters from. */
   direction: number;
   saveState: SaveState;
+  /** What the server refused, when it refused something. */
+  rejections?: FieldRejection[];
   completed: (step: WizardStepId) => boolean;
   onJump: (step: WizardStepId) => void;
   children: ReactNode;
@@ -28,6 +30,7 @@ export function WizardShell({
   step,
   direction,
   saveState,
+  rejections = [],
   completed,
   onJump,
   children,
@@ -44,7 +47,7 @@ export function WizardShell({
           <h1 className="text-title">List a property</h1>
           <p className="text-sm text-ink-soft">{meta?.hint}</p>
         </div>
-        <SaveChip state={saveState} />
+        <SaveChip state={saveState} rejections={rejections} />
       </div>
 
       <StepRail current={current} completed={completed} onJump={onJump} />
@@ -138,15 +141,21 @@ function StepRail({
  * is that closing the tab costs nothing, and a promise nobody can see is not
  * one anybody relies on.
  */
-function SaveChip({ state }: { state: SaveState }) {
+function SaveChip({ state, rejections }: { state: SaveState; rejections: FieldRejection[] }) {
   if (state === 'idle') return null;
+
+  // A refusal is not a connection problem. The server rejects a short title or
+  // an area below the floor with a message a person can act on, and blaming
+  // the network for it was how a lost value looked like a flaky connection
+  // (docs/ux-audit.md W-01).
+  const refusal = rejections[0];
 
   const content = {
     saving: { icon: <Loader2 className="size-3 animate-spin" aria-hidden />, text: 'Saving…' },
     saved: { icon: <CloudUpload className="size-3" aria-hidden />, text: 'Saved' },
     failed: {
       icon: <CircleAlert className="size-3" aria-hidden />,
-      text: 'Not saved — check your connection',
+      text: refusal ? `Not saved — ${refusal.message}` : 'Not saved. Try that again.',
     },
   }[state];
 
