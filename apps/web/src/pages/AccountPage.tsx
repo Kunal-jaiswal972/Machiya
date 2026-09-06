@@ -1,11 +1,25 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
   COMMUTE_MODES,
+  mapStyleChoiceSchema,
   phoneFieldSchema,
   profileUpdateSchema,
   type CommuteMode,
+  type MapStyleChoice,
 } from '@machiya/shared';
-import { Bike, Building2, Bus, Car, Loader2, MailCheck, Star, Trash2 } from 'lucide-react';
+import {
+  Bike,
+  Building2,
+  Bus,
+  Car,
+  Loader2,
+  MailCheck,
+  Monitor as MonitorSmartphone,
+  Moon,
+  Star,
+  Sun,
+  Trash2,
+} from 'lucide-react';
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router';
@@ -38,6 +52,9 @@ import { Input } from '../components/ui/input';
 import { useDeleteAccount, useProfile, useUpdateProfile } from '../hooks/use-account';
 import { useCommutePreferences } from '../hooks/use-commute';
 import { useDeleteOffice, useOffices, useSetDefaultOffice } from '../hooks/use-offices';
+import { useUiPreferences } from '../hooks/use-ui-preferences';
+import { formatRelative } from '../lib/format';
+import { startTour } from '../lib/tour';
 import { auth } from '../lib/auth-client';
 import { useAuth } from '../lib/auth-context';
 import { cn } from '../lib/utils';
@@ -85,6 +102,7 @@ export function AccountPage() {
         isLoading={profile.isPending}
       />
       <CommuteCard />
+      <MapCard />
       <OfficesCard />
       <DangerCard />
     </div>
@@ -230,6 +248,82 @@ function CommuteCard() {
         </div>
 
         <CommuteControls preferences={preferences} onChange={update} />
+      </CardContent>
+    </Card>
+  );
+}
+
+const MAP_STYLE_LABEL: Record<MapStyleChoice, string> = {
+  auto: 'Match the app',
+  light: 'Light',
+  dark: 'Dark',
+};
+
+function MapCard() {
+  const { preferences, update, isPersisted } = useUiPreferences();
+  const runTour = (): void => {
+    startTour({ onFinished: () => update({ tourCompletedAt: new Date().toISOString() }) });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>The map</CardTitle>
+        <CardDescription>
+          How the map is drawn, and the walkthrough of what it is showing you.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1.5">
+          <span className="text-label text-ink-soft">Style</span>
+          <div className="flex gap-1.5">
+            {mapStyleChoiceSchema.options.map((choice) => (
+              <button
+                key={choice}
+                type="button"
+                aria-pressed={preferences.mapStyle === choice}
+                onClick={() => update({ mapStyle: choice })}
+                className={cn(
+                  'flex flex-1 items-center justify-center gap-1.5 rounded-chrome border px-3 py-2 text-sm',
+                  preferences.mapStyle === choice
+                    ? 'border-water bg-water-soft text-ink'
+                    : 'border-input text-ink-soft hover:text-ink',
+                )}
+              >
+                {choice === 'auto' ? <MonitorSmartphone className="size-4" aria-hidden /> : null}
+                {choice === 'light' ? <Sun className="size-4" aria-hidden /> : null}
+                {choice === 'dark' ? <Moon className="size-4" aria-hidden /> : null}
+                {MAP_STYLE_LABEL[choice]}
+              </button>
+            ))}
+          </div>
+          <p className="text-data text-ink-faint">
+            Satellite is not offered: every imagery layer that is free to use forbids a product like
+            this one, and the ones that allow it are not free.
+          </p>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 border-t border-edge pt-3">
+          <div>
+            <p className="text-sm">Show me around again</p>
+            <p className="text-data text-ink-faint">
+              {preferences.tourCompletedAt
+                ? `You last finished the walkthrough ${formatRelative(preferences.tourCompletedAt)}.`
+                : 'You have not been through the walkthrough yet.'}
+            </p>
+          </div>
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/" onClick={() => window.setTimeout(runTour, 900)}>
+              Start it
+            </Link>
+          </Button>
+        </div>
+
+        {!isPersisted ? (
+          <p className="text-data text-ink-faint">
+            These are kept on this device until you sign in.
+          </p>
+        ) : null}
       </CardContent>
     </Card>
   );

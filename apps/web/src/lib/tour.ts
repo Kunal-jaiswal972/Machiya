@@ -10,10 +10,10 @@ import 'driver.js/dist/driver.css';
  * exist until an office is set, and a tour that highlights the empty corner of
  * a page is worse than a shorter tour.
  *
- * See DECISIONS.md D81 for why this is driver.js and not one of the others.
+ * Whether it has been seen is not this module's business — that is a fact
+ * about the person and lives on their account (see `useUiPreferences`), so it
+ * does not run again on their phone. See DECISIONS.md D81.
  */
-const SEEN_KEY = 'machiya:tour-seen';
-
 export type TourTarget =
   'office-field' | 'ring-counts' | 'sort' | 'total-cost' | 'save-office' | 'view-toggle';
 
@@ -50,25 +50,12 @@ const STEPS: Array<{ target: TourTarget; title: string; description: string }> =
   },
 ];
 
-export function hasSeenTour(): boolean {
-  try {
-    return localStorage.getItem(SEEN_KEY) === 'yes';
-  } catch {
-    // Storage blocked: treat the tour as seen rather than starting it on every
-    // page load, which is the worse failure of the two.
-    return true;
-  }
+export interface TourOptions {
+  /** Called when the tour ends, however it ends — finished, closed or escaped. */
+  onFinished?: () => void;
 }
 
-export function markTourSeen(): void {
-  try {
-    localStorage.setItem(SEEN_KEY, 'yes');
-  } catch {
-    // Nothing to do — the tour simply offers itself again next visit.
-  }
-}
-
-export function startTour(): void {
+export function startTour(options: TourOptions = {}): void {
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // Present AND laid out: the view toggle is in the DOM at every width and
@@ -95,6 +82,6 @@ export function startTour(): void {
     doneBtnText: 'Got it',
     progressText: '{{current}} of {{total}}',
     showProgress: true,
-    onDestroyed: markTourSeen,
+    onDestroyed: () => options.onFinished?.(),
   }).drive();
 }

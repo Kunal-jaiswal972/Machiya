@@ -1,14 +1,8 @@
 import type { ListingCard } from '@machiya/shared';
 import { BadgeCheck, Heart } from 'lucide-react';
 import { Link } from 'react-router';
-import { RingGauge } from '../RingGauge';
-import {
-  formatArea,
-  formatBedrooms,
-  formatDistance,
-  formatRupees,
-  humanizeEnum,
-} from '../../lib/format';
+import { RingBadge } from '../RingBadge';
+import { formatArea, formatBedrooms, formatRupees, humanizeEnum } from '../../lib/format';
 import { cn } from '../../lib/utils';
 import { useSearchUi } from '../../stores/search-ui';
 
@@ -161,10 +155,7 @@ export function ResultCard({
           <span />
         )}
 
-        <div className="flex items-center gap-1.5">
-          <span className="text-data text-ink-soft">{formatDistance(listing.distanceMeters)}</span>
-          <RingGauge ring={listing.ring} distanceMeters={listing.distanceMeters} size={20} />
-        </div>
+        <RingBadge ring={listing.ring} distanceMeters={listing.distanceMeters} />
       </div>
     </Link>
   );

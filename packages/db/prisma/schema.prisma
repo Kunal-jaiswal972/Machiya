@@ -191,6 +191,13 @@ model User {
   /// so. See DECISIONS.md D63.
   commutePrefs Json?
 
+  /// [UiPreferences] — map style, and when the product tour was completed.
+  ///
+  /// Server-side rather than in the browser because "I have seen the tour" is
+  /// about the person, not the device: local storage would run it again on
+  /// their phone. Same JSON-column reasoning as `commutePrefs` above.
+  uiPrefs Json?
+
   // Better Auth admin plugin.
   banned     Boolean?
   banReason  String?

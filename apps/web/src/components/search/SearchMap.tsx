@@ -16,8 +16,8 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import '../../lib/maplibre-setup';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
-import { env } from '../../env';
 import { useMapPalette } from '../../hooks/use-map-palette';
+import { useMapStyle } from '../../hooks/use-map-style';
 import { formatRupeesCompact } from '../../lib/format';
 import { useDetailOverlay } from '../../stores/detail-overlay';
 import { useSearchUi } from '../../stores/search-ui';
@@ -122,6 +122,7 @@ export function SearchMap({
   const [styleReady, setStyleReady] = useState(false);
   const [styleError, setStyleError] = useState<string | null>(null);
   const palette = useMapPalette();
+  const mapStyle = useMapStyle();
 
   /**
    * Where a click landed, waiting to be confirmed as the office.
@@ -159,6 +160,14 @@ export function SearchMap({
   const routeGeometry = useDetailOverlay((state) => state.routeGeometry);
   const pois = useDetailOverlay((state) => state.pois);
   const visibleCategories = useDetailOverlay((state) => state.visibleCategories);
+
+  // Switching styles is a full teardown inside maplibre: every layer this
+  // component adds is removed and re-added by react-map-gl when the new style
+  // loads. The paint effects key off `styleReady`, so it goes false the moment
+  // the URL changes and true again on `styledata`.
+  useEffect(() => {
+    setStyleReady(false);
+  }, [mapStyle.url]);
 
   const rings = useMemo(
     () => (office ? ringsFeatureCollection(office, radiusMeters) : null),
@@ -411,8 +420,8 @@ export function SearchMap({
       >
         <p className="text-title">The map could not load</p>
         <p className="max-w-md text-sm text-ink-soft">
-          Tiles come from {env.VITE_MAP_STYLE_URL}. Check the network, or point VITE_MAP_STYLE_URL
-          at a self-hosted style. Every listing is still available in the list view.
+          The map could not be reached. Every listing is still in the list beside it, with the same
+          distances and the same costs.
         </p>
       </div>
     );
@@ -427,7 +436,7 @@ export function SearchMap({
         <Map
           ref={mapRef}
           initialViewState={{ longitude: 85.1376, latitude: 25.5941, zoom: 12 }}
-          mapStyle={env.VITE_MAP_STYLE_URL}
+          mapStyle={mapStyle.url}
           style={{ width: '100%', height: '100%' }}
           attributionControl={false}
           interactiveLayerIds={['listing-marker', 'cluster-circle']}
@@ -436,6 +445,7 @@ export function SearchMap({
             everLoaded.current = true;
             setStyleReady(true);
           }}
+          onStyleData={() => setStyleReady(true)}
           onClick={onClick}
           onMouseMove={(event) => {
             const id = event.features?.[0]?.properties?.id as string | undefined;

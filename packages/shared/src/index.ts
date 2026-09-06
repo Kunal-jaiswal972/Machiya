@@ -9,4 +9,5 @@ export * from './http.js';
 export * from './listing.js';
 export * from './listing-input.js';
 export * from './office.js';
+export * from './preferences.js';
 export * from './search-params.js';

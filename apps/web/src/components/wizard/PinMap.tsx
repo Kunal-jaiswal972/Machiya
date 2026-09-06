@@ -8,7 +8,7 @@ import Map, {
 } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import '../../lib/maplibre-setup';
-import { env } from '../../env';
+import { useMapStyle } from '../../hooks/use-map-style';
 
 /**
  * The wizard's map: one draggable pin, no rings, no listings.
@@ -32,6 +32,7 @@ export interface PinMapProps {
 }
 
 export function PinMap({ pin, initialCenter, maxBounds, onPick, busy }: PinMapProps) {
+  const mapStyle = useMapStyle();
   const mapRef = useRef<MapRef | null>(null);
   const lastEased = useRef<string | null>(null);
 
@@ -74,7 +75,7 @@ export function PinMap({ pin, initialCenter, maxBounds, onPick, busy }: PinMapPr
     <div className="map-frame h-full w-full overflow-hidden rounded-[var(--radius-chrome)]">
       <Map
         ref={mapRef}
-        mapStyle={env.VITE_MAP_STYLE_URL}
+        mapStyle={mapStyle.url}
         initialViewState={{
           latitude: pin?.lat ?? initialCenter.lat,
           longitude: pin?.lng ?? initialCenter.lng,

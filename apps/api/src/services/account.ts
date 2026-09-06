@@ -1,5 +1,12 @@
 import { prisma } from '@machiya/db';
-import { profileUpdateSchema, sessionUserSchema, type SessionUser } from '@machiya/shared';
+import {
+  profileUpdateSchema,
+  sessionUserSchema,
+  uiPreferencesPatchSchema,
+  uiPreferencesSchema,
+  type SessionUser,
+  type UiPreferences,
+} from '@machiya/shared';
 import { logger } from '../logger.js';
 import type { RequestSession } from '../middleware/require-auth.js';
 
@@ -42,6 +49,36 @@ export async function updateProfile(
   });
 
   return { user: sessionUserSchema.parse(user) };
+}
+
+/**
+ * Product preferences: map style, and whether the tour has been seen.
+ *
+ * Parsed on the way out rather than cast, like `commutePrefs` — a blob written
+ * by an older shape is a real possibility, and the defaults are a better answer
+ * than a crash on a page nobody can then reach.
+ */
+export async function getUiPreferences(session: RequestSession): Promise<UiPreferences> {
+  const user = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: { uiPrefs: true },
+  });
+
+  const parsed = uiPreferencesSchema.safeParse(user?.uiPrefs ?? {});
+  return parsed.success ? parsed.data : uiPreferencesSchema.parse({});
+}
+
+export async function updateUiPreferences(
+  session: RequestSession,
+  body: unknown,
+): Promise<UiPreferences> {
+  const patch = uiPreferencesPatchSchema.parse(body);
+  const current = await getUiPreferences(session);
+  const merged = uiPreferencesSchema.parse({ ...current, ...patch });
+
+  await prisma.user.update({ where: { id: session.userId }, data: { uiPrefs: merged } });
+
+  return merged;
 }
 
 /**
@@ -88,6 +125,7 @@ export async function deleteAccount(session: RequestSession): Promise<{ deletedA
         isPhoneVerified: false,
         avatarUrl: null,
         commutePrefs: undefined,
+        uiPrefs: undefined,
         // The admin plugin refuses a sign-in for a banned user, which is what
         // stops a social provider from recreating the session on the same id.
         banned: true,

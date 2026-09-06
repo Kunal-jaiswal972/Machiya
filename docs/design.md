@@ -73,21 +73,32 @@ Two rules that keep it disciplined:
 2. **`verdant` and `clay` are judgements, not decoration.** They mean "this fits
    your budget" and "this does not". Never used to differentiate categories.
 
-Ring colours are `water` at three lightnesses — 1 km, 2 km, 3 km — so the rings
-read as one family getting quieter outward, which is what they mean.
+Ring colours are the third judgement: `verdant`, `signal`, `clay` for 1 km, 2 km
+and 3 km. Distance from the office is not a category — it is the product's
+opinion about a listing — so the rings carry the same green/amber/red on the map
+as the badge on the card, and the two read as one system.
+
+**Colour never carries it alone.** Every ring badge says "within 1 km" in words
+beside the dot and explains the scheme in a tooltip, so it survives colour
+blindness and a greyscale screenshot. `signal` on the middle ring is the one
+place the price colour appears away from a price, and it is the same rule as
+before: the active ring is the exception, not a new licence.
 
 ### Dark mode is designed, not inverted
 
-Inverting this palette would give a dark UI _and_ a dark map, and the map cannot
-be inverted — its tiles are what they are. So dark mode keeps the same
-relationship and moves both ends:
+Dark mode moves both ends of the relationship rather than inverting the palette:
 
 - chrome surfaces move from `paper` to the `ink` family (three steps, not one);
 - `signal` gains lightness rather than losing it, because ochre on ink needs more
   luminance to stay a price and not a warning;
-- the map is _framed_ rather than recoloured: a 1px `ink`-at-40% inner edge and a
-  short scrim at the panel boundary, so the bright map reads as a lit surface
-  inside a dark instrument instead of a hole in the page.
+- the map is drawn with its own dark style — OpenFreeMap serves one beside
+  Liberty, so the tiles are not stuck being bright (D83). The framing stays: a
+  1px `ink`-at-40% inner edge and a short scrim at the panel boundary, which is
+  what keeps the map reading as a surface inside an instrument rather than a
+  hole in the page.
+
+A preference overrides the pairing in either direction — a light map inside a
+dark interface was the original position here and is still one press away.
 
 Every token is defined in both blocks. A token missing from one renders as an
 invisible control, which is far harder to spot than a wrong colour.

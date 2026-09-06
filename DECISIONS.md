@@ -2678,3 +2678,37 @@ Consequences that fall out of it and are the reason for the shape:
 - full screen is modal at every width — nothing is behind it — so it traps focus
   and locks the page scroll, where the desktop panel deliberately does neither
   (D78).
+
+## D83 — The map follows the theme; satellite is not on offer
+
+**The style pair.** OpenFreeMap serves a `dark` style beside `liberty` from the
+same deployment, verified with `curl -o /dev/null -w '%{http_code}'` against
+`/styles/dark` — 200. So a dark map costs one more env var
+(`VITE_MAP_STYLE_URL_DARK`) and nothing else, and a self-hosted tile server is
+still two values away.
+
+The default is `auto`: the map follows the app theme. The override in
+preferences exists because a dark interface framing a bright map is a real
+design position — it is what docs/design.md argued, and it is defensible — but
+it was not a choice anyone had, and at night most people do not want it. So the
+position becomes an option instead of the only behaviour, and the design doc's
+dark-mode section is rewritten to say so.
+
+A style swap is a full teardown inside maplibre: every layer this app adds is
+removed and re-added when the new style loads. `styleReady` goes false on the
+URL change and true again on `styledata`, which is what stops the ring and route
+effects painting into a style that no longer has their layers — the same failure
+class as docs/ux-audit.md 1.6.
+
+**Satellite: nothing qualifies.** The constraint is free or self-hostable, and
+"free to try" is not the test. What was actually checked:
+
+|                           | licence                                                                                             | verdict                                               |
+| ------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| EOX Sentinel-2 cloudless  | CC BY-NC-SA 4.0 on the free tier, quoted from their own licence page: "for non-commercial purposes" | non-commercial only; a rental marketplace is not that |
+| Esri World Imagery        | ArcGIS terms; free use is the OSM tracing grant, not a basemap licence                              | account-gated, and not for this use                   |
+| Google / Mapbox satellite | paid                                                                                                | out on the first rule                                 |
+
+So there is no satellite toggle. Shipping one that 403s, or one that quietly
+breaks the licence, is worse than not offering it — and the style control has
+two options that work. Recorded in docs/known-issues.md so nobody re-derives it.

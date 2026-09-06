@@ -1,6 +1,12 @@
 import { Router } from 'express';
 import { requireAuth, sessionOf, type SessionResolver } from '../middleware/require-auth.js';
-import { deleteAccount, getProfile, updateProfile } from '../services/account.js';
+import {
+  deleteAccount,
+  getProfile,
+  getUiPreferences,
+  updateProfile,
+  updateUiPreferences,
+} from '../services/account.js';
 
 /**
  * The signed-in user as the server sees them, and the two things they can do
@@ -22,6 +28,18 @@ export function meRouter(resolve: SessionResolver): Router {
   router.patch('/me', requireAuth(resolve), (req, res, next) => {
     updateProfile(sessionOf(req), req.body)
       .then((result) => res.json(result))
+      .catch(next);
+  });
+
+  router.get('/me/preferences', requireAuth(resolve), (req, res, next) => {
+    getUiPreferences(sessionOf(req))
+      .then((preferences) => res.json({ preferences }))
+      .catch(next);
+  });
+
+  router.patch('/me/preferences', requireAuth(resolve), (req, res, next) => {
+    updateUiPreferences(sessionOf(req), req.body)
+      .then((preferences) => res.json({ preferences }))
       .catch(next);
   });
 

@@ -14,6 +14,13 @@ Nothing. The four items that stood here after step 10 — the wizard's address
 rules, the orientation fixture, the unpinned `mc`, and the unstubbed geocoder
 tier — are closed by D67, D72, D75 and D74.
 
+## Not built, and why
+
+- **No satellite map style.** Every imagery layer that is free to use is
+  non-commercial or account-gated; the ones that permit this use are paid. The
+  style control offers light and dark only.
+  ([D83](../DECISIONS.md#d83--the-map-follows-the-theme-satellite-is-not-on-offer))
+
 ## Workarounds still in force
 
 - **`pnpm auth:check` exists because the Better Auth CLI's output is a draft.**

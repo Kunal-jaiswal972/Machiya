@@ -8,6 +8,12 @@ const envSchema = z.object({
   VITE_API_BASE_URL: z.string().url().default('http://localhost:4000'),
   VITE_MAP_STYLE_URL: z.string().url().default('https://tiles.openfreemap.org/styles/liberty'),
   /**
+   * The dark counterpart. Both come from the same OpenFreeMap deployment, so
+   * pointing the pair at a self-hosted tile server means changing two values
+   * and nothing else. See DECISIONS.md D83.
+   */
+  VITE_MAP_STYLE_URL_DARK: z.string().url().default('https://tiles.openfreemap.org/styles/dark'),
+  /**
    * Which sign-in methods to render. Must match the API's
    * AUTH_ENABLED_PROVIDERS: a button for a provider the server has not
    * configured fails at the OAuth redirect, which is a worse experience than

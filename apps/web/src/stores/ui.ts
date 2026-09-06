@@ -4,17 +4,33 @@ export type Theme = 'light' | 'dark';
 
 const STORAGE_KEY = 'machiya:theme';
 
+/**
+ * Dark unless this browser has been told otherwise.
+ *
+ * A stored choice wins; there is no read of `prefers-color-scheme`, because the
+ * product is designed dark (docs/design.md) and the system setting is a fact
+ * about someone's operating system rather than about this map. The toggle is
+ * one press away and is remembered.
+ */
 function initialTheme(): Theme {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === 'light' || stored === 'dark') {
-    return stored;
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored === 'light' || stored === 'dark' ? stored : 'dark';
+  } catch {
+    return 'dark';
   }
-  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
-function applyTheme(theme: Theme): void {
+/** Persisted only when the person chose it — see `setTheme`. */
+function applyTheme(theme: Theme, persist: boolean): void {
   document.documentElement.classList.toggle('dark', theme === 'dark');
-  localStorage.setItem(STORAGE_KEY, theme);
+  if (!persist) return;
+
+  try {
+    localStorage.setItem(STORAGE_KEY, theme);
+  } catch {
+    // Private window: the theme holds for this session and is not remembered.
+  }
 }
 
 interface UiState {
@@ -30,11 +46,12 @@ interface UiState {
 export const useUiStore = create<UiState>((set, get) => ({
   theme: initialTheme(),
   setTheme: (theme) => {
-    applyTheme(theme);
+    applyTheme(theme, true);
     set({ theme });
   },
   toggleTheme: () => get().setTheme(get().theme === 'dark' ? 'light' : 'dark'),
 }));
 
-// Keep the DOM in step with the store's starting value.
-applyTheme(useUiStore.getState().theme);
+// The DOM starts in step with the store, and the default is NOT written back:
+// storing it on boot would turn "we picked dark for you" into "you chose dark".
+applyTheme(useUiStore.getState().theme, false);

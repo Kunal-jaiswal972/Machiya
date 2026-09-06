@@ -8,7 +8,7 @@ import { EnquiryForm } from '../components/listing/EnquiryForm';
 import { Gallery } from '../components/listing/Gallery';
 import { CommutePanel } from '../components/listing/CommutePanel';
 import { PoiPanel } from '../components/listing/PoiPanel';
-import { RingGauge } from '../components/RingGauge';
+import { RingBadge } from '../components/RingBadge';
 import { DetailSkeleton } from '../components/Skeletons';
 import { EmptyState } from '../components/EmptyState';
 import { Button } from '../components/ui/button';
@@ -176,11 +176,12 @@ export function ListingDetailRoute() {
               </div>
 
               {route.data ? (
-                <RingGauge
+                <RingBadge
                   ring={ringFor(route.data.route.distanceMeters)}
                   distanceMeters={route.data.route.distanceMeters / 1.35}
                   roadMeters={route.data.route.distanceMeters}
-                  size={56}
+                  size="lg"
+                  className="shrink-0"
                 />
               ) : null}
             </header>

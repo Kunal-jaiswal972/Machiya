@@ -17,6 +17,7 @@ import { ResultList } from '../components/search/ResultList';
 import { SearchMap } from '../components/search/SearchMap';
 import { Button } from '../components/ui/button';
 import { useCloseDetail } from '../hooks/use-close-detail';
+import { useUiPreferences } from '../hooks/use-ui-preferences';
 import { useCoverage, nearestCoveredCity } from '../hooks/use-coverage';
 import { useReverseGeocode } from '../hooks/use-reverse-geocode';
 import { useListingSearch } from '../hooks/use-listing-search';
@@ -25,7 +26,7 @@ import { useSearchState } from '../hooks/use-search-state';
 import { useFavoriteIds, useToggleFavorite } from '../hooks/use-seeker';
 import { useAuth } from '../lib/auth-context';
 import { describeCoordinate } from '../lib/places';
-import { hasSeenTour, startTour } from '../lib/tour';
+import { startTour } from '../lib/tour';
 import { cn } from '../lib/utils';
 import { useSearchUi } from '../stores/search-ui';
 
@@ -51,6 +52,7 @@ export function SearchPage() {
   const { offices, defaultOffice } = useOffices();
   const saveOffice = useSaveOffice();
   const closeDetail = useCloseDetail();
+  const ui = useUiPreferences();
   const isDetailOpen = useMatch('/listings/:slug') !== null;
   const view = useSearchUi((state) => state.view);
   const setView = useSearchUi((state) => state.setView);
@@ -86,12 +88,19 @@ export function SearchPage() {
    * about results, and a tour of an empty page teaches nothing. It marks itself
    * seen when it ends, however it ends.
    */
-  useEffect(() => {
-    if (hasSeenTour() || search.listings.length === 0) return;
+  const runTour = useCallback(() => {
+    startTour({ onFinished: () => ui.update({ tourCompletedAt: new Date().toISOString() }) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `update` is rebuilt each render
+  }, [ui.preferences]);
 
-    const timer = window.setTimeout(startTour, 600);
+  useEffect(() => {
+    // Not while the account's answer is still in flight: starting on a guess
+    // would run the tour again for someone who finished it on another device.
+    if (ui.isLoading || ui.preferences.tourCompletedAt || search.listings.length === 0) return;
+
+    const timer = window.setTimeout(runTour, 600);
     return () => window.clearTimeout(timer);
-  }, [search.listings.length]);
+  }, [ui.isLoading, ui.preferences.tourCompletedAt, search.listings.length, runTour]);
 
   // One value for the two ways a point can be out of coverage. The pin's answer
   // wins because it lands first, and because the search is not even run for a
@@ -269,7 +278,7 @@ export function SearchPage() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={startTour}
+            onClick={runTour}
             title="How this works"
             className="shrink-0"
           >
