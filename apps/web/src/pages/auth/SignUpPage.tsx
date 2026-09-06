@@ -42,17 +42,35 @@ export function SignUpPage() {
 
   if (sentTo) {
     return (
-      <AuthShell title="Check your inbox" description={`We sent a verification link to ${sentTo}.`}>
+      /*
+        The server answers the same way whether or not the address already has
+        an account — deliberately, so nobody can use sign-up to find out who is
+        registered here. That makes "we sent you a link" a promise the screen
+        cannot keep, and someone with an existing account waits for a mail that
+        will never arrive. So the copy covers both cases and offers the way out
+        of each.
+      */
+      <AuthShell
+        title="Check your inbox"
+        description={`If ${sentTo} is new here, a link is on its way.`}
+      >
         <div className="flex flex-col items-center gap-3 py-4 text-center">
           <MailCheck className="size-8 text-primary" aria-hidden />
           <p className="text-sm text-muted-foreground">
-            The link is valid for an hour. You need to use it before you can sign in.
+            The link lasts an hour, and you need it before you can sign in.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Already had an account with this address?{' '}
+            <Link to="/auth/sign-in" className="text-primary underline underline-offset-4">
+              Sign in instead
+            </Link>
+            .
           </p>
           <Link
             to={`/auth/verify-email?email=${encodeURIComponent(sentTo)}`}
             className="text-sm text-primary underline underline-offset-4"
           >
-            Did not get it?
+            Nothing arrived?
           </Link>
         </div>
       </AuthShell>

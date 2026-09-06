@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
 import { EmptyState } from '../../components/EmptyState';
+import { LoadFailed } from '../../components/LoadFailed';
 import { Button } from '../../components/ui/button';
 import { useModerationQueue, useVerifyListing } from '../../hooks/use-admin';
 import { formatRupees } from '../../lib/format';
@@ -61,6 +62,8 @@ export function ModerationPage() {
 
       {queue.isPending ? (
         <QueueSkeleton />
+      ) : queue.isError ? (
+        <LoadFailed what="the queue" onRetry={() => void queue.refetch()} />
       ) : listings.length === 0 ? (
         <EmptyState
           illustration="rings"

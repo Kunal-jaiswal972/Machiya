@@ -74,7 +74,7 @@ export function VerifyEmailPage() {
         <div className="flex flex-col items-center gap-3 py-2 text-center">
           <MailCheck className="size-8 text-primary" aria-hidden />
           <p className="text-sm text-muted-foreground">
-            Sent to {email}. The link is valid for an hour.
+            If {email} needs confirming, a fresh link is on its way. It lasts an hour.
           </p>
         </div>
       ) : (

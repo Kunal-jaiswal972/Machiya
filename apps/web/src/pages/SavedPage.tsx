@@ -1,11 +1,23 @@
 import type { FavoriteListing, SavedSearchView } from '@machiya/shared';
 import { buildSearchParams, savedSearchToQuery } from '@machiya/shared';
 import { Heart, MapPinOff, Play, Trash2 } from 'lucide-react';
-import { useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { EmptyState } from '../components/EmptyState';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '../components/ui/alert-dialog';
+import { LoadFailed } from '../components/LoadFailed';
 import { Button } from '../components/ui/button';
+import { ToggleGroup, ToggleGroupItem } from '../components/ui/toggle-group';
 import {
   useDeleteSavedSearch,
   useFavorites,
@@ -25,7 +37,18 @@ type Tab = 'favorites' | 'searches';
  * not need two navigation entries to find four things.
  */
 export function SavedPage() {
-  const [tab, setTab] = useState<Tab>('favorites');
+  /**
+   * The tab lives in the URL, like the search does.
+   *
+   * As component state, /saved always reopened on Favourites — so "come back to
+   * my saved search" cost an extra tap every visit, Back did not undo the
+   * switch, and the tab could not be linked.
+   */
+  const [params, setParams] = useSearchParams();
+  const tab: Tab = params.get('tab') === 'searches' ? 'searches' : 'favorites';
+  const setTab = (next: Tab): void => {
+    setParams(next === 'favorites' ? {} : { tab: next }, { replace: true });
+  };
   const favorites = useFavorites();
   const searches = useSavedSearches();
 
@@ -36,40 +59,38 @@ export function SavedPage() {
         <p className="text-sm text-ink-soft">Places you kept, and searches you can re-run.</p>
       </header>
 
-      <nav aria-label="Saved sections" className="flex gap-1.5">
-        {(
-          [
-            {
-              label: `Favourites${favorites.data ? ` (${String(favorites.data.length)})` : ''}`,
-              value: 'favorites',
-            },
-            {
-              label: `Searches${searches.data ? ` (${String(searches.data.length)})` : ''}`,
-              value: 'searches',
-            },
-          ] as const
-        ).map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            aria-pressed={tab === option.value}
-            onClick={() => {
-              setTab(option.value);
-            }}
-            className={cn(
-              'text-label rounded-[var(--radius-chrome)] border px-2.5 py-1',
-              tab === option.value
-                ? 'border-water bg-water-soft'
-                : 'border-edge-strong text-ink-soft hover:bg-paper-sunken',
-            )}
-          >
-            {option.label}
-          </button>
-        ))}
-      </nav>
+      {/*
+        A real tab strip: one Tab stop, arrow keys between the two, and the
+        count in its own element so the label cannot widen under the cursor
+        when the fetch lands.
+      */}
+      <ToggleGroup
+        type="single"
+        value={tab}
+        onValueChange={(next) => {
+          if (next === 'favorites' || next === 'searches') setTab(next);
+        }}
+        aria-label="Saved sections"
+        className="self-start"
+      >
+        <ToggleGroupItem value="favorites">
+          Favourites
+          <span className="text-data ml-1 w-5 text-left text-ink-faint tabular-nums">
+            {favorites.data ? favorites.data.length : ''}
+          </span>
+        </ToggleGroupItem>
+        <ToggleGroupItem value="searches">
+          Searches
+          <span className="text-data ml-1 w-5 text-left text-ink-faint tabular-nums">
+            {searches.data ? searches.data.length : ''}
+          </span>
+        </ToggleGroupItem>
+      </ToggleGroup>
 
       {tab === 'favorites' ? (
-        favorites.data && favorites.data.length > 0 ? (
+        favorites.isError ? (
+          <LoadFailed what="your saved places" onRetry={() => void favorites.refetch()} />
+        ) : favorites.data && favorites.data.length > 0 ? (
           <ul className="grid gap-2">
             {favorites.data.map((favorite) => (
               <FavoriteRow key={favorite.id} favorite={favorite} />
@@ -89,6 +110,8 @@ export function SavedPage() {
             }
           />
         )
+      ) : searches.isError ? (
+        <LoadFailed what="your saved searches" onRetry={() => void searches.refetch()} />
       ) : searches.data && searches.data.length > 0 ? (
         <ul className="grid gap-2">
           {searches.data.map((search) => (
@@ -155,6 +178,11 @@ function FavoriteRow({ favorite }: { favorite: FavoriteListing }) {
         {formatRupees(price)}
       </p>
 
+      {/*
+        Undo rather than a confirmation. Un-saving is one tap and re-saving is
+        one tap, so a dialog would cost more than the mistake — but the toast
+        has to carry the way back, and it said nothing at all on success.
+      */}
       <Button
         size="icon"
         variant="ghost"
@@ -163,8 +191,16 @@ function FavoriteRow({ favorite }: { favorite: FavoriteListing }) {
           toggle.mutate(
             { listingId: favorite.id, next: false },
             {
+              onSuccess: () => {
+                toast.success('Removed from your saved places', {
+                  action: {
+                    label: 'Undo',
+                    onClick: () => toggle.mutate({ listingId: favorite.id, next: true }),
+                  },
+                });
+              },
               onError: () => {
-                toast.error('Could not remove that');
+                toast.error('That could not be removed. Try again.');
               },
             },
           );
@@ -223,23 +259,36 @@ function SavedSearchRow({ search }: { search: SavedSearchView }) {
         </Button>
       ) : null}
 
-      <Button
-        size="icon"
-        variant="ghost"
-        aria-label={`Delete the saved search ${search.name}`}
-        onClick={() => {
-          remove.mutate(search.id, {
-            onSuccess: () => {
-              toast.success('Saved search deleted');
-            },
-            onError: () => {
-              toast.error('Could not delete that');
-            },
-          });
-        }}
-      >
-        <Trash2 className="size-4" aria-hidden />
-      </Button>
+      {/* A saved search cannot be recreated from the row, so this one asks. */}
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <Button size="icon" variant="ghost" aria-label={`Delete the saved search ${search.name}`}>
+            <Trash2 className="size-4" aria-hidden />
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{search.name}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The office, the radius and the filters go with it. You would have to set them up
+              again.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                remove.mutate(search.id, {
+                  onSuccess: () => toast.success(`“${search.name}” is gone`),
+                  onError: () => toast.error('That could not be deleted. Try again.'),
+                });
+              }}
+            >
+              Delete it
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </li>
   );
 }

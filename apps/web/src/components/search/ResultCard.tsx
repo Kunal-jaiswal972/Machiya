@@ -128,9 +128,15 @@ export function ResultCard({
         <p className="text-data text-ink-soft">
           {formatBedrooms(listing.bedrooms, listing.propertyType)} · {formatArea(listing.areaSqft)}
         </p>
-        <p className="text-data truncate text-ink-faint">
-          {humanizeEnum(listing.furnishing)} · {listing.locality}
-        </p>
+        {/*
+          Two lines rather than one truncated one. "Semi furnished · Ash…" is
+          text losing a fight with its container, and the locality is the half
+          that gets eaten — which is the half someone is reading for.
+        */}
+        <p className="text-data text-ink-faint">{humanizeEnum(listing.furnishing)}</p>
+        {listing.locality ? (
+          <p className="text-data line-clamp-1 text-ink-faint">{listing.locality}</p>
+        ) : null}
       </div>
 
       <div className="flex shrink-0 flex-col items-end justify-between gap-2">

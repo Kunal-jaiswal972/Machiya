@@ -6,7 +6,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { apiFetch } from '../lib/api';
-import { authClient } from '../lib/auth-client';
+import { assertOk, authClient } from '../lib/auth-client';
 
 export function useModerationQueue(verified = false) {
   return useQuery({
@@ -73,20 +73,38 @@ export function useAdminUserActions() {
     void queryClient.invalidateQueries({ queryKey: ['admin', 'users'] });
   };
 
+  /**
+   * Every one of these goes through `assertOk`.
+   *
+   * The auth client RESOLVES with `{ data: null, error }` rather than
+   * rejecting, so a mutation without this check reports success for a refusal:
+   * banning a user who does not exist answered 404 and the page still said
+   * "Banned, and their sessions are revoked".
+   */
   const ban = useMutation({
-    mutationFn: ({ userId, reason }: { userId: string; reason: string }) =>
-      authClient.admin.banUser({ userId, banReason: reason }),
+    mutationFn: async ({ userId, reason }: { userId: string; reason: string }) => {
+      assertOk(await authClient.admin.banUser({ userId, banReason: reason }));
+    },
     onSuccess: refresh,
   });
 
   const unban = useMutation({
-    mutationFn: (userId: string) => authClient.admin.unbanUser({ userId }),
+    mutationFn: async (userId: string) => {
+      assertOk(await authClient.admin.unbanUser({ userId }));
+    },
     onSuccess: refresh,
   });
 
   const setRole = useMutation({
-    mutationFn: ({ userId, role }: { userId: string; role: 'SEEKER' | 'LISTER' | 'ADMIN' }) =>
-      authClient.admin.setRole({ userId, role }),
+    mutationFn: async ({
+      userId,
+      role,
+    }: {
+      userId: string;
+      role: 'SEEKER' | 'LISTER' | 'ADMIN';
+    }) => {
+      assertOk(await authClient.admin.setRole({ userId, role }));
+    },
     onSuccess: refresh,
   });
 

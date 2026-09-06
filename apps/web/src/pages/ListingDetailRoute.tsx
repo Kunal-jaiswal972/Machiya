@@ -1,6 +1,16 @@
 import { routeProfileForMode } from '@machiya/shared';
 import { AnimatePresence } from 'motion/react';
-import { BadgeCheck } from 'lucide-react';
+import {
+  BadgeCheck,
+  Bath,
+  BedDouble,
+  Building,
+  CalendarDays,
+  Check,
+  Ruler,
+  Sofa,
+  type LucideIcon,
+} from 'lucide-react';
 import { useEffect } from 'react';
 import { Link, useMatch, useNavigate, useParams, useSearchParams } from 'react-router';
 import { DetailPanel } from '../components/listing/DetailPanel';
@@ -30,6 +40,7 @@ import {
   humanizeEnum,
 } from '../lib/format';
 import { useCloseDetail } from '../hooks/use-close-detail';
+import { cn } from '../lib/utils';
 import { useDetailOverlay } from '../stores/detail-overlay';
 
 /**
@@ -159,207 +170,251 @@ export function ListingDetailRoute() {
             }
           />
         ) : (
-          <div className="flex flex-col gap-5 p-3 pt-11">
-            <Gallery images={listing.images} title={listing.title ?? 'Untitled draft'} />
-
-            {/* Price loudest, road distance second — the product's argument. */}
-            <header className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-baseline gap-1.5">
-                  <span className="text-price-xl text-signal-ink dark:text-signal">
-                    {formatRupees(price)}
-                  </span>
-                  {listing.listingType === 'RENT' ? (
-                    <span className="text-label text-ink-faint">/mo</span>
-                  ) : null}
-                </div>
-                <h2 className="text-title mt-1 text-balance">
-                  {listing.title ?? 'Untitled draft'}
-                  {listing.isVerified ? (
-                    <BadgeCheck
-                      className="ml-1.5 inline size-4 -translate-y-px text-verdant"
-                      aria-label="Verified listing"
-                    />
-                  ) : null}
-                </h2>
-                <p className="text-data mt-0.5 text-ink-soft">
-                  {addressLine(listing.address ?? listing.locality, listing.city.state)}
-                </p>
-              </div>
-
-              {route.data ? (
-                <RingBadge
-                  ring={ringFor(route.data.route.distanceMeters)}
-                  distanceMeters={route.data.route.distanceMeters / 1.35}
-                  roadMeters={route.data.route.distanceMeters}
-                  size="lg"
-                  className="shrink-0"
-                />
-              ) : null}
-            </header>
-
-            {office ? (
-              commute ? (
-                <CommutePanel
-                  commute={commute}
-                  preferences={commutePreferences.preferences}
-                  onChange={commutePreferences.update}
-                  isPersisted={commutePreferences.isPersisted}
-                  cityName={listing.city.name}
-                />
-              ) : (
-                <p className="text-data text-ink-faint">Working out the commute…</p>
-              )
-            ) : (
-              <p className="text-sm text-ink-soft">
-                Set an office on the search to see the commute from it.
-              </p>
+          /*
+            One tree, two layouts. Full screen is the same screen with more
+            room — what is on the left decides whether to go and see the place,
+            what is on the right is what it costs you and what surrounds it. In
+            the panel the two columns simply stack, in that order.
+          */
+          <div
+            className={cn(
+              isExpanded
+                ? 'grid items-start gap-6 p-5 pt-14 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]'
+                : 'flex flex-col gap-5 p-3 pt-11',
             )}
+          >
+            <div className="flex min-w-0 flex-col gap-5">
+              <Gallery images={listing.images} title={listing.title ?? 'Untitled draft'} />
 
-            {/* --- the facts ------------------------------------------------ */}
-            <section>
-              <h3 className="text-title mb-2">The place</h3>
-              <dl className="grid grid-cols-2 gap-2">
-                <Fact
-                  label="Layout"
-                  value={formatBedrooms(listing.bedrooms, listing.propertyType)}
-                />
-                <Fact
-                  label="Bathrooms"
-                  value={listing.bathrooms === null ? '—' : String(listing.bathrooms)}
-                />
-                <Fact label="Area" value={formatArea(listing.areaSqft)} />
-                <Fact label="Furnishing" value={humanizeEnum(listing.furnishing)} />
-                <Fact label="Type" value={humanizeEnum(listing.propertyType)} />
-                <Fact
-                  label="Floor"
-                  value={
-                    listing.floor === null
-                      ? '—'
-                      : `${String(listing.floor)}${listing.totalFloors === null ? '' : ` of ${String(listing.totalFloors)}`}`
-                  }
-                />
-                {listing.listingType === 'RENT' ? (
-                  <>
-                    <Fact label="Deposit" value={formatRupees(listing.securityDeposit)} />
-                    <Fact label="Maintenance" value={formatRupees(listing.maintenanceMonthly)} />
-                  </>
+              {/* Price loudest, road distance second — the product's argument. */}
+              <header className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-price-xl text-signal-ink dark:text-signal">
+                      {formatRupees(price)}
+                    </span>
+                    {listing.listingType === 'RENT' ? (
+                      <span className="text-label text-ink-faint">/mo</span>
+                    ) : null}
+                  </div>
+                  {commute?.outlay.total ? (
+                    <p className="text-sm text-ink-soft">
+                      <span className="font-medium tabular-nums text-ink">
+                        {formatRupees(commute.outlay.total)}
+                      </span>{' '}
+                      a month all-in, once the commute is counted
+                    </p>
+                  ) : null}
+                  <h2 className="text-title mt-1 text-balance">
+                    {listing.title ?? 'Untitled draft'}
+                    {listing.isVerified ? (
+                      <BadgeCheck
+                        className="ml-1.5 inline size-4 -translate-y-px text-verdant"
+                        aria-label="Verified listing"
+                      />
+                    ) : null}
+                  </h2>
+                  <p className="text-data mt-0.5 text-ink-soft">
+                    {addressLine(listing.address ?? listing.locality, listing.city.state)}
+                  </p>
+                </div>
+
+                {route.data ? (
+                  <RingBadge
+                    ring={ringFor(route.data.route.distanceMeters)}
+                    distanceMeters={route.data.route.distanceMeters / 1.35}
+                    roadMeters={route.data.route.distanceMeters}
+                    size="lg"
+                    className="shrink-0"
+                  />
                 ) : null}
-                <Fact label="Available" value={formatAvailability(listing.availableFrom)} />
-              </dl>
-            </section>
+              </header>
 
-            <section>
-              <h3 className="text-title mb-1">About</h3>
-              <p className="text-sm whitespace-pre-line">
-                {listing.description ?? 'No description yet.'}
-              </p>
-            </section>
+              {office ? (
+                commute ? (
+                  <CommutePanel
+                    commute={commute}
+                    preferences={commutePreferences.preferences}
+                    onChange={commutePreferences.update}
+                    isPersisted={commutePreferences.isPersisted}
+                    cityName={listing.city.name}
+                  />
+                ) : (
+                  <p className="text-data text-ink-faint">Working out the commute…</p>
+                )
+              ) : (
+                <p className="text-sm text-ink-soft">
+                  Set an office on the search to see the commute from it.
+                </p>
+              )}
 
-            {listing.amenities.length > 0 ? (
+              {/*
+                The five that decide whether someone books a viewing, as icon and
+                value pairs rather than eight labelled boxes of equal weight. The
+                rest — deposit, maintenance, type — sit under the description,
+                where they are read once rather than scanned.
+              */}
               <section>
-                <h3 className="text-title mb-2">Amenities</h3>
-                <ul className="flex flex-wrap gap-1.5">
-                  {listing.amenities.map((amenity) => (
-                    <li
-                      key={amenity.id}
-                      className="rounded-inset border border-edge px-2 py-0.5 text-label"
-                    >
-                      {amenity.name}
-                    </li>
-                  ))}
-                </ul>
+                <h3 className="sr-only">The place</h3>
+                <dl className="flex flex-wrap gap-x-5 gap-y-2">
+                  <Fact
+                    Icon={BedDouble}
+                    value={formatBedrooms(listing.bedrooms, listing.propertyType)}
+                    label="Layout"
+                  />
+                  <Fact
+                    Icon={Bath}
+                    value={
+                      listing.bathrooms === null
+                        ? 'Bathrooms not stated'
+                        : `${String(listing.bathrooms)} bath`
+                    }
+                    label="Bathrooms"
+                  />
+                  <Fact Icon={Ruler} value={formatArea(listing.areaSqft)} label="Area" />
+                  <Fact Icon={Sofa} value={humanizeEnum(listing.furnishing)} label="Furnishing" />
+                  <Fact
+                    Icon={Building}
+                    value={
+                      listing.floor === null
+                        ? humanizeEnum(listing.propertyType)
+                        : `Floor ${String(listing.floor)}${listing.totalFloors === null ? '' : ` of ${String(listing.totalFloors)}`}`
+                    }
+                    label="Floor"
+                  />
+                  <Fact
+                    Icon={CalendarDays}
+                    value={formatAvailability(listing.availableFrom)}
+                    label="Available"
+                  />
+                </dl>
               </section>
-            ) : null}
 
-            {listing.rules.length > 0 ? (
               <section>
-                <h3 className="text-title mb-2">House rules</h3>
-                <ul className="flex flex-col gap-1">
-                  {listing.rules.map((rule) => (
-                    <li key={rule} className="text-sm text-ink-soft">
-                      {rule}
-                    </li>
-                  ))}
-                </ul>
+                <h3 className="text-title mb-1">About this place</h3>
+                <p className="text-sm whitespace-pre-line">
+                  {listing.description ?? 'The owner has not written a description yet.'}
+                </p>
+
+                {listing.listingType === 'RENT' ? (
+                  <p className="text-data mt-2 text-ink-soft">
+                    {formatRupees(listing.securityDeposit)} deposit
+                    {listing.maintenanceMonthly
+                      ? ` · ${formatRupees(listing.maintenanceMonthly)} maintenance a month`
+                      : ' · no monthly maintenance'}
+                    {` · ${humanizeEnum(listing.propertyType).toLowerCase()}`}
+                  </p>
+                ) : null}
               </section>
-            ) : null}
 
-            <PoiPanel
-              pois={pois.data?.pois ?? []}
-              degraded={pois.data?.degraded ?? false}
-              isLoading={pois.isPending}
-            />
-
-            {/* --- owner ---------------------------------------------------- */}
-            <section className="flex items-center gap-3 rounded-chrome border border-edge p-3">
-              <span className="grid size-9 shrink-0 place-items-center rounded-round bg-paper-sunken text-label">
-                {listing.owner.name.slice(0, 1).toUpperCase()}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{listing.owner.name}</span>
-                <span className="text-data block text-ink-faint">
-                  {listing.owner.phone === null
-                    ? 'Contact shown after you enquire'
-                    : listing.owner.phone}
-                </span>
-              </span>
-            </section>
-
-            <EnquiryForm
-              listingSlug={listing.slug}
-              ownerName={listing.owner.name}
-              viewerIsOwner={detail.data.viewerIsOwner}
-              viewerHasEnquired={detail.data.viewerHasEnquired}
-            />
-
-            {/* --- similar -------------------------------------------------- */}
-            {similar.data && similar.data.listings.length > 0 ? (
-              <section>
-                <h3 className="text-title mb-2">Similar nearby</h3>
-                <ul className="flex gap-2 overflow-x-auto pb-1">
-                  {similar.data.listings.map((card) => (
-                    <li key={card.id} className="w-40 shrink-0">
-                      <Link
-                        to={`/listings/${card.slug}${searchSuffix}`}
-                        className="flex flex-col gap-1"
+              {listing.amenities.length > 0 ? (
+                <section>
+                  <h3 className="text-title mb-2">Amenities</h3>
+                  <ul className="flex flex-wrap gap-1.5">
+                    {listing.amenities.map((amenity) => (
+                      <li
+                        key={amenity.id}
+                        className="flex items-center gap-1.5 rounded-round border border-edge px-2 py-1 text-label"
                       >
-                        <span
-                          className="aspect-4/3 w-full overflow-hidden rounded-chrome bg-paper-sunken"
-                          style={
-                            card.coverDominantColor
-                              ? { backgroundColor: card.coverDominantColor }
-                              : undefined
-                          }
-                        >
-                          {card.coverUrl ? (
-                            <img
-                              src={card.coverUrl}
-                              alt=""
-                              loading="lazy"
-                              className="size-full object-cover"
-                            />
-                          ) : null}
-                        </span>
-                        <span className="text-sm font-semibold text-signal-ink dark:text-signal">
-                          {formatRupees(
-                            card.listingType === 'RENT' ? card.rentAmount : card.salePrice,
-                          )}
-                        </span>
-                        <span className="text-data truncate text-ink-soft">
-                          {formatBedrooms(card.bedrooms, card.propertyType)} ·{' '}
-                          {formatDistance(card.distanceMeters)} away
-                        </span>
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
+                        <Check className="size-3 shrink-0 text-verdant" aria-hidden />
+                        {amenity.name}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
 
-            <p className="text-data text-ink-faint">
-              {listing.viewCount === 1 ? '1 view' : `${String(listing.viewCount)} views`}
-            </p>
+              {listing.rules.length > 0 ? (
+                <section>
+                  <h3 className="text-title mb-2">House rules</h3>
+                  <ul className="flex flex-col gap-1">
+                    {listing.rules.map((rule) => (
+                      <li key={rule} className="text-sm text-ink-soft">
+                        {rule}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+            </div>
+
+            <div className="flex min-w-0 flex-col gap-5">
+              <PoiPanel
+                pois={pois.data?.pois ?? []}
+                degraded={pois.data?.degraded ?? false}
+                isLoading={pois.isPending}
+              />
+
+              {/* --- owner ---------------------------------------------------- */}
+              <section className="flex items-center gap-3 rounded-chrome border border-edge p-3">
+                <span className="grid size-9 shrink-0 place-items-center rounded-round bg-paper-sunken text-label">
+                  {listing.owner.name.slice(0, 1).toUpperCase()}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{listing.owner.name}</span>
+                  <span className="text-data block text-ink-faint">
+                    {listing.owner.phone === null
+                      ? 'Contact shown after you enquire'
+                      : listing.owner.phone}
+                  </span>
+                </span>
+              </section>
+
+              <EnquiryForm
+                listingSlug={listing.slug}
+                ownerName={listing.owner.name}
+                viewerIsOwner={detail.data.viewerIsOwner}
+                viewerHasEnquired={detail.data.viewerHasEnquired}
+              />
+
+              {/* --- similar -------------------------------------------------- */}
+              {similar.data && similar.data.listings.length > 0 ? (
+                <section>
+                  <h3 className="text-title mb-2">Similar nearby</h3>
+                  <ul className="flex gap-2 overflow-x-auto pb-1">
+                    {similar.data.listings.map((card) => (
+                      <li key={card.id} className="w-40 shrink-0">
+                        <Link
+                          to={`/listings/${card.slug}${searchSuffix}`}
+                          className="flex flex-col gap-1"
+                        >
+                          <span
+                            className="aspect-4/3 w-full overflow-hidden rounded-chrome bg-paper-sunken"
+                            style={
+                              card.coverDominantColor
+                                ? { backgroundColor: card.coverDominantColor }
+                                : undefined
+                            }
+                          >
+                            {card.coverUrl ? (
+                              <img
+                                src={card.coverUrl}
+                                alt=""
+                                loading="lazy"
+                                className="size-full object-cover"
+                              />
+                            ) : null}
+                          </span>
+                          <span className="text-sm font-semibold text-signal-ink dark:text-signal">
+                            {formatRupees(
+                              card.listingType === 'RENT' ? card.rentAmount : card.salePrice,
+                            )}
+                          </span>
+                          <span className="text-data truncate text-ink-soft">
+                            {formatBedrooms(card.bedrooms, card.propertyType)} ·{' '}
+                            {formatDistance(card.distanceMeters)} away
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+
+              <p className="text-data text-ink-faint">
+                {listing.viewCount === 1 ? '1 view' : `${String(listing.viewCount)} views`}
+              </p>
+            </div>
           </div>
         )}
       </DetailPanel>
@@ -367,10 +422,18 @@ export function ListingDetailRoute() {
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+/**
+ * One fact, as an icon and a value.
+ *
+ * The label is for screen readers only: "3 BHK" beside a bed icon does not need
+ * the word "Layout" over it, and eight labelled boxes of equal size are what
+ * made this screen read as a database row.
+ */
+function Fact({ Icon, label, value }: { Icon: LucideIcon; label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5 rounded-chrome border border-edge px-2.5 py-1.5">
-      <dt className="text-data text-ink-faint">{label}</dt>
+    <div className="flex items-center gap-1.5">
+      <Icon className="size-4 shrink-0 text-ink-faint" aria-hidden />
+      <dt className="sr-only">{label}</dt>
       <dd className="text-sm">{value}</dd>
     </div>
   );

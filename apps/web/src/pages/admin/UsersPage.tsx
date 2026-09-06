@@ -4,6 +4,7 @@ import { Ban, Loader2, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { EmptyState } from '../../components/EmptyState';
+import { LoadFailed } from '../../components/LoadFailed';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { useAdminUserActions, useAdminUsers } from '../../hooks/use-admin';
@@ -41,7 +42,9 @@ export function UsersPage() {
         />
       </div>
 
-      {users.isPending ? (
+      {users.isError ? (
+        <LoadFailed what="the people list" onRetry={() => void users.refetch()} />
+      ) : users.isPending ? (
         <UsersSkeleton />
       ) : (users.data ?? []).length === 0 ? (
         <EmptyState

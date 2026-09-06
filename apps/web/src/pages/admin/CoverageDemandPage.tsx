@@ -1,5 +1,6 @@
 import { MapPin } from 'lucide-react';
 import { EmptyState } from '../../components/EmptyState';
+import { LoadFailed } from '../../components/LoadFailed';
 import { useCoverageDemand } from '../../hooks/use-admin';
 
 /**
@@ -18,6 +19,10 @@ export function CoverageDemandPage() {
   const demand = useCoverageDemand();
 
   if (demand.isPending) return <DemandSkeleton />;
+
+  if (demand.isError) {
+    return <LoadFailed what="the requests" onRetry={() => void demand.refetch()} />;
+  }
 
   const clusters = demand.data?.clusters ?? [];
 

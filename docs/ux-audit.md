@@ -1,432 +1,91 @@
-# UX audit — 2026-09-05
-
-**Read this when** you want to know what is broken in the interaction layer,
-how to reproduce it, and why it happens.
-
-Every item below was reproduced by driving the running app with Playwright
-against the real stack — not read out of the code and not taken from the brief's
-description. Where a reported item did **not** reproduce, it says so and shows
-the measurement, because a bug that is not there is worse to "fix" than one that
-is.
-
-Severity: **S1** the product is wrong or unusable · **S2** a flow is broken or
-badly misleading · **S3** friction, confusion or a11y · **S4** polish.
-
-Method: `pnpm dev` against compose, signed in as `seeker@dev.local` unless
-stated, 1440x900 and 390x844. Each item records **what happens**, **what should
-happen**, and a **root cause** where I established one.
-
-## Coverage, stated plainly
-
-Audited: the cold landing state, the office autocomplete, the search results
-list and filter chrome, the listing detail panel, the commute panel, map
-interaction, panel dismissal and focus, the 390px viewport.
-
-**Not yet audited**: the lister wizard, the dashboard, the enquiry thread, the
-admin pages, saved searches, the sign-up flow. The brief's assumption — that
-they carry the same density of problems and have simply not been looked at — is
-untested. Nothing below should be read as a clean bill of health for them.
-
----
-
-## S1 — the differentiator does not respond to input
-
-### 1.1 Changing any commute input leaves every number unchanged
-
-**Reproduce.** Sign in, open `/listings/patna-boring-road-2bhk-02?lat=25.6127&lng=85.1145`.
-Note "₹658 per month". Set mileage to 30. Wait.
-
-**What happens.** The input holds 30. The per-month figure, the all-in total and
-the car/bike/bus comparison all stay at their old values. Repeating with 18 and
-then 36 changed nothing: the panel showed ₹219 throughout.
-
-**What should happen.** The figure moves immediately.
-
-**Root cause — found, and it is not the client.** The write persists and the
-server recomputes correctly:
-
-| Probe                                   | Result                              |
-| --------------------------------------- | ----------------------------------- |
-| `GET /api/me/commute` after the change  | `mileageKmPerLitre: 36` — persisted |
-| `GET .../commute` via the app's own URL | `perMonth: 219.33` — **stale**      |
-| Same endpoint with `&mode=car` appended | `perMonth: 328.99` — correct        |
-| Same URL again after ~2 minutes         | `perMonth: 274.16` — correct        |
-
-`apps/api/src/routes/fuel.ts` sets `cache-control: private, max-age=120` on
-`GET /api/listings/:slug/commute`. The response **varies by the caller's stored
-preferences**, which appear nowhere in the URL and in no `Vary` header — so the
-browser serves its own cached copy for two minutes and TanStack's refetch never
-reaches the server. The comment above the line says "Private: it depends on the
-caller's own settings", which is exactly why a URL-keyed cache is wrong here.
-
-This one cause explains every symptom, including the intermittency: a change
-lands if and only if more than 120 seconds have passed since that URL was last
-fetched. That is why it "sometimes works".
-
-**Fix direction.** The preferences that determine the answer should travel in
-the request rather than being ambient — which also gives the brief's per-listing
-override for free, and makes the panel work signed-out without a round trip.
-Failing that, `no-store`.
-
-### 1.2 Signed out, the controls are decorative — and the panel says otherwise
-
-**Reproduce.** Sign out. Open any listing. Set mileage to 30.
-
-**What happens.** The input snaps back to 15. Console: `401 Unauthorized` on
-`PATCH /api/me/commute`. No number moves.
-
-**Root cause.** `useCommutePreferences` gates its query on `isSignedIn`, so
-signed out there is no `['commute-preferences']` cache entry. The optimistic
-update is written as `current ? { ...current, ...patch } : current` — with
-`current` undefined it is a **no-op**. The PATCH then 401s. The hook's own
-comment claims "the controls still work, nothing is saved", and the panel tells
-the user "Sign in to keep these settings between visits". Both are false: signed
-out the controls do nothing at all.
-
-**What should happen.** Preferences need a client-side source of truth that
-works signed out, with the server as persistence when signed in.
-
-### 1.3 Switching to Bike keeps a car's vehicle and mileage
-
-**Reproduce.** On a listing, click **Bike**.
-
-**What happens.** Mode changes, but the vehicle select still lists
-hatchback/sedan/SUV with `sedan` selected and mileage 13. A bike journey is
-priced with a sedan's consumption.
-
-**Root cause.** Same stale read as 1.1 — the panel filters vehicle options by
-`preferences.mode`, and `preferences` is read back stale. D63 names this exact
-combination ("`mode: 'bike'` with a car's mileage is two individually valid
-fields and one nonsensical setting"); the UI produces it.
-
-### 1.4 Mileage defaulting to 1 km/l — **did not reproduce**
-
-Vehicle changes set real per-class defaults: SUV → 10, sedan → 13, hatchback →
-15, matching `VEHICLE_CLASSES`. Signed out shows 15. I could not produce 1 in
-any state I reached. The input carries `min="1"`, so a plausible path is a
-cleared field showing the spinner minimum — worth re-checking against whatever
-produced the original screenshot before changing a default that is currently
-correct.
-
----
-
-## S1 — the office moves on any map click
-
-### 1.5 One click on empty map silently re-anchors the entire search
-
-**Reproduce.** `/?lat=25.612700&lng=85.114500`, click empty map away from any
-marker.
-
-**What happens.** The URL becomes `?lat=25.626848&lng=85.136237` — the office
-jumped ~2.4 km — and every distance, ring and commute figure on screen is now
-measured from somewhere the user did not choose. No confirmation, no undo.
-
-**Root cause.** Deliberate, and wrong. `SearchMap.tsx`'s `onClick` falls through
-to `onPickOffice` for any click that is not a listing marker or a cluster, with
-the comment "A click on the map itself moves the office. This is the second of
-the three ways to set one."
-
-The pin is **already draggable** (`<Marker draggable onDragEnd>`) — but it is a
-16px dot with no grab affordance, so the discoverable mechanism is the
-destructive one and the safe one is invisible.
-
-**What should happen.** Setting the office is deliberate: drag the pin, or an
-explicit "set office here" affordance. A bare click does nothing.
-
----
-
-## S2 — state and lifecycle
-
-### 1.6 Overlay layers are styled after they are removed
-
-**Reproduce.** Switch between two listings repeatedly with ~350ms between
-switches.
-
-**What happens.** Console: `[map] Cannot style non-existing layer "route-line"`
-at `SearchMap.tsx:299`, twice in eight switches.
-
-**Root cause.** The effect guards correctly with `map.getLayer('route-line')`
-before starting, but the animation it starts runs on `requestAnimationFrame` and
-is not cancelled when the listing changes. The layer is unmounted underneath a
-loop that is still writing to it.
-
-**On the reported POI symptom — found later, and it is real.** Looking only at
-the sidebar was the mistake: it repopulated every time because it renders its
-own query. The MAP is fed by `detail-overlay`, and there the layer really did
-vanish. `map.getSource('machiya-pois')` returned undefined while the sidebar
-listed five categories as shown.
-
-The cause is an effect cleanup, not a race with the network:
-
-```
-useEffect(() => { setListing(id); return () => clearOverlay(); }, [id, ...])
-useEffect(() => { setPois(query.data ?? []); }, [query.data, ...])
-```
-
-The listing id resolves AFTER the POI query on a warm cache. So: POIs stored,
-id arrives, the first effect's cleanup runs and wipes them, and the effect that
-would put them back does not re-run because its own data has not changed.
-Clearing now happens on unmount only. Intermittent from the outside, entirely
-deterministic once you know which query settles first.
-
-### 1.7 Close from a shared link can navigate out of the product
-
-**Reproduce.** Read the code path; then open a listing URL in a tab that already
-has history and press Close.
-
-**What happens.** `close()` in `ListingDetailRoute.tsx` tests
-`window.history.length > 1` and calls `navigate(-1)`. `history.length` counts
-**the whole tab**, not this app's entries — so a listing opened from a link on
-another site sends the user back to that site rather than to the search.
-
-The fallback (`navigate('/')`) only runs in a genuinely fresh tab. D45 says
-"closing is `navigate(-1)` when there is history"; the test for "is there
-history" is the bug.
-
-### 1.8 Dismissal is three ways out of four, and focus is not trapped
-
-The detail panel **does** have a close control and **does** handle Escape
-(`DetailPanel.tsx:49`), contrary to the brief — but:
-
-- **no click/tap outside to dismiss** — there is no outside-press handler;
-- **focus is moved into the panel but never trapped**, so Tab walks out into the
-  map and the list behind it;
-- **focus is not returned** to the trigger on close;
-- it is bespoke rather than a shadcn `Sheet`/`Dialog`, which is where all four
-  behaviours would have come for free.
-
-### 1.9 Search suggestions flicker — **did not reproduce**
-
-Instrumented with a `MutationObserver` and a per-frame poll while typing
-character by character:
-
-- the option count never dropped between keystrokes (steady at 8);
-- the first option's DOM node was the **same node** throughout — the list is not
-  re-created;
-- the listbox height was constant at 288px — no layout jump;
-- computed `animation-name` on the rows was `none` — nothing re-animates.
-
-`placeholderData` (D39) is doing its job. Whatever produced the reported flicker
-is not present on this build at this network speed; re-check under throttling
-before changing anything.
-
----
-
-## S2 — the office picker cannot find a locality
-
-### 1.10 Typing "locality, city" returns only flats
-
-**Reproduce.**
-
-```
-GET /api/places/suggest?q=Boring Road          → locality 1.000, then listings 0.736
-GET /api/places/suggest?q=Boring Road, Patna   → eight listings, no locality at all
-```
-
-**What happens.** The natural way to type a place — "Boring Road, Patna" — drops
-the locality **entirely** and offers eight near-identical flats. Setting your
-office to a specific stranger's flat is the only thing on offer.
-
-**Root cause.** Tier 1 matches `Locality.name` alone ("Boring Road"), while a
-listing matches its full `address` ("Boring Road, Patna") — which already
-contains the city. Adding the city to the query therefore _lowers_ the
-locality's trigram similarity below the cut while _raising_ the listings'. D39
-weights listings ×0.8 and D58 drops them to ×0.35 for street addresses, but this
-query is neither: no house number, so no address weighting applies.
-
-This is the same shape as D60's first bug — weak local rows suppressing the
-answer — one level up.
-
----
-
-## S3 — the commute panel says one thing twice
-
-### 1.11 Two blocks, one concept
-
-The panel renders "Commute from your office" (Car/Bike toggle, by-road distance,
-travel time) and then "Commute cost" (per month, per trip, and its own
-Car/Bike/Bus comparison). Mode is selectable in both places.
-
-### 1.12 The comparison bars make the cheap option look like zero
-
-Car ₹658, Bike ₹152, Bus ₹571 render as proportional bars, so the bike — the
-option that most changes a renter's answer — is a sliver. The numbers are the
-point; the geometry is actively working against them.
-
-### 1.13 The fuel line is wrong in three ways
-
-Rendered: `Petrol at ₹113/litre, from goodreturns — last checked 05/09/2026,
-15:30:00, refreshing now`.
-
-- **No city**, though the price is per city and the payload carries
-  `citySlug: "patna"`.
-- **One source asserted flat.** The payload has `sources: ["goodreturns"]` — an
-  array, and here of length one. One adapter answering out of three is a
-  different confidence from three agreeing, and nothing says which this is.
-- **A raw timestamp** (`05/09/2026, 15:30:00`) where a person wants "checked
-  this morning", plus "refreshing now" which describes our queue rather than
-  anything they can act on.
-
----
-
-## S3 — copy leaks the repository into the product
-
-### 1.14 A source file path is rendering on the listing panel
-
-Top of the gallery: **"Seed photos via Unsplash — credits in
-docs/attribution.md"**. A repo path, shown to users. The Unsplash terms do
-require credit, so the fix is per-photo attribution, not deletion.
-
-### 1.15 The address line repeats the state
-
-`Boring Road, Patna, Bihar · Bihar`. The formatter appends the state to an
-address string that already ends in it.
-
-### 1.16 Other leaks found in one pass
-
-- `Seed data: the address and photos are placeholders, the geometry is real.`
-  rendered in the listing description.
-- Fuel attribution names the adapter slug `goodreturns` rather than a source.
-- Radius chips read `1 km 5 · 2 km 15 · 3 km 3` — those are **per-ring** counts
-  beside a line saying "23 within 3.0 km". 5+15+3=23, but nothing on screen says
-  the chips are rings rather than cumulative radii.
-
----
-
-## S3 — chrome, controls and layout
-
-### 1.17 Native controls where shadcn exists
-
-`Sort` is a native `<select>`; so are `Vehicle` and `Fuel` in the commute panel.
-Three of them on two screens.
-
-### 1.18 The radius says the same thing three times
-
-Ring chips with counts, a slider, a "3.0 km" readout, and "23 within 3.0 km"
-below — four elements for one number.
-
-### 1.19 Mobile at 390px
-
-| Measurement                   | Value                                |
-| ----------------------------- | ------------------------------------ |
-| Header + chrome above content | 194px of 844 (23%)                   |
-| Tap targets under 44px        | **22**                               |
-| Horizontal page overflow      | **yes** — `scrollWidth > innerWidth` |
-
-The sideways scroll is a bug on its own: nothing should overflow the viewport
-width on a phone.
-
-### 1.20 Dark is not the default
-
-With `localStorage` cleared and the OS set to light, a first-time visitor gets
-the **light** theme: `initialTheme()` reads `prefers-color-scheme` and only
-falls back to dark. The brief wants dark as the initial state with a stored
-preference winning over the system one.
-
-### 1.21 Map a11y
-
-The map region has no accessible name and its zoom controls have no labels
-(`button` with no text or `aria-label`). The list is the canonical
-representation per docs/design.md, but the controls are still reachable and
-unlabelled.
-
----
-
-## Fixed, and re-driven to prove it
-
-Each line below was re-run against the app after the change, with the same
-reproduction that produced the "before".
-
-| Item                  | Before                                                         | After                                                                             |
-| --------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| 1.1 commute inputs    | mileage 18 then 36, panel frozen at ₹219                       | 20 → ₹493, 40 → ₹247, 45 → ₹219 — and the card totals move with it                |
-| 1.2 signed out        | input snaps back, 401 in console, nothing moves                | 30 → ₹329, 50 → ₹197, persisted to this device, no console error                  |
-| 1.3 bike on a car     | mode bike kept sedan and 13 km/l                               | bike selects scooter at 45 km/l, ₹152; the server coerces the same way            |
-| 1.5 office on click   | one click moved the office 2.4 km silently                     | bare click offers "Set office here"; Escape dismisses; confirm moves it           |
-| 1.10 office picker    | "Boring Road, Patna" returned eight flats, no locality         | locality first at 1.000 for both the bare and the qualified form                  |
-| 1.6 teardown race     | 4 `Cannot style non-existing layer "route-line"` in 8 switches | 24 switches at 180–350ms apart, 0 warnings, 0 errors                              |
-| 1.7 close from a link | `history.length > 1` could send the user off-site              | the router's own key decides; D79                                                 |
-| 1.8 dismissal, focus  | no outside press, no trap, no focus return                     | map press and scrim dismiss; 30/30 Tabs held on mobile; focus returns to the card |
-
-Still open from the list above: every S3 item. Everything in S1 and S2 is
-fixed and re-driven.
-
-The desktop panel keeps its non-modal behaviour on purpose and Tab still leaves
-it — that is D78, not an outstanding defect.
-
-## Built, not only repaired
-
-The brief's next two items were absent features rather than defects, so they are
-listed here with what was driven to prove them.
-
-**Saved offices had a surface and half a set of controls.** The dropdown listed
-them and the star saved one, but `useDeleteOffice` and `useSetDefaultOffice`
-existed with no caller anywhere in the app — an office, once saved, could not be
-removed or demoted. Both now live on the account page. Driven: a second office
-saved, promoted (the first demoted in the same render), then removed, with the
-survivor promoted by the server.
-
-**Profile and preferences had no surface at all.** `AccountPage` was a
-five-row debug table of the session. It is now four sections — details, how you
-travel, saved offices, and closing the account. Driven signed in as
-`seeker@dev.local`:
-
-| Probe                                           | Result                                                       |
-| ----------------------------------------------- | ------------------------------------------------------------ |
-| `98765 43210`, `+91 98765 43210`, `98765-43210` | all stored as `+919876543210`                                |
-| `12345`                                         | "That does not look like a mobile number", nothing sent      |
-| empty, saved                                    | phone cleared, and still clear after a reload                |
-| mode → Car, trips → 4                           | `/api/me/commute` returns car/hatchback/4; survives a reload |
-
-Two things the account page exposed on the way:
-
-- `GET /api/me` served `session.user`, which is cached for five minutes in the
-  cookie and behind that in Redis. Saving a phone number and reloading showed
-  the field empty. It reads the row now.
-- the form's phone field failed with `Invalid input: expected ""` for a bad
-  number — a zod union reporting the empty branch. `phoneFieldSchema` in
-  `@machiya/shared` carries the empty case with its own message.
-
-**There was no onboarding beyond the empty state.** A four-step tour now runs
-itself once after the first search and can be restarted from the help button
-beside the office field. Driven: it opened on `office-field`, stepped to
-`ring-counts`, finished on "Got it", marked itself seen, did not reappear on
-reload, reopened from the button, and closed on Escape. Light and dark both
-match the panel chrome; a phone in map view gets the view-toggle step and drops
-the card step, because the cards are not on screen. Library choice is D81.
-
-**The commute said one thing twice, and the S3 items about it are closed.**
-The panel had "Commute from your office" with a car/bike toggle and then
-"Commute cost" with a second one; there is one block now, one mode control, and
-the map's route profile follows it (1.11). The comparison is rows with a
-difference in rupees rather than bars scaled to the dearest mode, which had the
-bike — the option most likely to change the answer — rendering as a sliver
-(1.12). The fuel line names the city, says how many sources agreed, and gives
-"checked 7 h ago" instead of a raw timestamp (1.13). Driven on
-`patna-boring-road-2bhk-02`: `Bike ₹304 · ₹1,012 less a month`, `Bus ₹1,141 ·
-₹175 less`, `Car ₹1,316 · ₹1,012 more than bike`, and `Petrol in Patna at ₹113
-/litre — checked 7 h ago, from one source, goodreturns`.
-
-**A listing can now be read full screen**, at `/listings/:slug/full` — D82. The
-gallery gets the width, back leaves full screen rather than the listing, focus
-is trapped (0 of 20 Tabs escaped) and the page behind it stops scrolling. Two of
-the copy leaks went with it: the address no longer repeats the state (1.15) and
-the gallery credit no longer prints a repo path (1.14).
-
-Account deletion is covered by `apps/api/test/account.test.ts` rather than
-driven in the browser: the only account to drive it with is a seeded dev one,
-and proving it works means destroying it. See D80 for what it does.
-
-## What I did not get to
-
-Listed so the next session starts from the gap rather than rediscovering it:
-
-- the wizard end to end, including whether it resumes and whether D59's rules
-  hold in the UI;
-- the lister dashboard and its analytics;
-- the enquiry thread, both sides;
-- the admin queue, users and coverage-demand pages;
-- saved searches;
-- keyboard-only traversal of a whole flow;
-- the list-only fallback view;
-- skeleton and empty-state coverage outside the search.
+# UX backlog
+
+**Read this when** you are picking up the UX loop — this file is the backlog and
+the only thing that survives a session ending. It is complete enough that a cold
+session can start mid-loop from it.
+
+Format is fixed by `docs/ux-loop-brief.md`: one row per finding, kept current in
+the same commit as the fix.
+
+Severity: **S1** the task cannot be completed or data is lost · **S2** completes
+only by accident or backtracking · **S3** extra steps, unclear wording, ambiguous
+state · **S4** polish.
+
+Status: `open` · `fixing` · `fixed` (changed, not yet re-driven) · `verified`
+(re-driven against the running app) · `wontfix` with a reason.
+
+Rounds: **R0** is the pre-loop repair pass; **R1** is the first loop round.
+
+## Open and in progress
+
+| ID        | Sev   | Surface                     | What a user experiences                                                                                                                                                                  | Root cause                                                                                                                                                                         | Status                          | Found | Fixed |
+| --------- | ----- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | ----- | ----- |
+| A1        | S1    | Admin moderation            | A spam listing flagged "account is 3h old" can only be **verified** — there is no reject, unpublish or take down.                                                                        | `services/admin.ts:105` is the only listing mutation; `routes/admin.ts:55` exposes only verify                                                                                     | open                            | R1    |       |
+| A9        | S1    | Sign-up                     | Signing up with an address that already has an account shows the same "check your inbox" screen. No mail ever arrives and there is no way back.                                          | `SignUpPage.tsx:43-59` treats any resolved response as sent. The server answers alike on purpose (no account enumeration), so the copy now covers both cases and links to sign-in. | fixed                           | R1    | R1    |
+| W-01      | S1    | Wizard                      | A rejected field save shows "Not saved — check your connection", then flips to "Saved" on Next. The value is never written.                                                              | `use-listing-draft.ts:92` discards `issues`; `WizardPage.tsx:109` sends an empty patch that always succeeds                                                                        | fixing                          | R1    |       |
+| W-02      | S1    | Wizard, location            | Typing in one field is wiped mid-word when another field's save lands.                                                                                                                   | `LocationStep.tsx:71-76` resets state from `draft`, whose identity changes on every patch                                                                                          | fixing                          | R1    |       |
+| A2        | S2    | Admin users                 | Ban, unban and role change always toast success, including when the server refused.                                                                                                      | `use-admin.ts:76-91` — the auth client resolves `{data,error}` rather than rejecting; `assertOk` was omitted here alone                                                            | fixed                           | R1    | R1    |
+| A3        | S2    | Admin, all tabs             | A failed request is indistinguishable from an empty one: "Nothing waiting — every published listing has been looked at".                                                                 | Never read `isError`. One shared `LoadFailed` with a retry now stands between loading and empty.                                                                                   | fixed                           | R1    | R1    |
+| A4        | S2    | Admin fuel                  | A 403, a 500 and a genuinely absent report all render "No scrape has been recorded".                                                                                                     | `use-fuel-health.ts:33` folds `isError` into `isMissing`                                                                                                                           | open                            | R1    |       |
+| A5        | S2    | Admin moderation, users     | "50 waiting" is the page size, not the backlog; there is no pagination and no way to reach row 51.                                                                                       | `services/admin.ts:50` caps at 50; the page renders `listings.length`                                                                                                              | open                            | R1    |       |
+| A7        | S2    | Saved                       | A network blip renders "Nothing saved yet" to a seeker with twelve saved flats.                                                                                                          | Branched on length, never on `isError`; same `LoadFailed`.                                                                                                                         | fixed                           | R1    | R1    |
+| A8        | S2    | Saved                       | Deleting a saved search is one unlabelled trash icon — no confirmation, no undo.                                                                                                         | Deleting a search asks first; un-saving a place offers Undo in its toast (A20 with it).                                                                                            | fixed                           | R1    | R1    |
+| A6        | S2    | Admin fuel                  | The page explains itself: "since this Redis was last cleared" and "see DECISIONS.md D62".                                                                                                | `FuelHealthPage.tsx:34,159`; `routes/fuel.ts:152`                                                                                                                                  | open                            | R1    |       |
+| V01-V23   | S2    | Everywhere                  | 23 strings leak an identifier, a service name, a raw status or a build rationale into the product.                                                                                       | see the copy table below                                                                                                                                                           | open                            | R1    |       |
+| W-03…W-11 | S2    | Wizard                      | Pin drag nulls a typed locality; nothing gates forward navigation; publish refusals print schema field names; a 404 draft renders an empty wizard and then creates a second listing.     | audit R1                                                                                                                                                                           | fixing                          | R1    |       |
+| D-01      | S2    | Lister dashboard            | "Rented" is one click, no confirmation, and afterwards there is no visible way back.                                                                                                     | `DashboardPage.tsx:251-271`                                                                                                                                                        | fixing                          | R1    |       |
+| D-02      | S2    | Lister dashboard, enquiries | A failed fetch says "You have not listed anything yet" to a lister with 30 listings.                                                                                                     | `DashboardPage.tsx:41-42`; `EnquiriesPage.tsx:32,75-89`                                                                                                                            | fixing                          | R1    |       |
+| A10-A31   | S3/S4 | Admin, saved, auth          | Slugs and enums as labels; no confirmation on destructive admin actions; hand-rolled selects; no `h1` on any auth page; rate-limit copy promises one minute where the server holds five. | audit R1                                                                                                                                                                           | open (A20, A21, A25, A30 fixed) | R1    |       |
+| W-12…W-21 | S3/S4 | Wizard                      | Resume always restarts at the map; rail buttons that do nothing; progress carried by colour alone; a typed house rule dropped on Next; photo order mouse-only.                           | audit R1                                                                                                                                                                           | fixing                          | R1    |       |
+| E-01      | S3    | Enquiries                   | A lister cannot tell which threads they have already answered.                                                                                                                           | `EnquiriesPage.tsx:116-154` ignores `thread.status`                                                                                                                                | open                            | R1    |       |
+| E-02      | S3    | Enquiries                   | Hand-rolled textarea; Send greys out under two characters with no explanation.                                                                                                           | `EnquiriesPage.tsx:277-292`                                                                                                                                                        | open                            | R1    |       |
+| D-03      | S3    | Lister dashboard            | Per-row views/saves/enquiries are dead text; the enquiry count does not reach the thread.                                                                                                | `DashboardPage.tsx:170-186`                                                                                                                                                        | fixing                          | R1    |       |
+| D-04      | S3    | Lister dashboard            | No way to delete a listing or an abandoned draft, though the endpoint exists and has no caller.                                                                                          | `DashboardPage.tsx:188-272`                                                                                                                                                        | fixing                          | R1    |       |
+| M-01      | S3    | Search, 390px               | Header and chrome take 194px of 844; 22 tap targets under 44px; the page scrolls sideways.                                                                                               | measured R0                                                                                                                                                                        | open                            | R0    |       |
+| M-02      | S3    | Search                      | Radius says the same thing four times: ring chips, slider, "3.0 km", "23 within 3.0 km".                                                                                                 | `FilterBar.tsx`                                                                                                                                                                    | open                            | R0    |       |
+| M-03      | S3    | Search                      | The filter bar takes the top of the screen; it is chrome and should read as chrome.                                                                                                      | `FilterBar.tsx`                                                                                                                                                                    | open                            | R0    |       |
+| M-04      | S3    | Map                         | No city boundaries at low zoom, so covered area is implied rather than shown.                                                                                                            | `SearchMap.tsx`                                                                                                                                                                    | open                            | R0    |       |
+
+## Fixed in R0, re-driven against the running app
+
+| ID    | Sev | Surface       | What a user experienced                                                                              | Fix                                                                                        | Status   |
+| ----- | --- | ------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------- |
+| R0-1  | S1  | Commute panel | Vehicle, mileage, fuel, trips and days moved nothing: the panel was frozen at one figure.            | The answer is a function of the request, and the settings are part of the query key (D76)  | verified |
+| R0-2  | S1  | Commute panel | Signed out, the controls snapped back and 401'd.                                                     | A client-first store; signing in adopts the account's copy                                 | verified |
+| R0-3  | S2  | Commute       | Bike mode priced a bike ride on a sedan's mileage.                                                   | `reconcileCommutePreferences`, applied on both sides                                       | verified |
+| R0-4  | S1  | Map           | One stray click moved the office 2.4 km and re-anchored every figure, silently.                      | Click offers, it does not act (D77)                                                        | verified |
+| R0-5  | S2  | Office picker | "Boring Road, Patna" returned eight flats and no locality.                                           | The qualified form is matched and scored alongside the bare name                           | verified |
+| R0-6  | S2  | Map           | `Cannot style non-existing layer "route-line"` — an rAF loop painted a layer that was gone.          | Per-run frame, and the layer re-checked every frame                                        | verified |
+| R0-7  | S2  | Detail panel  | Close could send you back to whatever site you arrived from.                                         | The router's key decides, not the tab's history (D79)                                      | verified |
+| R0-8  | S2  | Detail panel  | No outside-press dismissal, no focus trap on the sheet, no focus return.                             | Map press and scrim dismiss; trap on mobile; focus returns to the card (D78)               | verified |
+| R0-9  | S2  | Account       | There was no profile page and no entrance to one.                                                    | Details, commute defaults, offices, closing the account (D80); the header name links to it | verified |
+| R0-10 | S2  | Map           | The POI layer vanished while the sidebar listed five categories as shown.                            | Clearing the overlay is an unmount cleanup, not a listing-id one                           | verified |
+| R0-11 | S2  | Map           | Overlays were painted in the app's theme colours on a map pinned to the other one.                   | The palette follows the map's own style                                                    | verified |
+| R0-12 | S3  | Everywhere    | Buttons showed an arrow cursor; disabled controls looked live.                                       | Affordances as base rules: pointer, not-allowed, focus ring, active press                  | verified |
+| R0-13 | S3  | Commute panel | Two commute blocks, two mode toggles, and bars that made the bike look like zero.                    | One block, one mode, a comparison in rupees                                                | verified |
+| R0-14 | S3  | Detail        | Full screen did not exist.                                                                           | `/listings/:slug/full`, a child route so the map stays mounted (D82)                       | verified |
+| R0-15 | S3  | Onboarding    | Nothing explained the rings, the sort or the list.                                                   | A four-step tour, once, restartable, remembered on the account (D81)                       | verified |
+| R0-16 | S4  | Cards, panel  | The ring was an unexplained circle with a number.                                                    | Green, amber, red with a label and a tooltip, and the same three on the map                | verified |
+| R0-17 | S4  | Panel         | "Seed photos via Unsplash — credits in docs/attribution.md" and "Boring Road, Patna, Bihar · Bihar". | A repo path removed; the state is added only when the address lacks it                     | verified |
+| R0-18 | S4  | Preferences   | The map panel explained why satellite is not offered.                                                | The explanation is gone; the finding is in D83 and known-issues                            | verified |
+
+## Copy findings (R1)
+
+67 strings were swept against the voice rules. The full table lives in the
+commit that fixes them; these are the classes:
+
+| Class                            | Count | Example                                                                                         | Status |
+| -------------------------------- | ----- | ----------------------------------------------------------------------------------------------- | ------ |
+| Service or vendor name on screen | 6     | "since this Redis was last cleared"; the fuel source rendered as the adapter slug `goodreturns` | open   |
+| Repo path or build rationale     | 3     | "see DECISIONS.md D62"; "The API runs on port 4000 in development"                              | open   |
+| Raw enum or slug as a label      | 7     | `SEEKER` in the role picker; "Cng"; "patna, bengaluru"                                          | open   |
+| Raw server or HTTP text shown    | 8     | `statusText` in a toast; `rentAmount: A rental needs a monthly rent`                            | open   |
+| Coordinates where a name exists  | 4     | "1.0 km around 25.594, 85.138" as a saved search's name                                         | open   |
+| Robotic or vague                 | 12    | "No matches"; "404"; "Something went wrong"                                                     | open   |
+| Missing units or context         | 5     | `(est.)`; `120 ms average`; a bare `—` for an unknown                                           | open   |
+
+## Not audited yet
+
+The wizard, the lister dashboard and the enquiry thread were audited in R1 and
+are being rebuilt. Still undriven: the keyboard-only pass over a whole flow, the
+list-only fallback view, and every surface at 390px since R0.

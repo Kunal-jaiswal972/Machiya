@@ -60,7 +60,7 @@ function toAuthErrorCode(status: number | undefined, code: string | undefined): 
   return AUTH_ERROR_CODES.unknown;
 }
 
-function assertOk(result: {
+export function assertOk(result: {
   error?: { status?: number; code?: string; message?: string } | null;
 }): void {
   if (result.error) {

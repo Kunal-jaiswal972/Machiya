@@ -86,7 +86,11 @@ export function DetailPanel({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
-        onClose();
+        // Full screen collapses back to the panel rather than closing the
+        // listing outright: Escape means "undo the thing I just did", and the
+        // thing just done was expanding.
+        if (expanded && onToggleExpanded) onToggleExpanded();
+        else onClose();
         return;
       }
 
@@ -118,7 +122,7 @@ export function DetailPanel({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose, isDesktop, expanded]);
+  }, [onClose, isDesktop, expanded, onToggleExpanded]);
 
   const onDragEnd = (_event: unknown, info: PanInfo): void => {
     const flickDown = info.velocity.y > 600;
