@@ -1,6 +1,6 @@
 import { POI_CATEGORIES, type PoiCategory } from '@machiya/shared';
 import { useEffect, useState } from 'react';
-import { useUiStore } from '../stores/ui';
+import { useMapStyle } from './use-map-style';
 
 /**
  * Which token each POI category is drawn in. The same mapping the legend
@@ -99,10 +99,24 @@ function readToken(styles: CSSStyleDeclaration, name: string, fallback: string):
   return toHex(styles.getPropertyValue(name).trim(), fallback);
 }
 
-function readPalette(): MapPalette {
-  const styles = getComputedStyle(document.documentElement);
+/**
+ * The token set for the MAP's theme, which is not always the app's.
+ *
+ * Someone can run a dark interface with a light map (D83), and reading the
+ * tokens off `<html>` then paints dark-mode overlays onto a pale basemap: the
+ * price marker measured 1.27:1 against the ground, which is a marker nobody can
+ * see. So the values are read from a detached element carrying the map's own
+ * theme class instead.
+ */
+function readPalette(isDark: boolean): MapPalette {
+  const host = document.createElement('div');
+  host.className = isDark ? 'dark' : '';
+  host.style.display = 'none';
+  document.body.append(host);
 
-  return {
+  const styles = getComputedStyle(host);
+
+  const palette: MapPalette = {
     ring1: readToken(styles, '--color-ring-1', '#4a7fd0'),
     ring2: readToken(styles, '--color-ring-2', '#6b95d8'),
     ring3: readToken(styles, '--color-ring-3', '#8fb0e0'),
@@ -120,19 +134,21 @@ function readPalette(): MapPalette {
       ]),
     ) as Record<PoiCategory, string>,
   };
+
+  host.remove();
+  return palette;
 }
 
 export function useMapPalette(): MapPalette {
-  const theme = useUiStore((state) => state.theme);
-  const [palette, setPalette] = useState<MapPalette>(() => readPalette());
+  const { isDark } = useMapStyle();
+  const [palette, setPalette] = useState<MapPalette>(() => readPalette(isDark));
 
   useEffect(() => {
-    // The class is toggled on <html> by the theme store before this runs, but
-    // a frame's grace means the computed values are the new ones even when a
-    // transition is in play.
-    const frame = requestAnimationFrame(() => setPalette(readPalette()));
+    // A frame's grace so a theme transition has settled before the values are
+    // read; the class on the detached host is set synchronously either way.
+    const frame = requestAnimationFrame(() => setPalette(readPalette(isDark)));
     return () => cancelAnimationFrame(frame);
-  }, [theme]);
+  }, [isDark]);
 
   return palette;
 }

@@ -510,6 +510,11 @@ export function SearchMap({
           mapStyle={mapStyle.url}
           style={{ width: '100%', height: '100%' }}
           attributionControl={false}
+          // Lets a test read the rendered map back as pixels — without it the
+          // drawing buffer is cleared before anything can sample it, and a
+          // contrast check against the basemap is not possible. Dev only: it
+          // costs a copy per frame.
+          canvasContextAttributes={{ preserveDrawingBuffer: import.meta.env.DEV }}
           interactiveLayerIds={['listing-marker', 'cluster-circle', 'poi-dot']}
           cursor="crosshair"
           onLoad={(event) => {

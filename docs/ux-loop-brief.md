@@ -1,4 +1,3 @@
-
 ---
 
 MACHIYA — CONTINUOUS UX LOOP
@@ -27,7 +26,7 @@ Sweep the whole product for both patterns as part of the first round — build-r
 
 === PHASE 0 — ESTABLISH GROUND TRUTH ===
 
-Do not trust any prior audit document as a description of the present. Read docs/ux-audit.md and docs/known-issues.md for what was *claimed*, then verify every claimed fix against the running app with the Playwright MCP. Mark each: still broken, fixed, partially fixed, regressed. This project has twice recorded a decisions entry describing behaviour the code did not have — D41 and D42 both say so in their own text. Assume that pattern until you have checked.
+Do not trust any prior audit document as a description of the present. Read docs/ux-audit.md and docs/known-issues.md for what was _claimed_, then verify every claimed fix against the running app with the Playwright MCP. Mark each: still broken, fixed, partially fixed, regressed. This project has twice recorded a decisions entry describing behaviour the code did not have — D41 and D42 both say so in their own text. Assume that pattern until you have checked.
 
 Then rewrite docs/ux-audit.md into the format the loop uses from here. One table, one row per finding:
 
@@ -88,7 +87,7 @@ Surfaces: search and map, listing detail (panel and full-screen), the listing wi
 
 Run this every round alongside the persona tasks until it stops producing findings. It has been changed repeatedly and is still buggy and still uninformative, which means it is being restyled rather than designed.
 
-Start from the job, not the layout. Someone opens this screen to answer four questions: can I afford this, is it a decent place, how bad is the commute, what is it like around here. Everything on screen either answers one of those or is removed. Before touching it, write those four answers in the order of how much each decides the outcome — that ordering *is* the layout.
+Start from the job, not the layout. Someone opens this screen to answer four questions: can I afford this, is it a decent place, how bad is the commute, what is it like around here. Everything on screen either answers one of those or is removed. Before touching it, write those four answers in the order of how much each decides the outcome — that ordering _is_ the layout.
 
 Drive it as each persona and record what fails. Priya on a phone comparing two flats: can she tell within five seconds which is cheaper all-in? Ravi switching car to bike: does everything update, and does he notice? Anyone opening from a shared URL with no history: can they close it, and where do they land? Someone on a slow connection: what does each region look like while loading, and can they tell loading from empty? Someone scrolling to the bottom: does anything down there earn the scroll?
 

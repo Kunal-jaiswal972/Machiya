@@ -528,3 +528,59 @@
 *::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* --- affordances -----------------------------------------------------------
+
+   The small signals that tell a hand what a thing does. They live here, once,
+   because they went missing one component at a time: every `<button>` in the
+   app looked correct in the code and showed an arrow cursor in the browser.
+
+   Base layer, so a component can still override any of it. */
+@layer base {
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  summary,
+  label[for],
+  a[href],
+  select:not(:disabled),
+  [role='option'],
+  [role='tab'] {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [aria-disabled='true'],
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    cursor: not-allowed;
+  }
+
+  /* A press has to feel received even where the component defines no active
+     state of its own. 40ms is below the threshold where it reads as lag. */
+  button:not(:disabled):active,
+  [role='button']:not([aria-disabled='true']):active {
+    transform: translateY(0.5px);
+    transition: transform 40ms ease-out;
+  }
+
+  /* Focus is never removed without a replacement. `water` is the focus colour
+     in both themes (docs/design.md), and the offset keeps it off the glyph. */
+  :focus-visible {
+    outline: 2px solid var(--color-water);
+    outline-offset: 2px;
+  }
+
+  /* Anything that scrolls says so before it is touched, on a phone as well as
+     under a mouse — see the scrollbar block above for the styling itself. */
+  [data-scrollable] {
+    overscroll-behavior: contain;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button:not(:disabled):active,
+  [role='button']:not([aria-disabled='true']):active {
+    transform: none;
+  }
+}

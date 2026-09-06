@@ -297,10 +297,6 @@ function MapCard() {
               </button>
             ))}
           </div>
-          <p className="text-data text-ink-faint">
-            Satellite is not offered: every imagery layer that is free to use forbids a product like
-            this one, and the ones that allow it are not free.
-          </p>
         </div>
 
         <div className="flex items-center justify-between gap-3 border-t border-edge pt-3">
