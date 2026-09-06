@@ -106,7 +106,7 @@ export function ResultCard({
               <span className="text-ink-faint">
                 {' · '}
                 {formatRupees(listing.commuteMonthly)} commute
-                {listing.commuteEstimated ? ' (est.)' : ''}
+                {listing.commuteEstimated ? ' estimated' : ''}
               </span>
             ) : null}
           </p>

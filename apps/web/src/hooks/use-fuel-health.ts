@@ -15,6 +15,14 @@ export interface FuelHealthState {
   isLoading: boolean;
   /** True when there is no report at all — which is NOT the same as healthy. */
   isMissing: boolean;
+  /**
+   * True when the request itself failed, which is NOT the same as a missing
+   * report either. Folding the two together meant a 403 and a dropped
+   * connection both rendered "no prices have been checked" — the one failure
+   * this page exists to distinguish.
+   */
+  isFailed: boolean;
+  retry: () => void;
 }
 
 export function useFuelHealth(): FuelHealthState {
@@ -30,6 +38,8 @@ export function useFuelHealth(): FuelHealthState {
   return {
     report: query.data ?? null,
     isLoading: query.isPending,
-    isMissing: query.isError || (!query.isPending && !query.data),
+    isMissing: !query.isPending && !query.isError && !query.data,
+    isFailed: query.isError,
+    retry: () => void query.refetch(),
   };
 }

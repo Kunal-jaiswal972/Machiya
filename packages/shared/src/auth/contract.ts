@@ -68,7 +68,9 @@ export const AUTH_ERROR_MESSAGES: Record<AuthErrorCode, string> = {
   email_not_verified: 'Verify your email address first — check your inbox.',
   email_taken: 'An account already exists for that email.',
   user_banned: 'This account has been suspended.',
-  rate_limited: 'Too many attempts. Wait a minute and try again.',
+  // The server holds sign-in for a minute and sign-up, password reset and
+  // resend for five, so the copy cannot promise the shorter one.
+  rate_limited: 'Too many tries. Give it a few minutes and start again.',
   invalid_token: 'That link has expired or has already been used.',
-  unknown: 'Something went wrong. Try again.',
+  unknown: 'We could not do that just now. Try again in a moment.',
 };

@@ -47,4 +47,16 @@ export const FURNISHING_TYPES = furnishingTypeSchema.options;
 export const PROPERTY_TYPES = propertyTypeSchema.options;
 export const ENQUIRY_STATUSES = enquiryStatusSchema.options;
 export const FUEL_TYPES = fuelTypeSchema.options;
+
+/**
+ * How each fuel is written for a person.
+ *
+ * Title-casing the enum gave "Cng", which is not a word. One map, used by the
+ * commute controls and the provenance line, so the two cannot disagree.
+ */
+export const FUEL_TYPE_LABELS: Record<FuelType, string> = {
+  PETROL: 'Petrol',
+  DIESEL: 'Diesel',
+  CNG: 'CNG',
+};
 export const IMAGE_STATUSES = imageStatusSchema.options;

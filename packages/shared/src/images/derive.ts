@@ -80,32 +80,28 @@ export async function validateAndDerive(bytes: Buffer): Promise<DeriveResult> {
   }
 
   if (!ACCEPTED_IMAGE_MIMES.includes(sniffed.mime as (typeof ACCEPTED_IMAGE_MIMES)[number])) {
-    throw new ImageRejected(`Images must be JPEG, PNG, WebP or HEIC — that one is ${sniffed.mime}`);
+    throw new ImageRejected('That file is not a photo we can use. Try a JPEG or a PNG.');
   }
 
   if (sniffed.mime === 'image/heic' && !canDecodeHeic()) {
-    throw new ImageRejected(
-      'This server cannot read HEIC. Export the photo as JPEG and upload that instead.',
-    );
+    throw new ImageRejected('We cannot read that photo format. Save it as a JPEG and try again.');
   }
 
   let metadata: Metadata;
   try {
     metadata = await sharp(bytes).metadata();
   } catch {
-    throw new ImageRejected('That image could not be decoded');
+    throw new ImageRejected('We could not open that photo. Try another one.');
   }
 
   const { width, height, pages } = metadata;
 
   if (!width || !height) {
-    throw new ImageRejected('That image has no readable dimensions');
+    throw new ImageRejected('We could not open that photo. Try another one.');
   }
 
   if (width > MAX_PIXELS_PER_AXIS || height > MAX_PIXELS_PER_AXIS) {
-    throw new ImageRejected(
-      `That image is ${width}x${height}; the limit is ${MAX_PIXELS_PER_AXIS}px on a side`,
-    );
+    throw new ImageRejected('That photo is too large. Shrink it and try again.');
   }
 
   // An animated WebP or GIF would be resized to a single frame silently, and a

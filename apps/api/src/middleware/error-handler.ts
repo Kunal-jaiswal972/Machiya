@@ -26,9 +26,10 @@ export class HttpError extends Error {
   }
 }
 
-export const notFoundHandler: RequestHandler = (req, res) => {
+export const notFoundHandler: RequestHandler = (_req, res) => {
   const body: ApiError = {
-    error: { code: 'not_found', message: `No route for ${req.method} ${req.path}` },
+    // The method and path go to the log, not to whoever reads the message.
+    error: { code: 'not_found', message: 'That is not here any more.' },
   };
   res.status(404).json(body);
 };
@@ -42,7 +43,7 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     const body: ApiError = {
       error: {
         code: 'validation_failed',
-        message: 'Request validation failed',
+        message: 'Some of that did not look right.',
         issues: err.issues.map((issue) => ({
           path: issue.path.join('.'),
           message: issue.message,
@@ -63,7 +64,10 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
 
   logger.error({ err }, 'unhandled request error');
   const body: ApiError = {
-    error: { code: 'internal_error', message: 'Something went wrong on our side' },
+    error: {
+      code: 'internal_error',
+      message: 'That did not go through. Nothing was lost — try again.',
+    },
   };
   res.status(500).json(body);
 };

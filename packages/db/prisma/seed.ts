@@ -527,7 +527,9 @@ async function seedListings(
           `${plan.title}, in ${plan.locality.name}.`,
           '',
           `${plan.areaSqft} sq ft on floor ${plan.floor} of ${plan.totalFloors}, ${plan.furnishing.toLowerCase().replace(/_/g, ' ')}.`,
-          'Seed data: the address and photos are placeholders, the geometry is real.',
+          // No line saying this is seeded: it renders verbatim in the About
+          // section, and a demo that narrates its own fixtures is not a demo.
+          'Close to the main road, with a market and a chemist within walking distance.',
         ].join('\n'),
         listingType: plan.listingType,
         propertyType: plan.propertyType,

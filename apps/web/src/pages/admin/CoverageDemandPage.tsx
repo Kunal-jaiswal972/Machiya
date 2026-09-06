@@ -56,7 +56,9 @@ export function CoverageDemandPage() {
             </span>
 
             <div className="min-w-0 flex-1">
-              <p className="text-label truncate">{cluster.label ?? 'An unnamed point'}</p>
+              <p className="text-label truncate">
+                {cluster.label ?? 'Somewhere we could not name'}
+              </p>
               <p className="text-data flex items-center gap-1 text-ink-soft">
                 <MapPin className="size-3 shrink-0" aria-hidden />
                 {cluster.lat.toFixed(3)}, {cluster.lng.toFixed(3)}

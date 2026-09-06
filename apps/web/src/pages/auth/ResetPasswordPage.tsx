@@ -47,7 +47,7 @@ export function ResetPasswordPage() {
     return (
       <AuthShell
         title="That link is incomplete"
-        description="Reset links carry a token. Request a fresh one and use the newest email."
+        description="That link is missing part of itself. Ask for a new one and use the newest email."
       >
         <Link
           to="/auth/forgot-password"

@@ -1,4 +1,5 @@
 import {
+  FUEL_TYPE_LABELS,
   VEHICLE_CLASSES,
   effectiveMileage,
   fuelTypeSchema,
@@ -82,7 +83,7 @@ export function CommuteControls({ preferences, onChange, className }: CommuteCon
             >
               {fuelTypeSchema.options.map((fuel) => (
                 <option key={fuel} value={fuel}>
-                  {fuel.charAt(0) + fuel.slice(1).toLowerCase()}
+                  {FUEL_TYPE_LABELS[fuel]}
                 </option>
               ))}
             </select>

@@ -184,7 +184,7 @@ export function ListingDetailRoute() {
             )}
           >
             <div className="flex min-w-0 flex-col gap-5">
-              <Gallery images={listing.images} title={listing.title ?? 'Untitled draft'} />
+              <Gallery images={listing.images} title={listing.title ?? 'This place'} />
 
               {/* Price loudest, road distance second — the product's argument. */}
               <header className="flex items-start justify-between gap-3">
@@ -206,7 +206,7 @@ export function ListingDetailRoute() {
                     </p>
                   ) : null}
                   <h2 className="text-title mt-1 text-balance">
-                    {listing.title ?? 'Untitled draft'}
+                    {listing.title ?? 'This place'}
                     {listing.isVerified ? (
                       <BadgeCheck
                         className="ml-1.5 inline size-4 -translate-y-px text-verdant"

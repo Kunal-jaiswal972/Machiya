@@ -63,7 +63,11 @@ import { cn } from '../lib/utils';
 const profileFormSchema = profileUpdateSchema.extend({ phone: phoneFieldSchema });
 
 const MODE_ICON: Record<CommuteMode, typeof Car> = { car: Car, bike: Bike, transit: Bus };
-const MODE_LABEL: Record<CommuteMode, string> = { car: 'Car', bike: 'Bike', transit: 'Bus' };
+const MODE_LABEL: Record<CommuteMode, string> = {
+  car: 'Car',
+  bike: 'Bike',
+  transit: 'Public transport',
+};
 
 /**
  * Everything the product keeps about you, on one page: who you are, how you

@@ -21,6 +21,23 @@ import { cn } from '../../lib/utils';
  * did not revoke the existing session would leave the banned account signed in
  * until the cookie expired.
  */
+/**
+ * What each role is called on screen. `SEEKER` is a column value, not a word
+ * anyone says.
+ */
+const ROLE_LABELS: Record<(typeof USER_ROLES)[number], string> = {
+  SEEKER: 'Renter',
+  LISTER: 'Owner',
+  ADMIN: 'Admin',
+};
+
+/** What the change lets them do, which is what the confirmation should say. */
+const ROLE_ACTION: Record<(typeof USER_ROLES)[number], string> = {
+  SEEKER: 'search and save places',
+  LISTER: 'list properties',
+  ADMIN: 'moderate everything',
+};
+
 export function UsersPage() {
   const [query, setQuery] = useState('');
   const debounced = useDebouncedValue(query, 250);
@@ -105,14 +122,15 @@ function UserRow({ user }: { user: AdminUser }) {
             'disabled:opacity-50',
           )}
           onChange={(event) => {
+            const nextRole = event.target.value as UserRole;
             setRole.mutate(
-              { userId: user.id, role: event.target.value as UserRole },
+              { userId: user.id, role: nextRole },
               {
                 onSuccess: () => {
-                  toast.success(`${user.name} is now ${event.target.value.toLowerCase()}`);
+                  toast.success(`${user.name} can now ${ROLE_ACTION[nextRole]}`);
                 },
                 onError: () => {
-                  toast.error('Could not change that role');
+                  toast.error('That role did not change. Try again.');
                 },
               },
             );
@@ -120,7 +138,7 @@ function UserRow({ user }: { user: AdminUser }) {
         >
           {USER_ROLES.map((role) => (
             <option key={role} value={role}>
-              {role}
+              {ROLE_LABELS[role]}
             </option>
           ))}
         </select>
@@ -153,7 +171,7 @@ function UserRow({ user }: { user: AdminUser }) {
             <Input
               id={`ban-reason-${user.id}`}
               value={reason}
-              placeholder="Reason"
+              placeholder="Why are you banning them?"
               className="h-8 w-32"
               disabled={isSelf}
               onChange={(event) => {

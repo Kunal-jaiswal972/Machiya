@@ -107,6 +107,19 @@ export function formatAvailability(from: string | Date | null | undefined): stri
   return `From ${date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}`;
 }
 
+/**
+ * A slug as a place name: `patna` is Patna, `new-delhi` is New Delhi.
+ *
+ * For the admin surfaces, where the report carries slugs and the city rows are
+ * not otherwise loaded. A slug is never a label.
+ */
+export function humanizeSlug(slug: string): string {
+  return slug
+    .split('-')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 /** Relative time for enquiry threads and view charts. */
 export function formatRelative(when: string | Date): string {
   const date = typeof when === 'string' ? new Date(when) : when;

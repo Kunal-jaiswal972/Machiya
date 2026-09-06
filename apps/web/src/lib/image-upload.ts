@@ -110,8 +110,8 @@ export function putToStorage(
       reject(
         new Error(
           request.status === 400
-            ? 'Storage refused that file — it is too large or the wrong type'
-            : `Upload failed with status ${String(request.status)}`,
+            ? 'That photo is too big, or not a photo we can read.'
+            : 'That photo did not upload. Try it again.',
         ),
       );
     });

@@ -43,7 +43,7 @@ const csvArray = <T extends z.ZodType<string>>(item: T) =>
         .filter((part) => part.length > 0);
 
       if (parts.length === 0) {
-        ctx.addIssue({ code: 'custom', message: 'Expected at least one value' });
+        ctx.addIssue({ code: 'custom', message: 'Pick at least one.' });
         return z.NEVER;
       }
 

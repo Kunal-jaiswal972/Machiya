@@ -142,7 +142,7 @@ function ThreadRow({ thread, active }: { thread: EnquiryThread; active: boolean 
             ) : null}
           </div>
           <p className="text-data truncate text-ink-soft">
-            {thread.listing.title ?? 'Untitled'} · {formatRupees(price)}
+            {thread.listing.title ?? 'This place'} · {formatRupees(price)}
           </p>
           {thread.preview ? (
             <p className="text-data truncate text-ink-faint">{thread.preview}</p>
@@ -203,7 +203,7 @@ function ThreadPanel({ enquiryId }: { enquiryId: string }) {
             to={`/listings/${thread.listing.slug}`}
             className="text-data text-ink-soft hover:underline"
           >
-            {thread.listing.title ?? 'Untitled'} · {thread.listing.locality}
+            {thread.listing.title ?? 'This place'} · {thread.listing.locality}
           </Link>
         </div>
 

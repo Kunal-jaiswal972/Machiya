@@ -229,6 +229,45 @@ Library: `motion` (framer-motion's current package name), imported from
 - **60 markers on screen, dragging the office pin, must hold 60fps.** If it does
   not, cut the animation rather than the frame rate. Test it; do not assume it.
 
+## Voice
+
+The audience is someone looking for a flat, not the person who built the app.
+Everything below follows from that.
+
+**Say what happened and what they can do.** Never how the system works. A
+degraded state explains the consequence — "the nearby-places list is incomplete
+right now" — and not the cause.
+
+**Nothing internal reaches the screen.** No file paths, no URLs, no environment
+variable names, no enum values, no status codes, no queue, service, library or
+adapter names. `OpenStreetMap` is the exception, because the licence requires
+the credit. Constraints and reasoning live in `DECISIONS.md` and `docs/`.
+
+**A feature that does not exist is absent.** Not disabled with a paragraph
+explaining why. A control whose only job is to announce its own unavailability
+advertises a gap and then blames the world for it.
+
+**Warm and plain beats clipped and technical.** "We couldn't find that address —
+try a landmark or locality nearby", not "No results". "That page is not here",
+not "404".
+
+**Never apologise for the fast path.** A locally answered query is the good
+case.
+
+**Every number carries its unit and its context.** ₹6,800 is not an answer;
+₹6,800 a month by car is. An unknown is "Not given", never a bare dash.
+
+**Errors say what to do next**, and if there is nothing to do, they say that the
+work was not lost.
+
+**Enum-shaped words get written out.** `SEMI_FURNISHED` is "Semi furnished",
+`CNG` is "CNG" and not "Cng", `SEEKER` is a renter. A slug is never a label:
+`patna` is Patna.
+
+The check that keeps this true: no user-visible string contains a file path, a
+URL fragment, an enum value or a service name. It is part of the audit sweep in
+`docs/ux-audit.md`.
+
 ## States, and they are designed
 
 Empty, loading and error states are where most interfaces stop being designed.

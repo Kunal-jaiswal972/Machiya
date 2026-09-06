@@ -8,7 +8,7 @@ export function ForbiddenPage() {
       <p className="text-lg font-semibold">Not your area</p>
       <p className="max-w-sm text-sm text-muted-foreground">
         Your account does not have access to this page. If you meant to list a property, publish
-        your first listing and the role follows.
+        your first listing and this opens up.
       </p>
       <Link to="/" className="text-primary underline underline-offset-4">
         Back to the map

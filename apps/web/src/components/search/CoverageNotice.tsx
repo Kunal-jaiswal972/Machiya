@@ -44,7 +44,7 @@ export function CoverageNotice({ coverage, onPickCity, className }: CoverageNoti
         title={coverageMessage(coverage)}
         detail={
           coverage.requestedLabel
-            ? `${coverage.requestedLabel} is outside the three cities we have map data for. Everything here — routes, nearby places, commute cost — is measured from a real road graph, and we only build one per city we cover.`
+            ? `${coverage.requestedLabel} is outside the three cities we have map data for. Everything here — routes, nearby places, commute cost — is measured on real roads, and we have only mapped the cities below.`
             : 'Everything here — routes, nearby places, commute cost — is measured from a real road graph, and we only build one per city we cover.'
         }
         action={

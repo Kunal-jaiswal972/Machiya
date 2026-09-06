@@ -2,7 +2,9 @@ import { FUEL_ADAPTER_DEAD_AFTER_RUNS } from '@machiya/shared';
 import { motion, useReducedMotion } from 'motion/react';
 import { CircleAlert, CircleCheck, CircleSlash, ExternalLink } from 'lucide-react';
 import { EmptyState } from '../../components/EmptyState';
+import { LoadFailed } from '../../components/LoadFailed';
 import { useFuelHealth } from '../../hooks/use-fuel-health';
+import { formatRelative, humanizeSlug as cityName } from '../../lib/format';
 import { cn } from '../../lib/utils';
 
 /**
@@ -20,18 +22,22 @@ import { cn } from '../../lib/utils';
 export function FuelHealthPage() {
   const reduced = useReducedMotion();
 
-  const { report, isLoading, isMissing } = useFuelHealth();
+  const { report, isLoading, isMissing, isFailed, retry } = useFuelHealth();
 
   if (isLoading) {
-    return <p className="p-6 text-sm text-ink-soft">Reading the last scrape…</p>;
+    return <HealthSkeleton />;
+  }
+
+  if (isFailed) {
+    return <LoadFailed what="the fuel price report" onRetry={retry} />;
   }
 
   if (isMissing || !report) {
     return (
       <EmptyState
         illustration="search"
-        title="No scrape has been recorded."
-        detail="The health report is written without an expiry, so nothing here means the worker has not completed a fuel scrape since this Redis was last cleared — not that everything is fine."
+        title="No fuel prices have been checked yet."
+        detail="Nothing here does not mean everything is fine — it means no check has finished. The next one runs within the hour."
       />
     );
   }
@@ -43,9 +49,9 @@ export function FuelHealthPage() {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 p-4">
       <header className="flex items-baseline justify-between gap-3">
-        <h1 className="text-title">Fuel scrape health</h1>
+        <h2 className="text-title">Fuel prices</h2>
         <span className="text-data text-ink-faint">
-          last run {new Date(report.lastRunAt ?? 0).toLocaleString()}
+          last checked {report.lastRunAt ? formatRelative(report.lastRunAt) : 'never'}
         </span>
       </header>
 
@@ -54,8 +60,9 @@ export function FuelHealthPage() {
         <p className="flex items-start gap-2 rounded-chrome border border-clay bg-clay-soft p-2.5 text-sm">
           <CircleAlert className="mt-px size-4 shrink-0 text-clay" aria-hidden />
           <span>
-            No price at all for <strong>{report.citiesWithoutPrices.join(', ')}</strong>. Commute
-            cost there falls back to the last stored row, and will go blank once nothing is stored.
+            No price at all for{' '}
+            <strong>{report.citiesWithoutPrices.map(cityName).join(', ')}</strong>. Commute cost
+            there falls back to the last stored row, and will go blank once nothing is stored.
           </span>
         </p>
       ) : null}
@@ -112,10 +119,8 @@ export function FuelHealthPage() {
                     </p>
                     <p className="text-data text-ink-faint">
                       {adapter.citiesOk.length > 0
-                        ? `answered for ${adapter.citiesOk.join(', ')}`
+                        ? `answered for ${adapter.citiesOk.map(cityName).join(', ')}`
                         : 'answered for no city'}
-                      {' · '}
-                      {adapter.averageDurationMs} ms average
                     </p>
                   </div>
                 </div>
@@ -128,13 +133,13 @@ export function FuelHealthPage() {
                     )}
                   >
                     {adapter.consecutiveFailures === 0
-                      ? 'healthy'
-                      : `${String(adapter.consecutiveFailures)} runs failing`}
+                      ? 'answering'
+                      : `failed the last ${String(adapter.consecutiveFailures)} times`}
                   </p>
                   <p className="text-data text-ink-faint">
                     {adapter.lastSuccessAt
-                      ? `ok ${new Date(adapter.lastSuccessAt).toLocaleTimeString()}`
-                      : 'never succeeded'}
+                      ? `last answered ${formatRelative(adapter.lastSuccessAt)}`
+                      : 'has never answered'}
                   </p>
                 </div>
               </div>
@@ -143,7 +148,9 @@ export function FuelHealthPage() {
                 <ul className="mt-2 flex flex-col gap-0.5 border-t border-edge pt-2">
                   {adapter.failures.map((failure) => (
                     <li key={failure.citySlug} className="text-data text-ink-soft">
-                      <span className="font-medium">{failure.citySlug}</span> — {failure.error}
+                      {/* The upstream's own error text stays in the log. */}
+                      <span className="font-medium">{cityName(failure.citySlug)}</span> — could not
+                      be read this time
                     </li>
                   ))}
                 </ul>
@@ -154,10 +161,21 @@ export function FuelHealthPage() {
       </ul>
 
       <p className="text-data text-ink-faint">
-        Several sources per fuel type exist so one can fail without the price disappearing. Two of
-        them share an upstream feed and return identical figures, so three adapters answering is two
-        independent opinions, not three — see DECISIONS.md D62.
+        Two of these three read the same upstream feed, so three answers are two opinions.
       </p>
+    </div>
+  );
+}
+
+/** Shaped like the adapter rows it replaces, not a sentence about loading. */
+function HealthSkeleton() {
+  return (
+    <div className="mx-auto flex max-w-3xl flex-col gap-3 p-4" role="status">
+      <span className="sr-only">Checking the latest fuel prices…</span>
+      <div className="h-6 w-40 animate-pulse rounded-chrome bg-paper-sunken" />
+      {[0, 1, 2].map((row) => (
+        <div key={row} className="h-16 animate-pulse rounded-chrome bg-paper-sunken" />
+      ))}
     </div>
   );
 }

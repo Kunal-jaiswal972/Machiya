@@ -281,7 +281,7 @@ export function OfficeField({
                           {/* A source tag per row, so a user can tell our own
                               localities from a wider geocoder result. */}
                           <span className="shrink-0 text-data text-ink-faint">
-                            {result.source === 'local' ? 'here' : 'osm'}
+                            {result.source === 'local' ? 'here' : 'wider search'}
                           </span>
                         </button>
                       </li>
@@ -314,7 +314,7 @@ export function OfficeField({
                     </>
                   ) : state === 'degraded' ? (
                     <>
-                      Nothing local matched “{term.trim()}”, and the wider search is unavailable
+                      Nothing of ours matched “{term.trim()}”, and the wider lookup is not answering
                       right now.
                     </>
                   ) : (
@@ -328,7 +328,7 @@ export function OfficeField({
               // Degraded means the wider geocoder could not answer — NOT that
               // there is nothing there. Those are opposite messages.
               <p className="border-t border-edge px-2.5 py-1.5 text-data text-ink-faint">
-                Showing local matches only — the wider search is unavailable.
+                Showing our own areas only — the wider lookup is not answering.
               </p>
             ) : null}
           </motion.div>

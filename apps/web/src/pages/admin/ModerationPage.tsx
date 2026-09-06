@@ -132,7 +132,7 @@ function ModerationRow({ listing, action }: { listing: AdminListing; action: Rea
       </div>
 
       <div className="min-w-0 flex-1">
-        <p className="text-label truncate">{listing.title ?? 'Untitled'}</p>
+        <p className="text-label truncate">{listing.title ?? 'This place'}</p>
         <p className="text-data text-ink-soft">
           {[listing.locality, listing.cityName].filter(Boolean).join(' · ')} · {listing.imageCount}{' '}
           photo{listing.imageCount === 1 ? '' : 's'}

@@ -37,7 +37,7 @@ export function AnalyticsCards({ analytics }: { analytics: ListerAnalytics }) {
         totals.enquiriesPerHundredViews === null ? '—' : totals.enquiriesPerHundredViews.toFixed(1),
       // Not "conversion rate": an enquiry is a person and a view is a
       // person-window, so the two are not the denominators a funnel implies.
-      meta: totals.views === 0 ? 'no views yet' : 'a ratio, not a funnel',
+      meta: totals.views === 0 ? 'no views yet' : 'per 100 people who looked',
     },
     { label: 'Saved by', value: String(totals.favorites), meta: 'people, all time' },
   ];

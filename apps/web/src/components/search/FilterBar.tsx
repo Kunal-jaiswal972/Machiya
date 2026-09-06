@@ -87,7 +87,7 @@ function activeChips(query: SearchQuery): ActiveChip[] {
       label:
         query.furnishing.length === 1
           ? humanizeEnum(query.furnishing[0] ?? '')
-          : `${String(query.furnishing.length)} furnishings`,
+          : `${String(query.furnishing.length)} furnishing types`,
       clear: { furnishing: undefined },
     });
   }
@@ -306,7 +306,7 @@ export function FilterBar({
                   <input
                     type="number"
                     inputMode="numeric"
-                    placeholder="min"
+                    placeholder="No less than"
                     value={query.priceMin ?? ''}
                     onChange={(event) =>
                       update({
@@ -320,7 +320,7 @@ export function FilterBar({
                   <input
                     type="number"
                     inputMode="numeric"
-                    placeholder="max"
+                    placeholder="No more than"
                     value={query.priceMax ?? ''}
                     onChange={(event) =>
                       update({
@@ -462,7 +462,9 @@ export function FilterBar({
           size={20}
           className="mr-1.5 inline-block align-text-bottom"
         />
-        {total === 0 ? 'No matches' : `${String(total)} within ${formatDistance(radiusMeters)}`}
+        {total === 0
+          ? `Nothing within ${formatDistance(radiusMeters)} yet`
+          : `${String(total)} within ${formatDistance(radiusMeters)}`}
       </p>
     </div>
   );

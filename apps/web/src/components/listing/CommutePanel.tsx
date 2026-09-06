@@ -1,4 +1,9 @@
-import { COMMUTE_MODES, type CommuteMode, type CommutePreferences } from '@machiya/shared';
+import {
+  COMMUTE_MODES,
+  FUEL_TYPE_LABELS,
+  type CommuteMode,
+  type CommutePreferences,
+} from '@machiya/shared';
 import { Bike, Bus, Car, Fuel, Info, TriangleAlert } from 'lucide-react';
 import { useCountUp } from '../../hooks/use-count-up';
 import type { ListingCommute } from '../../hooks/use-commute';
@@ -20,7 +25,11 @@ import { cn } from '../../lib/utils';
  * so — the case for the feature collapses if an estimate reads as a measurement.
  */
 const MODE_ICON: Record<CommuteMode, typeof Car> = { car: Car, bike: Bike, transit: Bus };
-const MODE_LABEL: Record<CommuteMode, string> = { car: 'Car', bike: 'Bike', transit: 'Bus' };
+const MODE_LABEL: Record<CommuteMode, string> = {
+  car: 'Car',
+  bike: 'Bike',
+  transit: 'Public transport',
+};
 
 export interface CommutePanelProps {
   commute: ListingCommute;
@@ -65,7 +74,7 @@ export function CommutePanel({
   const cheapest = ranked[0];
 
   const reading = fuel?.prices.find((price) => price.fuelType === selected.fuelType);
-  const fuelName = selected.fuelType.charAt(0) + selected.fuelType.slice(1).toLowerCase();
+  const fuelName = FUEL_TYPE_LABELS[selected.fuelType];
 
   return (
     <section className={cn('flex flex-col gap-3', className)}>
@@ -201,19 +210,17 @@ export function CommutePanel({
           <p className="flex items-start gap-1">
             <Fuel className="mt-px size-3 shrink-0" aria-hidden />
             <span>
-              {fuelName} in {cityName} at {formatRupees(reading.price)}/litre — checked{' '}
-              {formatRelative(fuel?.staleAt ?? reading.fetchedAt)}
-              {', '}
-              {reading.sources.length > 1
-                ? `${String(reading.sources.length)} sources agreeing, served from `
-                : 'from one source, '}
+              {fuelName} in {cityName} at {formatRupees(reading.price)}/litre, checked{' '}
+              {formatRelative(fuel?.staleAt ?? reading.fetchedAt)}.{' '}
               <a
                 href={reading.sourceUrl}
                 target="_blank"
                 rel="noreferrer noopener"
                 className="underline decoration-dotted underline-offset-2 hover:text-ink-soft"
               >
-                {reading.source}
+                {reading.sources.length > 1
+                  ? `Checked against ${String(reading.sources.length)} price sources`
+                  : 'Where this price comes from'}
               </a>
             </span>
           </p>

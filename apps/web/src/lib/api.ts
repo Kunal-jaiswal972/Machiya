@@ -53,7 +53,12 @@ export async function apiFetch<TSchema extends z.ZodType>(
     const parsedError = apiErrorSchema.safeParse(payload);
 
     if (!parsedError.success) {
-      throw new ApiRequestError(response.status, 'unknown_error', response.statusText);
+      throw new ApiRequestError(
+        response.status,
+        'unknown_error',
+        // Not `statusText`: "Bad Gateway" ends up in a toast otherwise.
+        'That did not go through. Nothing was lost — try again.',
+      );
     }
 
     const { code, message, ...detail } = parsedError.data.error;

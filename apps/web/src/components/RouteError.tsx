@@ -29,36 +29,38 @@ function describe(error: unknown): { title: string; detail: string } {
     }
     if (error.status === 429) {
       return {
-        title: 'Too many requests',
+        title: 'You are going a bit fast',
         detail: 'Wait a few seconds and try again.',
       };
     }
     if (error.status >= 500) {
       return {
-        title: 'The server could not answer',
+        title: 'That did not load',
         detail: 'Nothing was lost — try again in a moment.',
       };
     }
-    return { title: 'That request was refused', detail: error.message };
+    // The server's own wording carries field paths and internal vocabulary,
+    // so it goes to the log rather than to the page.
+    return { title: 'That did not go through', detail: 'Nothing was lost. Try again.' };
   }
 
   if (isRouteErrorResponse(error)) {
     return {
-      title: error.status === 404 ? 'No such page' : 'That page could not load',
-      detail: error.statusText || 'Try again, or go back to the search.',
+      title: error.status === 404 ? 'That page is not here' : 'That page could not load',
+      detail: 'Try again, or go back to the search.',
     };
   }
 
   if (error instanceof Error && error.message.toLowerCase().includes('fetch')) {
     return {
-      title: 'No connection to the server',
-      detail: 'Check the network. The API runs on port 4000 in development.',
+      title: 'You look offline',
+      detail: 'Check your connection and try again.',
     };
   }
 
   return {
-    title: 'This view could not load',
-    detail: 'Retrying usually clears it. If it does not, the console has the detail.',
+    title: 'This did not load',
+    detail: 'Try again. If it keeps happening, come back in a few minutes.',
   };
 }
 
