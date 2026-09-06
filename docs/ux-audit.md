@@ -150,12 +150,24 @@ before starting, but the animation it starts runs on `requestAnimationFrame` and
 is not cancelled when the listing changes. The layer is unmounted underneath a
 loop that is still writing to it.
 
-**On the reported POI symptom.** I reproduced this _class_ of teardown race but
-**not** a blank POI layer specifically: across eight rapid switches the sidebar
-"What is nearby" list repopulated every time (7 categories each). The map layer
-is canvas-rendered and not observable from the DOM, so the reported symptom is
-neither confirmed nor cleared. The rAF leak above is a real defect in the same
-family and is the first place to look.
+**On the reported POI symptom — found later, and it is real.** Looking only at
+the sidebar was the mistake: it repopulated every time because it renders its
+own query. The MAP is fed by `detail-overlay`, and there the layer really did
+vanish. `map.getSource('machiya-pois')` returned undefined while the sidebar
+listed five categories as shown.
+
+The cause is an effect cleanup, not a race with the network:
+
+```
+useEffect(() => { setListing(id); return () => clearOverlay(); }, [id, ...])
+useEffect(() => { setPois(query.data ?? []); }, [query.data, ...])
+```
+
+The listing id resolves AFTER the POI query on a warm cache. So: POIs stored,
+id arrives, the first effect's cleanup runs and wipes them, and the effect that
+would put them back does not re-run because its own data has not changed.
+Clearing now happens on unmount only. Intermittent from the outside, entirely
+deterministic once you know which query settles first.
 
 ### 1.7 Close from a shared link can navigate out of the product
 

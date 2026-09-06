@@ -30,6 +30,20 @@
   --radius-sheet: 12px;
   --radius-round: 999px;
 
+  /* The seven nearby-place categories. Their own hues, deliberately NOT the
+     judgement colours: `verdant` and `clay` mean "good for you" and "bad for
+     you", and a school is neither. Before this, schools and groceries were both
+     verdant and hospitals and pharmacies were both clay — two pairs nobody
+     could tell apart on the map. Spread around the wheel, each at least 30
+     degrees from its neighbours. */
+  --poi-hospital: oklch(0.58 0.19 18);
+  --poi-police: oklch(0.55 0.14 265);
+  --poi-school: oklch(0.55 0.16 305);
+  --poi-pharmacy: oklch(0.6 0.12 175);
+  --poi-atm: oklch(0.52 0.03 250);
+  --poi-supermarket: oklch(0.58 0.1 65);
+  --poi-transit: oklch(0.6 0.13 210);
+
   /* The ring scale is a judgement, not a category: near is better. Green,
      amber, red for 1, 2 and 3 km, and the same three tint the ring geometry on
      the map so a card and the circle it sits inside read as one system. The
@@ -162,6 +176,15 @@
   --elev-over:
     0 0 0 1px var(--edge), 0 2px 4px -2px oklch(0 0 0 / 0.45), 0 24px 48px -18px oklch(0 0 0 / 0.6);
 
+  /* Lifted for a dark ground, the same seven hues. */
+  --poi-hospital: oklch(0.72 0.17 18);
+  --poi-police: oklch(0.72 0.12 265);
+  --poi-school: oklch(0.72 0.14 305);
+  --poi-pharmacy: oklch(0.74 0.11 175);
+  --poi-atm: oklch(0.7 0.03 250);
+  --poi-supermarket: oklch(0.74 0.1 65);
+  --poi-transit: oklch(0.74 0.12 210);
+
   /* Lifted for a dark ground, the same three judgements. */
   --color-ring-1: oklch(0.76 0.12 145);
   --color-ring-2: oklch(0.85 0.155 82);
@@ -202,6 +225,13 @@
   --color-ink-faint: var(--ink-faint);
   --color-signal: var(--signal);
   --color-signal-ink: var(--signal-ink);
+  --color-poi-hospital: var(--poi-hospital);
+  --color-poi-police: var(--poi-police);
+  --color-poi-school: var(--poi-school);
+  --color-poi-pharmacy: var(--poi-pharmacy);
+  --color-poi-atm: var(--poi-atm);
+  --color-poi-supermarket: var(--poi-supermarket);
+  --color-poi-transit: var(--poi-transit);
   --color-scrim: var(--scrim);
   --color-water: var(--water);
   --color-water-soft: var(--water-soft);
@@ -436,4 +466,65 @@
 }
 .driver-popover.machiya-tour .driver-popover-arrow-side-right {
   border-right-color: var(--paper-raised);
+}
+
+/* maplibre's own popup chrome is white with a white tip; these are the tokens
+   that make it ours in both themes. Only the surface — the positioning and the
+   tip geometry stay the library's. */
+.machiya-popup .maplibregl-popup-content {
+  background: var(--color-popover);
+  color: var(--color-ink);
+  border-radius: var(--radius-chrome);
+  box-shadow: var(--elev-over);
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+}
+
+.machiya-popup .maplibregl-popup-tip {
+  border-top-color: var(--color-popover);
+  border-bottom-color: var(--color-popover);
+}
+
+/* Scrollbars are chrome, and chrome does not sit on top of the content.
+   Overlay rather than gutter, thin, and only coloured once there is something
+   to scroll — Firefox gets the two-value `scrollbar-color`, WebKit gets the
+   pseudo-elements. Both are painted from the tokens so a dark list does not
+   grow a pale bar down its edge. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+*:hover,
+*:focus-within {
+  scrollbar-color: var(--color-edge-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border: 3px solid transparent;
+  border-radius: var(--radius-round);
+  background-clip: content-box;
+}
+
+*:hover::-webkit-scrollbar-thumb,
+*:focus-within::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklch, var(--color-ink-faint) 55%, transparent);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-ink-faint);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }

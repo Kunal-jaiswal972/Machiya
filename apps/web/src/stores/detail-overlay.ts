@@ -1,4 +1,4 @@
-import type { Poi, PoiCategory, RouteResult } from '@machiya/shared';
+import { POI_CATEGORIES, type Poi, type PoiCategory, type RouteResult } from '@machiya/shared';
 import { create } from 'zustand';
 
 /**
@@ -31,13 +31,43 @@ interface DetailOverlayState {
   clear: () => void;
 }
 
+const CATEGORY_KEY = 'machiya:poi-categories';
+
+/**
+ * Chosen categories outlive the listing they were chosen on.
+ *
+ * Someone who wants hospitals wants hospitals on the next flat too, so this is
+ * per person rather than per panel — kept on the device because it is a view
+ * setting, not something worth a round trip.
+ */
+function storedCategories(): Set<PoiCategory> {
+  try {
+    const raw = localStorage.getItem(CATEGORY_KEY);
+    if (!raw) return new Set<PoiCategory>();
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set<PoiCategory>();
+    return new Set(parsed.filter((value): value is PoiCategory => POI_CATEGORIES.includes(value)));
+  } catch {
+    return new Set<PoiCategory>();
+  }
+}
+
+function rememberCategories(categories: Set<PoiCategory>): void {
+  try {
+    localStorage.setItem(CATEGORY_KEY, JSON.stringify([...categories]));
+  } catch {
+    // The choice still holds for this session.
+  }
+}
+
 export const useDetailOverlay = create<DetailOverlayState>((set) => ({
   listingId: null,
   routeGeometry: null,
   pois: [],
-  // Nothing on by default: seven categories at once over a dense city is a mess,
-  // and the legend is the invitation to turn one on.
-  visibleCategories: new Set<PoiCategory>(),
+  // Nothing on for a first visit: seven categories at once over a dense city is
+  // a mess, and the legend is the invitation to turn one on. After that it is
+  // whatever was last chosen.
+  visibleCategories: storedCategories(),
 
   setListing: (listingId) => set({ listingId }),
   setRouteGeometry: (routeGeometry) => set({ routeGeometry }),
@@ -47,14 +77,15 @@ export const useDetailOverlay = create<DetailOverlayState>((set) => ({
       const next = new Set(state.visibleCategories);
       if (next.has(category)) next.delete(category);
       else next.add(category);
+      rememberCategories(next);
       return { visibleCategories: next };
     }),
-  setCategories: (categories) => set({ visibleCategories: new Set(categories) }),
-  clear: () =>
-    set({
-      listingId: null,
-      routeGeometry: null,
-      pois: [],
-      visibleCategories: new Set<PoiCategory>(),
-    }),
+  setCategories: (categories) => {
+    const next = new Set(categories);
+    rememberCategories(next);
+    set({ visibleCategories: next });
+  },
+  // The categories deliberately survive: closing a listing clears what was
+  // drawn for it, not what the person asked to see.
+  clear: () => set({ listingId: null, routeGeometry: null, pois: [] }),
 }));

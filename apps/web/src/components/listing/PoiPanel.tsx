@@ -24,6 +24,7 @@ export function PoiPanel({ pois, degraded, isLoading }: PoiPanelProps) {
   const palette = useMapPalette();
   const visible = useDetailOverlay((state) => state.visibleCategories);
   const toggleCategory = useDetailOverlay((state) => state.toggleCategory);
+  const setCategories = useDetailOverlay((state) => state.setCategories);
 
   const nearest = new Map<PoiCategory, Poi>();
   const counts = new Map<PoiCategory, number>();
@@ -35,6 +36,12 @@ export function PoiPanel({ pois, degraded, isLoading }: PoiPanelProps) {
   }
 
   const warming = degraded && pois.length === 0;
+
+  // Only categories with something in them can be shown, so "show all" means
+  // all of what exists here rather than seven rows of nothing.
+  const available = POI_CATEGORIES.filter((category) => (counts.get(category) ?? 0) > 0);
+  const shownCount = available.filter((category) => visible.has(category)).length;
+  const allShown = available.length > 0 && shownCount === available.length;
 
   return (
     <section className="flex flex-col gap-2">
@@ -66,6 +73,23 @@ export function PoiPanel({ pois, degraded, isLoading }: PoiPanelProps) {
             </>
           ) : null}
         </p>
+      ) : null}
+
+      {available.length > 0 ? (
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-data text-ink-faint">
+            {shownCount === 0
+              ? 'Nothing on the map yet'
+              : `${String(shownCount)} of ${String(available.length)} shown on the map`}
+          </p>
+          <button
+            type="button"
+            onClick={() => setCategories(allShown ? [] : available)}
+            className="text-label rounded-inset px-1.5 py-0.5 text-water hover:bg-accent"
+          >
+            {allShown ? 'Hide all' : 'Show all'}
+          </button>
+        </div>
       ) : null}
 
       <ul className="flex flex-col">
@@ -121,7 +145,7 @@ export function PoiPanel({ pois, degraded, isLoading }: PoiPanelProps) {
       </ul>
 
       <p className="text-data text-ink-faint">
-        Tap a category to show it on the map. Places from OpenStreetMap.
+        Tap a category to draw it on the map, then tap a marker for the name and how far it is.
       </p>
     </section>
   );

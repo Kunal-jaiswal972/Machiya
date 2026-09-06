@@ -1,0 +1,139 @@
+
+---
+
+MACHIYA — CONTINUOUS UX LOOP
+
+You are the principal frontend engineer on this product, and you own the interaction layer end to end. That means you do not wait to be handed a list of bugs. You use the product, decide what is wrong with it, decide what right looks like, build that, and use it again. Judgement is the job: when something is ambiguous, resolve it and record why, rather than stopping to ask.
+
+Standing rules in CLAUDE.md apply. Orient from the repo first: CLAUDE.md, DECISIONS.md, docs/README.md and what it indexes, docs/known-issues.md, docs/design.md, and docs/ux-audit.md if it exists.
+
+The backend is sound. Steps 1-10 are built, corrections 1-10 landed, and a previous session worked partway through a UX repair prompt — nobody knows how far. Establishing that is your first task; the loop is your standing one.
+
+=== THE AUDIENCE IS A RENTER, NOT AN ENGINEER ===
+
+Read this first, because it is the failure mode this codebase keeps returning to, and every section below is downstream of it.
+
+The product currently talks to the person who built it. Two examples found in one pass, and they are the same mistake wearing different clothes:
+
+A settings screen reads "Satellite is not offered: every imagery layer that is free to use forbids a product like this one, and the ones that allow it are not free." That is an engineering constraint, correctly reasoned and correctly recorded in DECISIONS — and then shipped to a renter looking for a flat. No flagship product explains its licensing position in a settings panel. A feature that does not exist does not appear. There is no toggle, no disabled control, no explanation. The map style control offers the styles that work, and that is the whole of it.
+
+Buttons across the app show the default cursor instead of a pointer. Nobody who has used the web would ship that, but it is invisible to someone testing by reading code, because the code says `<button>` and looks correct.
+
+The rule, applied everywhere from here on: **nothing in the product explains, justifies, or apologises for how it was built.** No licensing reasoning, no service names, no adapter names, no file paths, no enum values, no "we chose X because Y", no capability that exists only to say it is unavailable. Constraints belong in DECISIONS.md and docs/. What reaches the screen is what the person can do and what they get.
+
+The corollary is that unbuilt features are absent, not disabled with an excuse. If a capability was investigated and rejected, remove its surface entirely, record the finding in DECISIONS.md, note it in docs/known-issues.md, and let the UI simply not have it. A greyed-out control with a paragraph attached is worse than nothing: it advertises a gap and then blames the world for it.
+
+Sweep the whole product for both patterns as part of the first round — build-rationale copy anywhere in the UI, and any control whose only function is to announce its own absence. Then keep watching for them, because they are the kind of thing that grows back.
+
+=== PHASE 0 — ESTABLISH GROUND TRUTH ===
+
+Do not trust any prior audit document as a description of the present. Read docs/ux-audit.md and docs/known-issues.md for what was *claimed*, then verify every claimed fix against the running app with the Playwright MCP. Mark each: still broken, fixed, partially fixed, regressed. This project has twice recorded a decisions entry describing behaviour the code did not have — D41 and D42 both say so in their own text. Assume that pattern until you have checked.
+
+Then rewrite docs/ux-audit.md into the format the loop uses from here. One table, one row per finding:
+
+`ID | Severity | Surface | What a user experiences | Root cause | Status | Round found | Round fixed`
+
+Status is open, fixing, fixed, verified, or wontfix with a reason. This file is the backlog and the only thing that survives a session ending or a context compaction, so it must be complete enough that a cold session picks up mid-loop. Keep it current in the same commit as any fix.
+
+=== THE LOOP ===
+
+Each round: drive → record → fix → re-verify → commit → next round. Do not stop between rounds to ask what to do or whether to continue. Run until an exit criterion is met, stating at each round's end which are met and which are not.
+
+**Drive.** Pick a persona and a task from the matrix, and complete the task in the running app through Playwright — actually doing it, not reading the code that implements it. Narrate as the persona: what you expected, what you found, where you hesitated, what you re-read, what you clicked that did nothing. Count the interactions it took against the minimum it should take. Eleven where four would do is a finding even when nothing is broken.
+
+**Record.** Every friction enters the backlog with a severity:
+
+- **S1 blocker** — the task cannot be completed, data is lost, or a stated feature does not respond to input.
+- **S2 severe** — completes only by accident, backtracking, or knowing something the UI never said.
+- **S3 friction** — extra steps, unclear wording, ambiguous state, guessing.
+- **S4 polish** — spacing, alignment, inconsistency with the design tokens.
+
+**Fix.** S1 and S2 to zero before spending a round on S3, and S3 before S4. Fix in reviewable groups by cause, not by screen.
+
+**Re-verify.** Re-drive the exact task that produced the finding, plus one adjacent task, because interaction fixes break neighbours.
+
+**Commit.** Conventional commit per group, backlog updated in the same commit.
+
+=== PERSONAS AND TASKS ===
+
+Rotate. Each round takes at least two tasks; no task repeats until every task has been driven once.
+
+**Priya, first-time seeker, phone at 390px.** Never seen the product. Sign up and reach a working search. Find a 2BHK under ₹20,000 within 2 km of her office. Work out which of two listings actually costs less per month once commute counts. Save the search and return to it. Message a lister.
+
+**Ravi, returning seeker, desktop.** Has an account and saved offices. Switch saved office. Rename one. Delete one. Change vehicle from car to bike and watch every commute figure update. Compare three listings. Check what is near one.
+
+**Anita, first-time lister, desktop.** Sign up and publish a listing with six photos, start to finish. Leave halfway and resume the next day. Fix a mistake in a published listing. Find and answer an enquiry.
+
+**Sameer, admin.** Moderate a queue. Verify a listing. Find out whether fuel scraping is healthy. Find out which city to expand to next.
+
+**Keyboard-only user.** Any of the above, keyboard only, with a screen reader's landmark structure in mind.
+
+Judge each task: could it be completed without reading code or asking anyone; was the next step obvious at every point; did the interface ever say something a normal person would not say; was any state ambiguous — saved or not, loading or empty, processing or failed; could a mistake be undone.
+
+=== INTERACTION AFFORDANCES ARE PART OF THE INTERFACE ===
+
+The missing pointer cursor is one instance of a class: the small signals that tell a hand what a thing does, which are invisible when you test by reading code. Sweep for all of them, and check them on every new control from here.
+
+Cursor is pointer on everything clickable and not-allowed on anything disabled; text on text; grab and grabbing on the office pin and any draggable; and default on anything that only looks clickable. Hover states on every interactive element, and active states so a press feels received. Focus rings visible on every focusable element in both themes — never removed without a replacement. Disabled controls that look disabled and say why on hover. Loading buttons that show it and cannot be double-submitted. Hit targets at least 44px on touch. Nothing that shifts under the cursor on hover. Scrollable regions that visibly indicate they scroll. Anything draggable that looks draggable before it is dragged.
+
+Build a small set of shared primitives for these rather than fixing them one component at a time — that is why they went missing, and one-by-one fixes will let them go missing again.
+
+=== HEURISTIC SWEEP, ONCE PER SURFACE ===
+
+Beyond task-driving, walk every surface once and log what fails: system state always visible; the words are the user's, not the system's; users can undo and escape; consistency with the rest of the app and with platform convention; errors prevented rather than reported; nothing must be remembered from a previous screen; shortcuts for repeat actions; nothing on screen that does not earn its place; error messages say what to do next; help sits where the confusion is, not in a doc.
+
+Surfaces: search and map, listing detail (panel and full-screen), the listing wizard, lister dashboard, enquiries, favourites, saved searches, profile, preferences, onboarding, admin, sign-in and sign-up — and every empty, loading, error and degraded state each can be in.
+
+=== RECURRING TASK — THE LISTING DETAIL IS THE PRODUCT'S ONE IMPORTANT SCREEN ===
+
+Run this every round alongside the persona tasks until it stops producing findings. It has been changed repeatedly and is still buggy and still uninformative, which means it is being restyled rather than designed.
+
+Start from the job, not the layout. Someone opens this screen to answer four questions: can I afford this, is it a decent place, how bad is the commute, what is it like around here. Everything on screen either answers one of those or is removed. Before touching it, write those four answers in the order of how much each decides the outcome — that ordering *is* the layout.
+
+Drive it as each persona and record what fails. Priya on a phone comparing two flats: can she tell within five seconds which is cheaper all-in? Ravi switching car to bike: does everything update, and does he notice? Anyone opening from a shared URL with no history: can they close it, and where do they land? Someone on a slow connection: what does each region look like while loading, and can they tell loading from empty? Someone scrolling to the bottom: does anything down there earn the scroll?
+
+The failures that keep coming back, so check them every round: information as undifferentiated same-weight blocks so nothing reads as more important than anything else; the same fact shown twice in two shapes; controls that render but do not respond; values with no units or context; anything requiring knowledge of how the system works to interpret; states that cannot be distinguished from each other; text truncating mid-word.
+
+Judge it by a test, not an aesthetic: show the screen to someone who has never seen the product, ask the four questions, count how long each takes and how often they are wrong. Anything unanswerable or answered wrongly is a finding. Anything on screen answering none of the four is a finding too.
+
+The full-screen view is the same screen with more room, not a different design. If a fact matters at full width it matters in the panel; if it does not matter in the panel it does not belong at full width. Both share one component tree with a layout switch so they cannot drift.
+
+Mark this done only when a round drives it as three different personas and produces no S1, S2 or S3.
+
+=== MAP LAYERS ARE THEMED, NOT COLOURED ONCE ===
+
+The route polyline is drawn dark on a dark basemap and is effectively invisible in dark mode. Fix the class, not the line.
+
+Every colour drawn onto the map — route geometry, radius rings, listing markers and price bands, cluster bubbles, POI icons, the office pin, city boundary outlines, selection and hover states — comes from theme-aware tokens and is re-evaluated when the theme changes, not written once at layer creation. Audit all of them in both themes.
+
+Map layers cannot inherit tokens the way the DOM does, so this needs explicit handling: define map colours as a per-theme set in one place, and on a theme change walk the layers and update paint properties through setPaintProperty. Never remount the map — that drops the camera and re-downloads tiles.
+
+Two things a colour swap will not fix. Anything drawn over a high-contrast basemap needs a contrasting casing or halo — a route line with a lighter casing beneath it reads on any surface, which is why every mapping product does it. And colour cannot be the only carrier of meaning: the traffic-light ring, the price bands and the POI categories each need a second channel — shape, icon, label or position — so the map parses in greyscale and for colourblind users.
+
+Verify by screenshotting every map state in both themes and looking: route drawn, POIs shown, clusters at low zoom, boundaries at low zoom, a listing selected, a marker hovered. Add a regression check that catches an invisible layer — a contrast assertion against the basemap beats a snapshot test, which passes on any two shades of dark.
+
+=== KNOWN WORK THIS ROUND MUST INCLUDE ===
+
+**The listing wizard is built wrong and needs rebuilding, not patching.** It is hand-rolled individual components with no form library and no shadcn, carrying fields the product does not need. Rebuild it as one wizard driven by a step configuration array: react-hook-form with the zod resolver against the existing `listingDraftSchema` and `publishableListingSchema` (D33), shadcn Form/FormField/FormItem/FormMessage for every input, one component per step rendering into a shared shell that owns navigation, progress, autosave and validation. Per-step validation gates forward navigation; going back never loses input; autosave writes server-side so a draft survives a closed tab and another device.
+
+Cut every field not in the publishable schema or genuinely useful to a renter. A field that exists in the schema but nobody would fill in is a finding for the backlog, not a field to keep rendering.
+
+The location step carries the three rules deferred in D59 — locality-only prefill, street line left empty and editable, no completion without a placed pin — plus the coverage refusal from D53 and coordinate-derived city assignment from D50. Verify all five behave; they were specified before the wizard existed.
+
+Delete the bespoke components the rebuild replaces rather than leaving them unreferenced.
+
+**Then check the same failure mode everywhere else.** A wizard built without the form library suggests other forms were too. Sweep every form — sign-up, profile, preferences, enquiry composer, filters, admin — for hand-rolled inputs, missing validation display, uncontrolled state, missing shadcn. Fix them the same way.
+
+=== EXIT CRITERIA ===
+
+Loop until all hold, stating at each round's end which do not:
+
+Every persona completes every task without a blocker or a backtrack. No open S1 or S2 in the backlog. Every surface has had a heuristic sweep. Every user-visible string read once against the voice rules in docs/design.md — no file paths, no enum values, no service names, no build rationale, no robotic phrasing. No control exists whose only purpose is to announce an unavailable feature. Every interactive element keyboard reachable with visible focus, correct cursor, and hover and active states. Every dismissible surface closes four ways. Every async state distinguishable from every other. The 390px pass finds nothing S3 or worse. Every map layer verified in both themes.
+
+And the real stopping rule: the last two consecutive rounds produced no new S1 or S2. A round that finds nothing at all is a signal you are re-driving the same paths — change persona, viewport, or entry point. Arrive from a shared URL, a cold cache, a signed-out state, a slow network.
+
+=== RULES FOR THE LOOP ===
+
+Reproduce before you fix; a bug you have not seen is one you will fix in the wrong place. Fix causes, not symptoms — two findings sharing a root are one fix. Add a Playwright regression test for every S1 and S2, because these are exactly the failures a unit test cannot catch. Never mark a finding fixed without re-driving the task that produced it. Use shadcn where a component exists; where the code hand-rolled something shadcn provides, replacing it is part of the fix. Write DECISIONS entries only where a genuine interaction choice was made, not for bug fixes — the backlog and the commit message carry those.
+
+At the end of each round print: tasks driven, findings by severity, what was fixed, what the backlog now holds, which exit criteria are met, and what the next round will do. Then start the next round.

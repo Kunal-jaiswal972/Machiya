@@ -94,8 +94,20 @@ export function ListingDetailRoute() {
 
   useEffect(() => {
     setListing(listing?.id ?? null);
-    return () => clearOverlay();
-  }, [listing?.id, setListing, clearOverlay]);
+  }, [listing?.id, setListing]);
+
+  /**
+   * Cleared when the panel goes, and ONLY then.
+   *
+   * This used to be the cleanup of the effect above, which re-runs whenever the
+   * listing id changes — and the id arrives after the POIs do, so the sequence
+   * was: POIs stored, id resolves, cleanup wipes them, and the effect that
+   * would restore them does not re-run because its own query has not changed.
+   * The map ended up with no POI source at all while the sidebar listed seven
+   * categories. That is the "amenities sometimes fail to render" report, and it
+   * is not intermittent once you know which order the two queries settle in.
+   */
+  useEffect(() => () => clearOverlay(), [clearOverlay]);
 
   useEffect(() => {
     setRouteGeometry(route.data?.route.geometry ?? null);

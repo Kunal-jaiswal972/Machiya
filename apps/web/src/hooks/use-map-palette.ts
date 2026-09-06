@@ -5,15 +5,19 @@ import { useUiStore } from '../stores/ui';
 /**
  * Which token each POI category is drawn in. The same mapping the legend
  * renders from, so a colour cannot differ between the map and the key beside it.
+ *
+ * Seven distinct hues rather than the palette's judgement colours: `verdant`
+ * and `clay` say "this suits you" and "this does not", which a school is
+ * neither, and reusing them left two pairs of categories sharing a colour.
  */
 const POI_TOKENS: Record<PoiCategory, string> = {
-  hospital: '--clay',
-  police: '--water',
-  school: '--verdant',
-  pharmacy: '--clay',
-  atm: '--ink-soft',
-  supermarket: '--verdant',
-  transit: '--water',
+  hospital: '--poi-hospital',
+  police: '--poi-police',
+  school: '--poi-school',
+  pharmacy: '--poi-pharmacy',
+  atm: '--poi-atm',
+  supermarket: '--poi-supermarket',
+  transit: '--poi-transit',
 };
 
 /**

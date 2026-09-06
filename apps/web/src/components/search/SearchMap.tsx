@@ -1,13 +1,15 @@
-import { RING_RADII_METERS, type ListingCard } from '@machiya/shared';
+import { RING_RADII_METERS, type ListingCard, type Poi } from '@machiya/shared';
 import { bbox as turfBbox, circle } from '@turf/turf';
 import type { Feature, FeatureCollection, LineString, Point, Polygon } from 'geojson';
 
+import type { Map as MapLibreMap } from 'maplibre-gl';
 import type { MapRef } from 'react-map-gl/maplibre';
 import Map, {
   AttributionControl,
   Layer,
   Marker,
   NavigationControl,
+  Popup,
   ScaleControl,
   Source,
   type MapLayerMouseEvent,
@@ -15,10 +17,12 @@ import Map, {
 import 'maplibre-gl/dist/maplibre-gl.css';
 import '../../lib/maplibre-setup';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { Moon, Sun, X } from 'lucide-react';
 import { useMapPalette } from '../../hooks/use-map-palette';
 import { useMapStyle } from '../../hooks/use-map-style';
-import { formatRupeesCompact } from '../../lib/format';
+import { registerPoiIcons } from '../../lib/poi-sprites';
+import { formatDistance, formatRupeesCompact } from '../../lib/format';
+import { POI_META } from '../listing/poi-meta';
 import { useDetailOverlay } from '../../stores/detail-overlay';
 import { useSearchUi } from '../../stores/search-ui';
 
@@ -59,6 +63,13 @@ export interface SearchMapProps {
 
 const RINGS_SOURCE = 'machiya-rings';
 const ROUTE_SOURCE = 'machiya-route';
+declare global {
+  interface Window {
+    /** Set in development only; see the `onLoad` handler below. */
+    __machiyaMap?: MapLibreMap;
+  }
+}
+
 const POI_SOURCE = 'machiya-pois';
 const LISTINGS_SOURCE = 'machiya-listings';
 const RING_LAYERS = ['ring-3-fill', 'ring-2-fill', 'ring-1-fill'] as const;
@@ -133,6 +144,9 @@ export function SearchMap({
    */
   const [pendingOffice, setPendingOffice] = useState<{ lat: number; lng: number } | null>(null);
 
+  /** The POI whose bubble is open. Cleared when the panel or the listing goes. */
+  const [selectedPoi, setSelectedPoi] = useState<Poi | null>(null);
+
   useEffect(() => {
     if (!pendingOffice) return;
 
@@ -198,6 +212,10 @@ export function SearchMap({
           // a data-driven `['get', 'color']` stays one layer for seven
           // categories instead of seven layers being added and removed.
           properties: {
+            // Also in `properties`, not only as the feature id: a click event
+            // hands back the properties, and the id alone cannot be read from
+            // them — which is why the bubble opened on nothing.
+            id: poi.id,
             category: poi.category,
             name: poi.name ?? '',
             color: palette.poi[poi.category],
@@ -314,6 +332,33 @@ export function SearchMap({
     return () => cancelAnimationFrame(frame);
   }, [rings, styleReady]);
 
+  useEffect(() => {
+    setSelectedPoi((current) =>
+      current &&
+      pois.some((poi) => poi.id === current.id) &&
+      visibleCategories.has(current.category)
+        ? current
+        : null,
+    );
+  }, [pois, visibleCategories]);
+
+  // --- POI markers carry the sidebar's icons ---------------------------------
+  useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (!map || !styleReady) return;
+
+    // Re-registered when the palette moves: a theme change repaints the markers
+    // rather than leaving the previous theme's colours until the next listing.
+    //
+    // Deferred a frame because building the glyphs renders the panel's own icon
+    // components, and React refuses a synchronous render from inside a commit.
+    const frame = requestAnimationFrame(() => {
+      void registerPoiIcons(map, palette.poi, palette.markerBg);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [styleReady, palette]);
+
   // --- hover sync: feature-state, not a re-render ----------------------------
   useEffect(() => {
     const map = mapRef.current?.getMap();
@@ -384,6 +429,12 @@ export function SearchMap({
         return;
       }
 
+      if (feature?.layer.id === 'poi-dot') {
+        const id = feature.properties?.id as string | undefined;
+        setSelectedPoi(pois.find((poi) => poi.id === id) ?? null);
+        return;
+      }
+
       if (feature?.layer.id === 'cluster-circle') {
         // Zoom into a cluster rather than expanding it in place: an expanded
         // cluster at low zoom overlaps its neighbours immediately.
@@ -409,7 +460,7 @@ export function SearchMap({
       // on a map is not. See DECISIONS.md D77.
       setPendingOffice({ lat: event.lngLat.lat, lng: event.lngLat.lng });
     },
-    [listings, onSelectListing, onDismissDetail],
+    [listings, onSelectListing, onDismissDetail, pois],
   );
 
   if (styleError) {
@@ -432,6 +483,26 @@ export function SearchMap({
       {/* aria-hidden with the markers exposed through the result list instead:
           a map is not navigable by keyboard, so the keyboard path does not go
           through it. See docs/design.md. */}
+      {/* Top-LEFT: the detail panel occupies the right edge, and a control the
+          panel covers is a control nobody can reach with a listing open.
+          Outside the map's own wrapper, because this one IS for everybody: a
+          button, labelled, in the tab order. */}
+      <button
+        type="button"
+        onClick={mapStyle.toggle}
+        title={mapStyle.isDark ? 'Switch the map to light' : 'Switch the map to dark'}
+        className="chrome absolute top-2 left-2 z-10 grid size-8 place-items-center text-ink-soft hover:text-ink"
+      >
+        {mapStyle.isDark ? (
+          <Sun className="size-4" aria-hidden />
+        ) : (
+          <Moon className="size-4" aria-hidden />
+        )}
+        <span className="sr-only">
+          {mapStyle.isDark ? 'Switch the map to light' : 'Switch the map to dark'}
+        </span>
+      </button>
+
       <div aria-hidden className="h-full w-full">
         <Map
           ref={mapRef}
@@ -439,11 +510,17 @@ export function SearchMap({
           mapStyle={mapStyle.url}
           style={{ width: '100%', height: '100%' }}
           attributionControl={false}
-          interactiveLayerIds={['listing-marker', 'cluster-circle']}
+          interactiveLayerIds={['listing-marker', 'cluster-circle', 'poi-dot']}
           cursor="crosshair"
-          onLoad={() => {
+          onLoad={(event) => {
             everLoaded.current = true;
             setStyleReady(true);
+
+            // A handle for the browser tests, which need to project a
+            // coordinate to a pixel before they can click a marker. Dev builds
+            // only — `import.meta.env.DEV` is statically false in a production
+            // build, so this and the property go with it.
+            if (import.meta.env.DEV) window.__machiyaMap = event.target;
           }}
           onStyleData={() => setStyleReady(true)}
           onClick={onClick}
@@ -620,17 +697,17 @@ export function SearchMap({
 
           {poiPoints.features.length > 0 ? (
             <Source id={POI_SOURCE} type="geojson" data={poiPoints}>
-              {/* One layer, coloured by category through a match expression, so
-                  toggling a category is a source update rather than seven
-                  layers being added and removed. */}
+              {/* One layer for all seven, picking its image from the feature,
+                  so toggling a category is a source update rather than seven
+                  layers being added and removed. The images are the sidebar's
+                  own icons — see lib/poi-sprites.ts. */}
               <Layer
                 id="poi-dot"
-                type="circle"
-                paint={{
-                  'circle-radius': 5,
-                  'circle-stroke-width': 1.5,
-                  'circle-stroke-color': palette.markerBg,
-                  'circle-color': ['get', 'color'],
+                type="symbol"
+                layout={{
+                  'icon-image': ['concat', 'poi-', ['get', 'category']],
+                  'icon-size': 0.62,
+                  'icon-allow-overlap': true,
                 }}
               />
               <Layer
@@ -652,6 +729,43 @@ export function SearchMap({
                 }}
               />
             </Source>
+          ) : null}
+
+          {selectedPoi ? (
+            <Popup
+              longitude={selectedPoi.lng}
+              latitude={selectedPoi.lat}
+              anchor="bottom"
+              offset={14}
+              closeButton={false}
+              onClose={() => setSelectedPoi(null)}
+              className="machiya-popup"
+            >
+              <div className="flex items-start gap-2 p-0.5">
+                <span
+                  className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-round"
+                  style={{ backgroundColor: palette.poi[selectedPoi.category] }}
+                  aria-hidden
+                />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">
+                    {selectedPoi.name ?? POI_META[selectedPoi.category].label}
+                  </p>
+                  <p className="text-data text-ink-faint">
+                    {POI_META[selectedPoi.category].label} ·{' '}
+                    {formatDistance(selectedPoi.distanceMeters)} from this listing
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedPoi(null)}
+                  className="ml-1 rounded-inset p-0.5 text-ink-faint hover:text-ink"
+                >
+                  <X className="size-3.5" aria-hidden />
+                  <span className="sr-only">Close</span>
+                </button>
+              </div>
+            </Popup>
           ) : null}
 
           {pendingOffice ? (
