@@ -9,7 +9,7 @@ import { z } from 'zod';
  * duplication cannot rot silently.
  */
 
-export const userRoleSchema = z.enum(['SEEKER', 'LISTER', 'ADMIN']);
+export const userRoleSchema = z.enum(['USER', 'EDITOR', 'ADMIN']);
 export const listingTypeSchema = z.enum(['RENT', 'SALE']);
 export const listingStatusSchema = z.enum(['DRAFT', 'PUBLISHED', 'PAUSED', 'RENTED']);
 export const furnishingTypeSchema = z.enum(['UNFURNISHED', 'SEMI_FURNISHED', 'FULLY_FURNISHED']);

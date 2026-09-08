@@ -176,17 +176,17 @@ describe('contact masking', () => {
     expect(anonymous.listing.owner.phone).toBeNull();
 
     const otherSeeker = await prisma.user.create({
-      data: { email: 'other@test.local', name: 'Other', role: 'SEEKER', emailVerified: true },
+      data: { email: 'other@test.local', name: 'Other', role: 'USER', emailVerified: true },
     });
     const otherSession = {
       userId: otherSeeker.id,
-      role: 'SEEKER' as const,
+      role: 'USER' as const,
       user: {
         id: otherSeeker.id,
         email: otherSeeker.email,
         name: otherSeeker.name,
         emailVerified: true,
-        role: 'SEEKER' as const,
+        role: 'USER' as const,
         banned: false,
       },
     };
@@ -223,20 +223,20 @@ describe('reading a thread', () => {
     });
 
     const outsider = await prisma.user.create({
-      data: { email: 'nosy@test.local', name: 'Nosy', role: 'SEEKER', emailVerified: true },
+      data: { email: 'nosy@test.local', name: 'Nosy', role: 'USER', emailVerified: true },
     });
 
     await expect(
       getEnquiry(
         {
           userId: outsider.id,
-          role: 'SEEKER',
+          role: 'USER',
           user: {
             id: outsider.id,
             email: outsider.email,
             name: outsider.name,
             emailVerified: true,
-            role: 'SEEKER',
+            role: 'USER',
             banned: false,
           },
         },

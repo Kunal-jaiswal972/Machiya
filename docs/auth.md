@@ -30,7 +30,7 @@ and secret. Half-configured OAuth is worse than absent: the button renders and
 then dies at the redirect. The web side reads `VITE_AUTH_PROVIDERS`, which must
 match.
 
-**The admin plugin** is mounted with `defaultRole: SEEKER` and
+**The admin plugin** is mounted with `defaultRole: USER` and
 `adminRoles: ['ADMIN']`, which is where the ban trio on `User` comes from.
 
 **The openAPI plugin is development-only** (`...(isProduction ? [] : [openAPI()])`),
@@ -69,7 +69,7 @@ the token — so the URL is rebuilt with `callbackURL` set to `WEB_APP_URL`, wit
 
 ## Roles and authorization
 
-Three roles on the user record: `SEEKER` (default), `LISTER`, `ADMIN`.
+Three roles on the user record: `USER` (default), `EDITOR`, `ADMIN`.
 Re-checked server-side on every request; never read from a request body.
 
 | Guard                 | Rejects                                  | Notes                                                                                             |
@@ -77,7 +77,7 @@ Re-checked server-side on every request; never read from a request body.
 | `requireAuth`         | no session (401), banned account (403)   | Sets `req.auth`. Never reads ids from the body                                                    |
 | `optionalAuth`        | nothing                                  | Attaches a session when present; a banned account is treated as anonymous                         |
 | `requireRole(...)`    | wrong role (403)                         | **Admin always passes** — an admin is never locked out by omission                                |
-| `requireMinRole(min)` | insufficient rank (403)                  | `LISTER` admits `ADMIN` without naming it                                                         |
+| `requireMinRole(min)` | insufficient rank (403)                  | `EDITOR` admits `ADMIN` without naming it                                                         |
 | `assertOwnership`     | a different user (403 `forbidden_owner`) | **Throws** rather than returning a boolean, so a forgotten `if` cannot silently authorise a write |
 
 On its own, `requireRole` 401s rather than 403s — a route that forgot
@@ -102,7 +102,7 @@ They are not a security boundary.
 `/auth/sign-in`, `/auth/sign-up`, `/auth/forgot-password`,
 `/auth/reset-password`, `/auth/verify-email`.
 
-A seeker who publishes a listing is upgraded to `LISTER` **in the same
+A user who publishes a listing is upgraded to `EDITOR` **in the same
 transaction as the publish**, so the two can never disagree.
 
 ## Tooling

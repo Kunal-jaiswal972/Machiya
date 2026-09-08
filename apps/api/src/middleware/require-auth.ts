@@ -111,7 +111,7 @@ export function requireRole(...roles: UserRole[]): RequestHandler {
   };
 }
 
-/** Rank-based variant: LISTER also admits ADMIN without naming it. */
+/** Rank-based variant: EDITOR also admits ADMIN without naming it. */
 export function requireMinRole(minimum: UserRole): RequestHandler {
   return (req, _res, next) => {
     const session = req.auth;

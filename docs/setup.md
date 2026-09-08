@@ -206,8 +206,8 @@ All pre-verified, password `devpass123`:
 
 | Account            | Role   | Default office         |
 | ------------------ | ------ | ---------------------- |
-| `seeker@dev.local` | seeker | Boring Road, Patna     |
-| `lister@dev.local` | lister | Koramangala, Bengaluru |
+| `user@dev.local`   | seeker | Boring Road, Patna     |
+| `editor@dev.local` | lister | Koramangala, Bengaluru |
 | `admin@dev.local`  | admin  | Kothrud, Pune          |
 
 Passwords are hashed by Better Auth's own `hashPassword`, so if the library

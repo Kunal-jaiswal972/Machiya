@@ -82,7 +82,7 @@ async function seedPlaces(): Promise<void> {
   });
 
   const owner = await prisma.user.create({
-    data: { email: 'owner@test.local', name: 'Owner', role: 'LISTER', emailVerified: true },
+    data: { email: 'owner@test.local', name: 'Owner', role: 'EDITOR', emailVerified: true },
   });
 
   await prisma.listing.create({

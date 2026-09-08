@@ -71,7 +71,7 @@ async function seedPatna(): Promise<void> {
   });
 
   const owner = await prisma.user.create({
-    data: { email: 'owner@test.local', name: 'Owner', role: 'LISTER', emailVerified: true },
+    data: { email: 'owner@test.local', name: 'Owner', role: 'EDITOR', emailVerified: true },
   });
 
   // A listing whose TITLE carries the locality name. This is what used to

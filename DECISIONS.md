@@ -3095,3 +3095,55 @@ listing created through the app by a real account, and an early version of this
 change pruned by city alone — which would have deleted it. One-off cleanup of
 pre-Patna rows belongs in a throwaway script, scoped to `@dev.local` owners and
 dry-run by default, not in a file that runs on every `pnpm db:seed`.
+
+## D92 — Roles are USER, EDITOR, ADMIN
+
+`SEEKER` and `LISTER` named the product's two sides — someone hunting a home,
+someone listing one — and read as domain nouns everywhere they appeared except
+in an access-control check, which is the only place a role is actually used.
+Renamed to `USER` and `EDITOR`; `ADMIN` is unchanged.
+
+`ALTER TYPE "UserRole" RENAME VALUE` does the whole data change:
+
+```sql
+ALTER TYPE "UserRole" RENAME VALUE 'SEEKER' TO 'USER';
+ALTER TYPE "UserRole" RENAME VALUE 'LISTER' TO 'EDITOR';
+```
+
+The label is renamed in place, so **every existing row keeps its role and the
+column default follows automatically** — there is no row-by-row update to write,
+and no window in which a role is invalid. The migration Prisma would otherwise
+generate for an enum change (create a new type, cast the column with a USING
+clause per value, drop the old, restore the default) rewrites the whole table and
+gets the default wrong. Verified after applying: labels read `USER, EDITOR,
+ADMIN`, the rows read 2/3/2 exactly as before, and the default reads
+`'USER'::"UserRole"`.
+
+**`Enquiry.seekerId` and `Enquiry.listerId` are NOT renamed.** They are columns
+with foreign keys, indexes and a compound unique — a different migration with a
+different risk, and they describe the two parties to a conversation rather than a
+role. The enquiry vocabulary and the role vocabulary are now allowed to differ.
+
+**Clearing up after it is a scratch script, not seed code.** Renaming the dev
+accounts to match (`seeker@` → `user@`, `lister@` → `editor@`) left the four old
+addresses behind, because the seed upserts listings by slug and reassigned all
+100 to the new editor accounts — leaving the old ones orphaned at zero listings.
+The seed does not delete rows it did not create, so a throwaway script cleared
+them: scoped to `@dev.local`, dry-run by default. Its first dry run was the
+useful part — it still held the previous keep-list and reported that it would
+delete `editor@`, `editor2@`, `user@` and `user2@`, which would have cascaded all
+100 listings. A cleanup script whose default is "report" is why that was a
+paragraph rather than an incident.
+
+**Two stale build outputs cost a debugging pass each**, and both are worth
+knowing:
+
+- `pnpm typecheck` failed on `'EDITOR' is not assignable to UserRole` after the
+  schema was already updated, because `packages/db/dist` was built before the
+  rename. Regenerating the Prisma client is not enough; the package that
+  re-exports it has to be rebuilt too.
+- the e2e suite then failed on `roleUpgraded` being false, and the diagnostic
+  never printed — because `apps/e2e` imports `@machiya/api/app`, the **built**
+  entry, so it was running `session.role === 'SEEKER'` against a database whose
+  labels had already been renamed. A source-only change is invisible to that
+  suite until `pnpm -F @machiya/api build`.

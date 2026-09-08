@@ -30,21 +30,21 @@ const DEV_PASSWORD = 'devpass123';
 
 /**
  * Two of each role, so every permission boundary has a second party to test
- * against: one lister cannot edit the other's listing, one seeker cannot read
- * the other's enquiries. A single account per role can only ever prove that the
+ * against: one editor cannot edit the other's listing, one user cannot read the
+ * other's enquiries. A single account per role can only ever prove that the
  * owner is allowed in. All in Patna — the seed covers one city (D91).
  */
 const DEV_USERS = [
-  { email: 'seeker@dev.local', name: 'Sana Seeker', role: 'SEEKER' as const, city: 'patna' },
-  { email: 'seeker2@dev.local', name: 'Sameer Seeker', role: 'SEEKER' as const, city: 'patna' },
-  { email: 'lister@dev.local', name: 'Lalit Lister', role: 'LISTER' as const, city: 'patna' },
-  { email: 'lister2@dev.local', name: 'Leena Lister', role: 'LISTER' as const, city: 'patna' },
+  { email: 'user@dev.local', name: 'Sana User', role: 'USER' as const, city: 'patna' },
+  { email: 'user2@dev.local', name: 'Sameer User', role: 'USER' as const, city: 'patna' },
+  { email: 'editor@dev.local', name: 'Lalit Editor', role: 'EDITOR' as const, city: 'patna' },
+  { email: 'editor2@dev.local', name: 'Leena Editor', role: 'EDITOR' as const, city: 'patna' },
   { email: 'admin@dev.local', name: 'Asha Admin', role: 'ADMIN' as const, city: 'patna' },
   { email: 'admin2@dev.local', name: 'Arun Admin', role: 'ADMIN' as const, city: 'patna' },
 ];
 
-/** The listers that own seeded stock, in the order listings are dealt to them. */
-const SEED_OWNERS = ['lister@dev.local', 'lister2@dev.local'];
+/** The editors that own seeded stock, in the order listings are dealt to them. */
+const SEED_OWNERS = ['editor@dev.local', 'editor2@dev.local'];
 
 /**
  * `icon` is a lucide export name in PascalCase, not a kebab slug: the web app
@@ -617,7 +617,7 @@ async function seedListings(
     if (!cityId) continue;
 
     for (const plan of planListings(city)) {
-      // Dealt round-robin so both listers own real stock: a dashboard with one
+      // Dealt round-robin so both editors own real stock: a dashboard with one
       // owner's listings cannot show that the other's are invisible to them.
       const ownerId = ownerIds[dealt % ownerIds.length] as string;
       dealt += 1;
@@ -715,7 +715,7 @@ async function seedListings(
   // Upsert-by-slug alone is not idempotent across a CHANGE to the plan: edit how
   // listings are laid out and the new slugs are inserted while the old rows stay
   // behind as orphans. (Observed: 51 listings became 90.) Everything the seed
-  // creates belongs to a dev lister, so anything of theirs not in the current
+  // creates belongs to a dev editor, so anything of theirs not in the current
   // plan is stale and goes — cascades take its images, amenities, enquiries and
   // favourites with it. Rows owned by a REAL account are never in scope.
   const removed = await prisma.listing.deleteMany({
@@ -736,7 +736,7 @@ async function seedEngagement(
   listingIds: string[],
   listerId: string,
 ): Promise<{ enquiries: number; favorites: number; savedSearches: number }> {
-  const seeker = users.get('seeker@dev.local');
+  const seeker = users.get('user@dev.local');
   const admin = users.get('admin@dev.local');
   if (!seeker) return { enquiries: 0, favorites: 0, savedSearches: 0 };
 
@@ -985,12 +985,12 @@ async function main(): Promise<void> {
     return owner.id;
   });
 
-  const lister = users.get('lister@dev.local');
-  if (!lister) throw new Error('lister@dev.local was not created');
+  const lister = users.get('editor@dev.local');
+  if (!lister) throw new Error('editor@dev.local was not created');
 
   const listingIds = await seedListings(cityIds, amenityIds, owners, fixtures);
   console.log(
-    `  listings   ${listingIds.length} in ${SEEDED_CITY_SLUGS.join(', ')}, across ${owners.length} listers`,
+    `  listings   ${listingIds.length} in ${SEEDED_CITY_SLUGS.join(', ')}, across ${owners.length} editors`,
   );
 
   const engagement = await seedEngagement(users, listingIds, lister.id);

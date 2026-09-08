@@ -32,12 +32,12 @@ const OFFICE = { lat: 25.6127, lng: 85.1588 };
 /** ~600 m from the office, so it lands inside ring 1. */
 const PROPERTY = { lat: 25.6181, lng: 85.1588 };
 
-const SEEKER = {
+const USER = {
   email: 'e2e-seeker@machiya.test',
   password: 'e2e-password-123',
   name: 'E2E Seeker',
 };
-const LISTER = {
+const EDITOR = {
   email: 'e2e-lister@machiya.test',
   password: 'e2e-password-123',
   name: 'E2E Lister',
@@ -108,7 +108,7 @@ afterAll(async () => {
 });
 
 /** Signs up and returns the session cookie header. */
-async function signUp(who: typeof SEEKER): Promise<string> {
+async function signUp(who: typeof USER): Promise<string> {
   const response = await request(app)
     .post('/api/auth/sign-up/email')
     .set('origin', 'http://localhost:5173')
@@ -135,12 +135,12 @@ async function signUp(who: typeof SEEKER): Promise<string> {
 
 it('carries one listing from a dropped pin to an answered enquiry', async () => {
   // --- 1. two accounts, through the real credential path -------------------
-  const listerCookie = await signUp(LISTER);
-  const seekerCookie = await signUp(SEEKER);
+  const listerCookie = await signUp(EDITOR);
+  const seekerCookie = await signUp(USER);
 
-  const lister = await prisma.user.findUniqueOrThrow({ where: { email: LISTER.email } });
+  const lister = await prisma.user.findUniqueOrThrow({ where: { email: EDITOR.email } });
   // A publisher starts as a seeker. The upgrade is what publishing does.
-  expect(lister.role).toBe('SEEKER');
+  expect(lister.role).toBe('USER');
 
   // --- 2. a draft, from the pin alone --------------------------------------
   const created = await request(app)
@@ -273,8 +273,8 @@ it('carries one listing from a dropped pin to an answered enquiry', async () => 
   // D67: the URL is claimed from the final title, once.
   expect(published.body.slug).toMatch(/^patna-a-bright-two-bedroom-near-golghar-/);
 
-  const upgraded = await prisma.user.findUniqueOrThrow({ where: { email: LISTER.email } });
-  expect(upgraded.role).toBe('LISTER');
+  const upgraded = await prisma.user.findUniqueOrThrow({ where: { email: EDITOR.email } });
+  expect(upgraded.role).toBe('EDITOR');
 
   const slug = published.body.slug as string;
 

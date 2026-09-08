@@ -336,7 +336,7 @@ export async function markEnquiryRead(
 }
 
 /**
- * Status is the LISTER's to set — it is their inbox being triaged.
+ * Status is the EDITOR's to set — it is their inbox being triaged.
  *
  * A seeker cannot mark their own enquiry as spam or closed, which would be a
  * way to hide it from the person it was sent to.

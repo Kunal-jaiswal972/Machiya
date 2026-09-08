@@ -46,10 +46,10 @@ export async function resetWorld(): Promise<ListingTestWorld> {
 
   const [owner, stranger, admin] = await Promise.all([
     prisma.user.create({
-      data: { email: 'owner@test.local', name: 'Owner', role: 'SEEKER', emailVerified: true },
+      data: { email: 'owner@test.local', name: 'Owner', role: 'USER', emailVerified: true },
     }),
     prisma.user.create({
-      data: { email: 'stranger@test.local', name: 'Stranger', role: 'LISTER', emailVerified: true },
+      data: { email: 'stranger@test.local', name: 'Stranger', role: 'EDITOR', emailVerified: true },
     }),
     prisma.user.create({
       data: { email: 'admin@test.local', name: 'Admin', role: 'ADMIN', emailVerified: true },
@@ -58,9 +58,9 @@ export async function resetWorld(): Promise<ListingTestWorld> {
 
   return {
     cityId: city.id,
-    // The owner starts as a SEEKER on purpose: publishing must upgrade them.
-    ownerSession: sessionFor(owner.id, 'SEEKER', owner.email),
-    strangerSession: sessionFor(stranger.id, 'LISTER', stranger.email),
+    // The owner starts as a USER on purpose: publishing must upgrade them.
+    ownerSession: sessionFor(owner.id, 'USER', owner.email),
+    strangerSession: sessionFor(stranger.id, 'EDITOR', stranger.email),
     adminSession: sessionFor(admin.id, 'ADMIN', admin.email),
   };
 }

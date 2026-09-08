@@ -61,7 +61,7 @@ export function UserMenu() {
         </Link>
       </Button>
 
-      {/* Offered to a SEEKER too, because publishing is what makes someone a
+      {/* Offered to a USER too, because publishing is what makes someone a
           lister — gating the entrance on the role they earn by walking through
           it is backwards. */}
       <Button variant="ghost" size="sm" asChild>

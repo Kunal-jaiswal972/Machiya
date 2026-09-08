@@ -2,16 +2,16 @@ import { userRoleSchema, type UserRole } from '../enums.js';
 
 /**
  * Roles, ordered. A higher rank implies every capability of the ranks below it,
- * which is what `hasAtLeastRole` encodes — so a route guarded for LISTER also
+ * which is what `hasAtLeastRole` encodes — so a route guarded for EDITOR also
  * admits ADMIN without listing it everywhere.
  */
 const ROLE_RANK: Record<UserRole, number> = {
-  SEEKER: 0,
-  LISTER: 1,
+  USER: 0,
+  EDITOR: 1,
   ADMIN: 2,
 };
 
-export const DEFAULT_ROLE: UserRole = 'SEEKER';
+export const DEFAULT_ROLE: UserRole = 'USER';
 export const ADMIN_ROLES: readonly UserRole[] = ['ADMIN'];
 
 export { userRoleSchema, type UserRole };

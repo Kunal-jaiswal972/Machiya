@@ -58,16 +58,16 @@ survive `down`, so nothing re-imports.
 
 All six use the password `devpass123`. Two of each role, because a single
 account per role can only prove that the owner is allowed in — the second one is
-what shows a lister cannot touch the other lister's listing.
+what shows an editor cannot touch the other editor's listing.
 
-| Account             | Role   | Use it for                                         |
-| ------------------- | ------ | -------------------------------------------------- |
-| `seeker@dev.local`  | SEEKER | The search, favourites, saved searches, enquiries  |
-| `seeker2@dev.local` | SEEKER | The other side of a seeker-scoped permission check |
-| `lister@dev.local`  | LISTER | The dashboard, the wizard, the enquiry inbox       |
-| `lister2@dev.local` | LISTER | Owns half the seeded stock; the cross-owner checks |
-| `admin@dev.local`   | ADMIN  | Moderation, coverage demand, scrape health, users  |
-| `admin2@dev.local`  | ADMIN  | Admin actions attributed to a second moderator     |
+| Account             | Role   | Use it for                                        |
+| ------------------- | ------ | ------------------------------------------------- |
+| `user@dev.local`    | USER   | The search, favourites, saved searches, enquiries |
+| `user2@dev.local`   | USER   | The other side of a user-scoped permission check  |
+| `editor@dev.local`  | EDITOR | The dashboard, the wizard, the enquiry inbox      |
+| `editor2@dev.local` | EDITOR | Owns half the seeded stock; cross-owner checks    |
+| `admin@dev.local`   | ADMIN  | Moderation, coverage demand, scrape health, users |
+| `admin2@dev.local`  | ADMIN  | Admin actions attributed to a second moderator    |
 
 The seed populates **Patna only** — 100 listings, an even rent/sale split, split
 across the two listers. Bengaluru and Pune are still covered (the OSM artifacts

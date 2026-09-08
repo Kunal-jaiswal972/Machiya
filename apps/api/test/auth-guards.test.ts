@@ -44,7 +44,7 @@ function guardedApp(resolve: SessionResolver): Express {
     res.json({ userId: sessionOf(req).userId });
   });
 
-  app.get('/lister-only', requireAuth(resolve), requireRole('LISTER'), (_req, res) => {
+  app.get('/lister-only', requireAuth(resolve), requireRole('EDITOR'), (_req, res) => {
     res.json({ ok: true });
   });
 
@@ -52,7 +52,7 @@ function guardedApp(resolve: SessionResolver): Express {
     res.json({ ok: true });
   });
 
-  app.get('/at-least-lister', requireAuth(resolve), requireMinRole('LISTER'), (_req, res) => {
+  app.get('/at-least-lister', requireAuth(resolve), requireMinRole('EDITOR'), (_req, res) => {
     res.json({ ok: true });
   });
 
@@ -64,7 +64,7 @@ function guardedApp(resolve: SessionResolver): Express {
   });
 
   // No requireAuth in front — a route wired wrongly must fail loudly.
-  app.get('/misconfigured', requireRole('LISTER'), (_req, res) => {
+  app.get('/misconfigured', requireRole('EDITOR'), (_req, res) => {
     res.json({ ok: true });
   });
 
@@ -81,14 +81,14 @@ describe('requireAuth', () => {
   });
 
   it('admits a valid session and exposes it to the handler', async () => {
-    const response = await request(guardedApp(asRole('SEEKER'))).get('/protected');
+    const response = await request(guardedApp(asRole('USER'))).get('/protected');
 
     expect(response.status).toBe(200);
-    expect(response.body.userId).toBe('user-seeker');
+    expect(response.body.userId).toBe('user-user');
   });
 
   it('rejects a banned account with 403 even though the session is valid', async () => {
-    const response = await request(guardedApp(asRole('LISTER', { banned: true }))).get(
+    const response = await request(guardedApp(asRole('EDITOR', { banned: true }))).get(
       '/protected',
     );
 
@@ -110,14 +110,14 @@ describe('requireAuth', () => {
 
 describe('requireRole', () => {
   it('rejects the wrong role with 403', async () => {
-    const response = await request(guardedApp(asRole('SEEKER'))).get('/lister-only');
+    const response = await request(guardedApp(asRole('USER'))).get('/lister-only');
 
     expect(response.status).toBe(403);
     expect(response.body.error.code).toBe('forbidden_role');
   });
 
   it('admits the named role', async () => {
-    const response = await request(guardedApp(asRole('LISTER'))).get('/lister-only');
+    const response = await request(guardedApp(asRole('EDITOR'))).get('/lister-only');
     expect(response.status).toBe(200);
   });
 
@@ -127,7 +127,7 @@ describe('requireRole', () => {
   });
 
   it('still rejects a lister from an admin-only route', async () => {
-    const response = await request(guardedApp(asRole('LISTER'))).get('/admin-only');
+    const response = await request(guardedApp(asRole('EDITOR'))).get('/admin-only');
     expect(response.status).toBe(403);
   });
 
@@ -141,8 +141,8 @@ describe('requireRole', () => {
 
 describe('requireMinRole', () => {
   it('admits equal and higher ranks and rejects lower ones', async () => {
-    const seeker = await request(guardedApp(asRole('SEEKER'))).get('/at-least-lister');
-    const lister = await request(guardedApp(asRole('LISTER'))).get('/at-least-lister');
+    const seeker = await request(guardedApp(asRole('USER'))).get('/at-least-lister');
+    const lister = await request(guardedApp(asRole('EDITOR'))).get('/at-least-lister');
     const admin = await request(guardedApp(asRole('ADMIN'))).get('/at-least-lister');
 
     expect(seeker.status).toBe(403);
@@ -153,12 +153,12 @@ describe('requireMinRole', () => {
 
 describe('assertOwnership', () => {
   it('lets an owner change their own resource', async () => {
-    const response = await request(guardedApp(asRole('LISTER'))).patch('/listings/user-lister');
+    const response = await request(guardedApp(asRole('EDITOR'))).patch('/listings/user-editor');
     expect(response.status).toBe(200);
   });
 
   it('rejects a different signed-in user with 403', async () => {
-    const response = await request(guardedApp(asRole('LISTER'))).patch('/listings/someone-else');
+    const response = await request(guardedApp(asRole('EDITOR'))).patch('/listings/someone-else');
 
     expect(response.status).toBe(403);
     expect(response.body.error.code).toBe('forbidden_owner');
@@ -171,7 +171,7 @@ describe('assertOwnership', () => {
 
   it('does not treat a matching id from a lower role as authority on its own', async () => {
     // A seeker owning the row is still the owner: role does not gate ownership.
-    const response = await request(guardedApp(asRole('SEEKER'))).patch('/listings/user-seeker');
+    const response = await request(guardedApp(asRole('USER'))).patch('/listings/user-user');
     expect(response.status).toBe(200);
   });
 });

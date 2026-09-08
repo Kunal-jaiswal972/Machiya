@@ -56,7 +56,7 @@ beforeEach(async () => {
   });
 
   const owner = await prisma.user.create({
-    data: { email: 'owner@test.local', name: 'Owner', role: 'LISTER', emailVerified: true },
+    data: { email: 'owner@test.local', name: 'Owner', role: 'EDITOR', emailVerified: true },
   });
 
   const listing = await prisma.listing.create({

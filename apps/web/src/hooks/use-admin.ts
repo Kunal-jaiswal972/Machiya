@@ -96,13 +96,7 @@ export function useAdminUserActions() {
   });
 
   const setRole = useMutation({
-    mutationFn: async ({
-      userId,
-      role,
-    }: {
-      userId: string;
-      role: 'SEEKER' | 'LISTER' | 'ADMIN';
-    }) => {
+    mutationFn: async ({ userId, role }: { userId: string; role: 'USER' | 'EDITOR' | 'ADMIN' }) => {
       assertOk(await authClient.admin.setRole({ userId, role }));
     },
     onSuccess: refresh,

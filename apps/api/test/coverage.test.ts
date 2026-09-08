@@ -32,14 +32,14 @@ const KORAMANGALA = { lat: 12.9352, lng: 77.6245 };
 function sessionFor(id: string): RequestSession {
   return {
     userId: id,
-    role: 'LISTER',
+    role: 'EDITOR',
     email: 'lister@test.local',
     user: {
       id,
       email: 'lister@test.local',
       name: 'Lister',
       emailVerified: true,
-      role: 'LISTER',
+      role: 'EDITOR',
       banned: false,
     },
   } as RequestSession;
@@ -84,7 +84,7 @@ beforeAll(async () => {
   }
 
   const user = await prisma.user.create({
-    data: { email: 'lister@test.local', name: 'Lister', role: 'LISTER', emailVerified: true },
+    data: { email: 'lister@test.local', name: 'Lister', role: 'EDITOR', emailVerified: true },
   });
   session = sessionFor(user.id);
 });

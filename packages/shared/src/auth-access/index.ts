@@ -61,8 +61,8 @@ const ADMIN_STATEMENTS = {
 const NO_STATEMENTS = { user: [], session: [] } as const;
 
 export const roles = {
-  SEEKER: ac.newRole(NO_STATEMENTS),
-  LISTER: ac.newRole(NO_STATEMENTS),
+  USER: ac.newRole(NO_STATEMENTS),
+  EDITOR: ac.newRole(NO_STATEMENTS),
   ADMIN: ac.newRole(ADMIN_STATEMENTS),
 };
 

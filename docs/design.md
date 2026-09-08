@@ -261,7 +261,7 @@ case.
 work was not lost.
 
 **Enum-shaped words get written out.** `SEMI_FURNISHED` is "Semi furnished",
-`CNG` is "CNG" and not "Cng", `SEEKER` is a renter. A slug is never a label:
+`CNG` is "CNG" and not "Cng", `USER` is a renter. A slug is never a label:
 `patna` is Patna.
 
 The check that keeps this true: no user-visible string contains a file path, a

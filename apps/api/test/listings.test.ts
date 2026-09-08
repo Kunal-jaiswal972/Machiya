@@ -306,7 +306,7 @@ describe('publishing', () => {
     expect(result.roleUpgraded).toBe(true);
 
     const user = await prisma.user.findUniqueOrThrow({ where: { id: world.ownerSession.userId } });
-    expect(user.role).toBe('LISTER');
+    expect(user.role).toBe('EDITOR');
   });
 
   it('does not re-upgrade a user who is already a lister', async () => {
@@ -329,7 +329,7 @@ describe('publishing', () => {
     const user = await prisma.user.findUniqueOrThrow({
       where: { id: world.strangerSession.userId },
     });
-    expect(user.role).toBe('LISTER');
+    expect(user.role).toBe('EDITOR');
   });
 
   it('refuses to publish a rental with no rent', async () => {
@@ -373,7 +373,7 @@ describe('publishing', () => {
     });
 
     const user = await prisma.user.findUniqueOrThrow({ where: { id: world.ownerSession.userId } });
-    expect(user.role).toBe('SEEKER');
+    expect(user.role).toBe('USER');
   });
 
   it('keeps the original publishedAt when re-published after a pause', async () => {

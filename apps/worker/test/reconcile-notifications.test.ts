@@ -50,7 +50,7 @@ async function resetWorld(): Promise<void> {
       data: { email: 'seeker@test.local', name: 'Seeker', emailVerified: true },
     }),
     prisma.user.create({
-      data: { email: 'lister@test.local', name: 'Lister', role: 'LISTER', emailVerified: true },
+      data: { email: 'lister@test.local', name: 'Lister', role: 'EDITOR', emailVerified: true },
     }),
   ]);
 

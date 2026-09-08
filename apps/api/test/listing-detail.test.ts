@@ -71,7 +71,7 @@ async function seedOneListing(options: { status?: 'PUBLISHED' | 'DRAFT' } = {}) 
   });
 
   const owner = await prisma.user.create({
-    data: { email: 'owner@test.local', name: 'Owner', role: 'LISTER', emailVerified: true },
+    data: { email: 'owner@test.local', name: 'Owner', role: 'EDITOR', emailVerified: true },
   });
   ownerId = owner.id;
 

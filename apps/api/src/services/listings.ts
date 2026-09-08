@@ -482,7 +482,7 @@ export async function changeStatus(
 
   // A seeker becomes a lister the first time they publish. Done in the same
   // transaction as the publish so the two can never disagree.
-  const roleUpgraded = session.role === 'SEEKER';
+  const roleUpgraded = session.role === 'USER';
 
   // A draft opened from a pin has a placeholder slug and no public URL yet, so
   // this is the one moment it can be named from the title the lister settled
@@ -505,7 +505,7 @@ export async function changeStatus(
     });
 
     if (roleUpgraded) {
-      await tx.user.update({ where: { id: session.userId }, data: { role: 'LISTER' } });
+      await tx.user.update({ where: { id: session.userId }, data: { role: 'EDITOR' } });
     }
   });
 

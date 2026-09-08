@@ -22,19 +22,19 @@ import { cn } from '../../lib/utils';
  * until the cookie expired.
  */
 /**
- * What each role is called on screen. `SEEKER` is a column value, not a word
+ * What each role is called on screen. `USER` is a column value, not a word
  * anyone says.
  */
 const ROLE_LABELS: Record<(typeof USER_ROLES)[number], string> = {
-  SEEKER: 'Renter',
-  LISTER: 'Owner',
+  USER: 'Renter',
+  EDITOR: 'Owner',
   ADMIN: 'Admin',
 };
 
 /** What the change lets them do, which is what the confirmation should say. */
 const ROLE_ACTION: Record<(typeof USER_ROLES)[number], string> = {
-  SEEKER: 'search and save places',
-  LISTER: 'list properties',
+  USER: 'search and save places',
+  EDITOR: 'list properties',
   ADMIN: 'moderate everything',
 };
 

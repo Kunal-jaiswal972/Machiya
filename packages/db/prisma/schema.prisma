@@ -34,8 +34,8 @@ datasource db {
 }
 
 enum UserRole {
-  SEEKER
-  LISTER
+  USER
+  EDITOR
   ADMIN
 }
 
@@ -173,7 +173,7 @@ model User {
   emailVerified Boolean  @default(false)
   name          String
   avatarUrl     String?
-  role          UserRole @default(SEEKER)
+  role          UserRole @default(USER)
 
   phone           String?
   isPhoneVerified Boolean @default(false)

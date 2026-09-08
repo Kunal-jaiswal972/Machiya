@@ -125,7 +125,7 @@ async function seedListings(slugs: string[]): Promise<void> {
   });
 
   const owner = await prisma.user.create({
-    data: { email: 'lister@test.local', name: 'Lister', emailVerified: true, role: 'LISTER' },
+    data: { email: 'lister@test.local', name: 'Lister', emailVerified: true, role: 'EDITOR' },
   });
 
   // Every column the `listing_complete_when_live` CHECK requires of a non-DRAFT
