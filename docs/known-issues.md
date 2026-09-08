@@ -53,6 +53,13 @@ tier — are closed by D67, D72, D75 and D74.
 found`. Use `docker compose --profile geo up -d` / `down` for both directions,
   and `--profile geo rm -sf` before `up` if containers are already stranded.
   ([D89](../DECISIONS.md#d89--the-geo-profile-goes-up-and-down-with-the-stack-not-beside-it))
+- **`docker run -v <name>:...` creates a named volume that does not exist.** So
+  a read-only probe silently produced an empty, unlabelled volume and every
+  later compose command warned `already exists but was not created by Docker
+Compose`. Both probes now check `docker volume inspect` first. A volume
+  already in that state is cosmetic — `down -v` still removes it (verified with
+  `--dry-run`) — and clears itself on the next recreate.
+  ([D84](../DECISIONS.md#d84--the-import-stamp-records-an-import-not-an-answer))
 - **A compose change does not reap the volume it stops mounting.** Removing the
   Nominatim flatnode mount left a 113 GB `flatnode.file` on disk, unreferenced
   by any container and invisible to `docker compose`. `docker volume ls` after

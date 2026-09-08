@@ -71,6 +71,15 @@ function sha256File(path: string): string {
  */
 function readFromVolume(volume: string, path: string): string | null {
   try {
+    // Existence first, and NOT as part of the same command: `docker run -v
+    // <name>:...` creates a named volume that does not exist, so reading from a
+    // volume that was never built used to leave an empty, unlabelled one behind
+    // and make every later compose command warn about it. A status report must
+    // not create the thing it reports on.
+    execFileSync('docker', ['volume', 'inspect', volume], {
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+
     return execFileSync(
       'docker',
       ['run', '--rm', '-v', `${volume}:/v:ro`, 'busybox:1.37', 'cat', `/v${path}`],

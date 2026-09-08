@@ -297,12 +297,19 @@ info "extract sha256 $MERGED_SHA"
 # `import-finished` in the cluster directory, Overpass `init_done` at the root of
 # its home. Both are in-volume, so they cannot disagree with the data the way a
 # host-side file can. A throwaway busybox is the only portable way to look.
+# Existence is checked with `volume inspect` BEFORE mounting, because
+# `docker run -v <name>:...` CREATES a named volume that does not exist — so a
+# probe written as one command left an empty, unlabelled volume behind, and
+# every later compose command warned that it "already exists but was not created
+# by Docker Compose". A read must not create what it reads.
+#
 # MSYS_NO_PATHCONV for the same reason the osmium helper above needs it: Git
 # Bash rewrites a bare `/v/...` argument into a Windows path and the test then
 # fails inside the container rather than reporting the file missing — which
 # looked exactly like "no import present" and stamped every run as a fresh
 # import.
 import_present() {
+  docker volume inspect "$1" >/dev/null 2>&1 || return 1
   MSYS_NO_PATHCONV=1 docker run --rm -v "$1:/v:ro" busybox:1.37 test -f "/v/$2" >/dev/null 2>&1
 }
 

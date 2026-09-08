@@ -2778,6 +2778,17 @@ stamp unchanged` — untouched, which is the point
 - afterwards both rows read `ok`, and `/api/listings/:slug/pois` answered 200 in
   0.035s with real named hospitals
 
+`import_present` checks `docker volume inspect` before mounting, because
+`docker run -v <name>:/v` **creates** a named volume that does not exist. Written
+as one command, the probe left an empty unlabelled volume behind, and every later
+compose command warned `already exists but was not created by Docker Compose` —
+a read with a side effect, and the side effect was creating the thing being read.
+`readFromVolume` in `geo-status.ts` had the same shape and the same fix. Verified:
+probing an absent volume returns "absent" and `docker volume inspect` still finds
+nothing afterwards. The already-affected volume is cosmetic rather than an
+orphan — `docker compose --profile geo --dry-run down -v` lists it among the six
+it removes.
+
 A detail that cost a run: `import_present` needs `MSYS_NO_PATHCONV=1`. Git Bash
 rewrites a bare `/v/import-finished` argument to `V:/import-finished`, so the
 test failed inside the container and every service looked un-imported — which
