@@ -44,6 +44,21 @@ tier — are closed by D67, D72, D75 and D74.
   with tier 2 untested — the skip is loud in the output, and it is still a skip.
   ([D74](../DECISIONS.md#d74-a-live-test-that-reads-from-cache-is-not-a-live-test))
 
+## Operational traps
+
+- **Bring the geo profile up and down with the same flag.** A bare
+  `docker compose down` removes only the eight default-profile containers and
+  then tries to remove the network the five geo containers are still attached
+  to; they are left holding a dead network id and die `exit=137, network … not
+found`. Use `docker compose --profile geo up -d` / `down` for both directions,
+  and `--profile geo rm -sf` before `up` if containers are already stranded.
+  ([D89](../DECISIONS.md#d89--the-geo-profile-goes-up-and-down-with-the-stack-not-beside-it))
+- **A compose change does not reap the volume it stops mounting.** Removing the
+  Nominatim flatnode mount left a 113 GB `flatnode.file` on disk, unreferenced
+  by any container and invisible to `docker compose`. `docker volume ls` after
+  changing a `volumes:` block.
+  ([D26](../DECISIONS.md#d26))
+
 ## Not issues, recorded so they stop being rediscovered
 
 - A **locally-answered autocomplete query is the fast path, not a degraded

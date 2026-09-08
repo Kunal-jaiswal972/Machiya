@@ -133,9 +133,15 @@ latency — is better served locally by tier 1 above. Full reasoning: D26.
 | Overpass  | `wiktorn/overpass-api:v0.7.62.11`, `geo` profile | mirrors (NOT `overpass-api.de`) | fallback only; ~10k queries/day, 429s under load | New `PoiProvider`                                     |
 | Tiles     | not self-hosted                                  | `tiles.openfreemap.org`         | Free, no key, fair use                           | `VITE_MAP_STYLE_URL`                                  |
 
-`NOMINATIM_USER_AGENT` must carry a real contact address **before** pointing
-`NOMINATIM_URL` at the public instance — it rejects requests without one, and
-the policy is the price of the free tier.
+`GEO_USER_AGENT` must carry a real contact **before** pointing `NOMINATIM_URL`
+at the public instance — it rejects requests without one, and the policy is the
+price of the free tier. The default is a repository URL, which qualifies; the
+old `contact@example.com` placeholder did not, and 403s.
+
+One variable, three callers: Nominatim, Overpass (which answers 406 without a
+descriptive agent) and `scripts/fetch-city-boundaries.ts`. It was called
+`NOMINATIM_USER_AGENT`, which named only the first of them; the old name is
+still honoured so an existing `.env` keeps working. See DECISIONS.md D87.
 
 **There is no public-OSRM fallback, and the two variables that implied one are
 gone.** `ALLOW_PUBLIC_OSRM` and `PUBLIC_OSRM_URL` were declared in the API's

@@ -21,20 +21,38 @@ so on Apple silicon they run emulated — fine, just slower to build the graphs.
 ## Get running
 
 ```bash
-pnpm install && cp .env.example .env
+pnpm install
+pnpm bootstrap            # creates .env, generates its secrets, builds the OSM artifacts
 docker compose up -d postgis redis minio minio-init mailhog
 pnpm seed:photos && pnpm db:deploy && pnpm db:seed
 pnpm dev
 ```
 
-Then open http://localhost:5173. Routing, geocoding and POIs need a one-time
-[`pnpm bootstrap`](docs/setup.md#routing-and-geocoding) — the app runs without
-it, and says so rather than failing.
+Then open http://localhost:5173. `pnpm bootstrap` is once per machine and takes
+around 40 minutes, almost all of it OSRM graph builds and two imports; skip it
+and the app still runs, it just says routing, geocoding and POIs are unavailable
+rather than failing.
 
-Name the services in every `docker compose up`. A bare `docker compose up -d`
-also starts `api`, `worker` and `web` from previously built images, which take
-the ports `pnpm dev` wants and then serve stale code — see
-[docs/setup.md](docs/setup.md#compose-profiles).
+Name the services in every `docker compose up` **when you are using `pnpm
+dev`**. A bare `docker compose up -d` also starts `api`, `worker` and `web` from
+previously built images, which take the ports `pnpm dev` wants and then serve
+stale code — see [docs/setup.md](docs/setup.md#compose-profiles).
+
+## Or run the whole stack in Docker
+
+No `pnpm dev`, no host processes — thirteen containers, the app on
+http://localhost:8080:
+
+```bash
+docker compose --profile geo up -d      # start all 13
+docker compose --profile geo down       # stop and remove all 13
+```
+
+The flag belongs on **both**. A bare `down` removes only the eight
+default-profile containers and then tears out the network the geo five are still
+using, which kills them with `network … not found`; if that has already
+happened, `docker compose --profile geo rm -sf` before starting again. Volumes
+survive `down`, so nothing re-imports.
 
 ## Dev accounts
 

@@ -380,10 +380,20 @@ because both fail slowly and invisibly:
 /var/lib/postgresql/*/main'`), so `nominatim-data:/var/lib/postgresql/16/main`
   really is the right mount. Mounted anywhere else, the volume holds nothing and
   the whole import repeats on every recreate.
-- the `nominatim-flatnode` volume was mounted at `/nominatim/flatnode` while
-  `FLATNODE_FILE` was never set, so it was inert — a knob that looked configured
-  and was not. Deleted; three city extracts are nowhere near large enough to
-  need a flatnode file.
+- the `nominatim-flatnode` volume was mounted at `/nominatim/flatnode` and is
+  gone from the compose file; three city extracts are nowhere near large enough
+  to need a flatnode file.
+
+  This entry used to say the mount was **inert** because `FLATNODE_FILE` was
+  never set. That was wrong, and the correction is worth keeping: the volume was
+  later found holding a single `flatnode.file` of **113 GB**, written the day
+  the stack was first brought up. Nominatim preallocates a flatnode file sized
+  for planet-wide node ids, so something did set the path — an unset variable
+  cannot explain a 113 GB file. The removal was still right; the reasoning
+  recorded for it was not, and the volume it stranded survived every later
+  `compose up` unreferenced and unnoticed until `docker system df -v` reported
+  94% of all volume bytes as reclaimable. **Removing a mount does not remove the
+  volume.** Indexed in docs/known-issues.md.
 
 The OSRM services were pinned to `platform: linux/amd64` at the same time.
 `docker manifest inspect --verbose osrm/osrm-backend:v5.25.0` returns a single
@@ -2935,3 +2945,46 @@ generates both; a second run reports `skip: … already set` and leaves the valu
 identical; a user-chosen value survives; an absent key is appended; and every
 other line of a 193-line file diffs clean. Then on this machine: an existing
 `BETTER_AUTH_SECRET` was kept and only `INTERNAL_REQUEST_TOKEN` was generated.
+
+## D89 — The geo profile goes up and down with the stack, not beside it
+
+Symptom, reported as a performance problem: the web app slow, listings slow,
+POIs saying "could not refresh". None of it was performance. `docker inspect` on
+the two dead containers:
+
+```
+exit=137  OOMKilled=false
+err=failed to set up container networking: network 07a1d30c… not found
+```
+
+Not memory — `OOMKilled` is false on both. The compose network had been removed
+from under the running geo services, and 137 is the SIGKILL that followed.
+
+The cause is that `profiles:` is honoured asymmetrically by `up` and `down`,
+which is easy to miss. Verified with `--dry-run` on Compose v5.1.4 rather than
+reasoned about:
+
+| command               | containers                    | network                                 |
+| --------------------- | ----------------------------- | --------------------------------------- |
+| `up -d`               | 8 (default profile only)      | created                                 |
+| `--profile geo up -d` | 13 (default **and** geo)      | created                                 |
+| `down`                | **8** — the geo five are left | `Removing` → `Resource is still in use` |
+| `--profile geo down`  | 13                            | removed                                 |
+
+So starting the stack as two commands and stopping it with one bare `down`
+orphans the geo half onto a network that is then torn out. The app does not
+crash — it is built to run without the geo services and say so (D6) — so the
+API instead blocks on geo calls with `OVERPASS_MAX_TIMEOUT` at 180s, which
+presents as "slow" and as the cache's honest `stale` note. Both symptoms were
+downstream of a half-dead stack, and neither pointed at the network.
+
+Recovery needs the containers removed, not just started: an exited container
+keeps the old network id, so `up` fails again with the same error until
+`--profile geo rm -sf` clears them. Volumes are untouched by `rm`, so nothing
+re-imports.
+
+The documented pair is therefore `docker compose --profile geo up -d` and
+`docker compose --profile geo down` — the flag on **both**, or neither half is
+safe. README and docs/setup.md say so, and the earlier advice to name services
+explicitly is kept where it belongs: it exists for `pnpm dev`, which wants
+infrastructure without api/worker/web taking ports 4000, 4100 and 8080.

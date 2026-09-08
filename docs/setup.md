@@ -20,9 +20,8 @@ compose profile is not behaving.
 
 ```bash
 pnpm install
-cp .env.example .env
+pnpm bootstrap                       # .env + secrets, OSM cuts, OSRM graphs, Nominatim + Overpass
 docker compose up -d postgis redis minio minio-init mailhog
-pnpm bootstrap                       # OSM cuts, OSRM graphs, Nominatim + Overpass
 docker compose --profile geo up -d nominatim overpass osrm-car osrm-bike   # NAME them — see below
 pnpm seed:photos                     # fetches the seed photographs (see below)
 pnpm db:deploy                       # apply migrations
@@ -71,11 +70,25 @@ https://unsplash.com/oauth/applications. See DECISIONS.md D31.
 ## Environment
 
 `.env.example` is the reference and every value in it has a working local
-default. Copy it to `.env`; nothing in it is a real secret.
+default. Nothing in it is a real secret.
 
-The one variable with no usable default is `BETTER_AUTH_SECRET` — compose fails
-fast with `set BETTER_AUTH_SECRET in .env` rather than starting an API that
-signs forgeable cookies. Generate one with `openssl rand -base64 32`.
+**`pnpm bootstrap` writes `.env` for you.** It copies `.env.example` when `.env`
+is absent, then generates the two values that must be random —
+`BETTER_AUTH_SECRET` and `INTERNAL_REQUEST_TOKEN` — with `openssl rand -base64
+32`. Re-running never overwrites a value you chose, so it is safe on an existing
+file; regenerating the auth secret would invalidate every local session. Keys for
+outside services (`UNSPLASH_ACCESS_KEY`) are deliberately left empty, because
+nothing can generate those. See DECISIONS.md D88.
+
+`BETTER_AUTH_SECRET` is the one with no usable default — compose fails fast with
+`set BETTER_AUTH_SECRET in .env` rather than starting an API that signs
+forgeable cookies.
+
+`INTERNAL_REQUEST_TOKEN` exempts internal traffic — currently just the POI cache
+warm — from the API's 300/minute per-IP rate limit, and must match between `api`
+and `worker`. Empty exempts nothing, which is a valid configuration: the warm
+then lives inside the same budget as anybody else. It is not a credential and
+grants no authorization (D86).
 
 Prisma 7 does **not** load `.env` itself. `prisma.config.ts` at the repo root
 loads it, resolved from that file's own directory rather than the current one, so
@@ -84,19 +97,49 @@ D5.
 
 ## Compose profiles
 
-| Command                                                                    | Brings up                                       |
-| -------------------------------------------------------------------------- | ----------------------------------------------- |
-| `docker compose up -d postgis redis minio minio-init mailhog`              | just the infrastructure — what `pnpm dev` needs |
-| `docker compose --profile geo up -d nominatim overpass osrm-car osrm-bike` | the geo services, and nothing else              |
-| `docker compose up -d`                                                     | ALL of the above **plus api, worker and web**   |
+| Command                                                                    | Brings up                                                              |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `docker compose up -d postgis redis minio minio-init mailhog`              | just the infrastructure — what `pnpm dev` needs                        |
+| `docker compose --profile geo up -d nominatim overpass osrm-car osrm-bike` | the geo services, and nothing else                                     |
+| `docker compose up -d`                                                     | the 8 default-profile services: the above **plus api, worker and web** |
+| `docker compose --profile geo up -d`                                       | all 13 — the whole stack in Docker                                     |
 
-**Always name the services.** `docker compose --profile geo up -d` with no
-service names does not "add the geo services" — it starts the named profile
-**and** the default one, so it also brings up `api`, `worker` and `web` from
-whatever images were last built. Those containers publish 4000, 4100 and 8080,
-so a `pnpm dev` started alongside loses the race for port 4000 and dies, and the
-browser talks to a stale image instead. The symptom is a 404 from routes that
-exist in your working tree:
+### Running everything in Docker
+
+```bash
+docker compose --profile geo up -d      # start all 13
+docker compose --profile geo down       # stop and remove all 13
+```
+
+`--profile geo` on **both**, because `up` and `down` honour profiles
+asymmetrically. A bare `down` removes only the eight default-profile containers
+and then tries to remove the network the geo five are still attached to, leaving
+them holding a dead network id: they die `exit=137, network … not found`, and
+the next `up` fails with the same error until the stale containers are cleared.
+
+```bash
+docker compose --profile geo rm -sf     # only if containers are already stranded
+```
+
+`rm` without `-v` touches containers only, so imports and graphs survive. Two
+init services (`minio-init`, `osrm-init`) run once and exit 0, which is why `ps`
+shows eleven running rather than thirteen.
+
+Wait for `nominatim` to leave `health: starting` — 30-60s with an intact volume —
+before judging the app. While it or Overpass is still coming up, the API blocks
+on geo calls (`OVERPASS_MAX_TIMEOUT` is 180s) and the result reads as slow
+listings and "could not refresh" POIs. See
+[D89](../DECISIONS.md#d89--the-geo-profile-goes-up-and-down-with-the-stack-not-beside-it).
+
+### Naming services, and when it matters
+
+**Name the services when you are using `pnpm dev`.** `docker compose --profile
+geo up -d` with no service names does not "add the geo services" — it starts the
+named profile **and** the default one, so it also brings up `api`, `worker` and
+`web` from whatever images were last built. Those containers publish 4000, 4100
+and 8080, so a `pnpm dev` started alongside loses the race for port 4000 and
+dies, and the browser talks to a stale image instead. The symptom is a 404 from
+routes that exist in your working tree:
 
 ```
 {"error":{"code":"not_found","message":"No route for GET /api/places/reverse"}}

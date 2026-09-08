@@ -34,6 +34,7 @@ is not in the API.
 | `image-cleanup`          | hourly at :17      | `IMAGE_CLEANUP_CRON`           | Sweeps abandoned uploads and orphaned originals |
 | `image-reconcile`        | every 60 s         | `IMAGE_RECONCILE_INTERVAL_MS`  | Drains `PENDING` rows nothing is processing     |
 | `notification-reconcile` | every 120 s        | `NOTIFY_RECONCILE_INTERVAL_MS` | Sends enquiry mail the enqueue missed           |
+| `poi-warm`               | every 300 s        | `POI_WARM_INTERVAL_MS`         | Fills the POI cache for published listings      |
 
 Both reconcilers use `every` rather than a cron pattern: cron's finest
 granularity is a minute anyway, and `every` keeps the interval honest across
@@ -45,6 +46,34 @@ invisible to everyone, so nobody is waiting and the scan can be cheaper (D68).
 
 Schedules are registered with `upsertJobScheduler`, so a restart does not
 duplicate them and a changed cadence takes effect on the next boot.
+
+### The POI warm
+
+POIs are the only derived geo product that can be precomputed: a listing's POI
+set is centred on the listing, so every key is known before anyone visits. A
+route is keyed by the office pin the user drags, so it cannot be (D86).
+
+The job is gated on the geo epoch through the Redis key `poi-warm:epoch`, so
+almost every tick reads one key and stops. A rebuild moves the epoch, the gate
+opens once, and a complete clean pass closes it — a partial pass deliberately
+leaves it open rather than stranding the listings it missed until the next
+rebuild.
+
+It calls the API's own `/api/listings/:slug/pois`, so the keys it fills are
+exactly the ones the request path reads. That means it spends the API's
+300/minute per-IP rate limit: `POI_WARM_DELAY_MS` defaults to 500 ms to stay at
+about 40% of that budget, and a 429 stops the pass rather than counting as a
+failure. Set `INTERNAL_REQUEST_TOKEN` on both `api` and `worker` to exempt it
+from the limiter entirely; empty exempts nothing.
+
+To force a re-warm:
+
+```bash
+docker compose exec redis redis-cli del poi-warm:epoch
+```
+
+The next tick picks it up. On the seeded three cities a full pass is 116
+requests and finishes in about a minute.
 
 ## Failure modes
 
