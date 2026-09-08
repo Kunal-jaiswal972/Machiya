@@ -13,6 +13,7 @@ import {
 import { reconcileImages } from './jobs/reconcile-images.js';
 import { reconcileNotifications } from './jobs/reconcile-notifications.js';
 import { scrapeFuelPrices } from './jobs/scrape-fuel-prices.js';
+import { warmPois } from './jobs/warm-pois.js';
 import { logger } from './logger.js';
 import { closeMailer } from './lib/mailer.js';
 import { closeWorkerRedis } from './lib/redis.js';
@@ -125,6 +126,14 @@ const maintenanceWorker = createWorker(
       return await reconcileNotifications(notificationsQueue);
     }
 
+    if (job.name === 'warm-pois') {
+      // Gated on the geo epoch, so this is a no-op reading one Redis key on
+      // almost every tick. See DECISIONS.md D86.
+      const result = await warmPois();
+      if (result.requested > 0) logger.info(result, 'POI warm ran');
+      return result;
+    }
+
     return undefined;
   },
   connection,
@@ -164,12 +173,19 @@ async function registerSchedules(): Promise<void> {
     { name: 'reconcile-notifications' },
   );
 
+  await maintenanceQueue.upsertJobScheduler(
+    'poi-warm',
+    { every: env.POI_WARM_INTERVAL_MS },
+    { name: 'warm-pois' },
+  );
+
   logger.info(
     {
       fuel: env.FUEL_SCRAPE_CRON,
       imageCleanup: env.IMAGE_CLEANUP_CRON,
       imageReconcileMs: env.IMAGE_RECONCILE_INTERVAL_MS,
       notifyReconcileMs: env.NOTIFY_RECONCILE_INTERVAL_MS,
+      poiWarmMs: env.POI_WARM_INTERVAL_MS,
     },
     'schedules registered',
   );

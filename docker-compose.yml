@@ -153,6 +153,12 @@ services:
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:4000}
       AUTH_TRUSTED_ORIGINS: ${AUTH_TRUSTED_ORIGINS:-http://localhost:5173}
       GEOCODE_PROVIDER: ${GEOCODE_PROVIDER:-nominatim}
+      # Sent to Nominatim and Overpass alike; the public instances of both
+      # reject a placeholder agent, so this matters on the fallback paths only.
+      GEO_USER_AGENT: ${GEO_USER_AGENT:-MachiyaBot/0.1 (+https://github.com/Kunal-jaiswal972/Machiya; geocoding and POI lookups)}
+      # Exempts internal traffic from the 300/minute per-IP limiter. Empty
+      # exempts nothing, which is the safe default; must match the worker's.
+      INTERNAL_REQUEST_TOKEN: ${INTERNAL_REQUEST_TOKEN:-}
       NOMINATIM_URL: http://nominatim:8080
       OSRM_CAR_URL: http://osrm-car:5000
       OSRM_BIKE_URL: http://osrm-bike:5000
@@ -213,6 +219,22 @@ services:
       S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
       S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       S3_FORCE_PATH_STYLE: 'true'
+      # The POI warm calls the API's own endpoint so the keys it fills are the
+      # ones the request path reads (D86). Service name, not localhost: the
+      # worker is a different container.
+      API_INTERNAL_URL: http://api:4000
+      # Every 5 minutes, and a no-op reading one Redis key unless the geo epoch
+      # has moved. Raise it and a rebuild's cold POI cache stays cold longer.
+      POI_WARM_INTERVAL_MS: ${POI_WARM_INTERVAL_MS:-300000}
+      # Pause between warm requests. Sized against the API's own 300/minute
+      # per-IP limiter rather than against Overpass: at 250ms the warm spends
+      # 80% of that budget. A 429 stops the pass and leaves the gate open.
+      POI_WARM_DELAY_MS: ${POI_WARM_DELAY_MS:-500}
+      # Names the warm in the API's access log. Buys no rate-limit exemption:
+      # a forgeable header must not be able to opt out of a limiter.
+      POI_WARM_USER_AGENT: ${POI_WARM_USER_AGENT:-MachiyaBot/0.1 (+https://github.com/Kunal-jaiswal972/Machiya; internal POI cache warm)}
+      # Must match the api's. Empty on both sides means no exemption.
+      INTERNAL_REQUEST_TOKEN: ${INTERNAL_REQUEST_TOKEN:-}
       IMAGE_CONCURRENCY: ${IMAGE_CONCURRENCY:-3}
       KEEP_ORIGINALS: ${KEEP_ORIGINALS:-false}
       IMAGE_CLEANUP_CRON: ${IMAGE_CLEANUP_CRON:-17 * * * *}

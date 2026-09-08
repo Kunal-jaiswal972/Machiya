@@ -78,8 +78,40 @@ const envSchema = z.object({
    */
   GEOCODE_PROVIDER: z.enum(['nominatim']).default('nominatim'),
   NOMINATIM_URL: z.string().url().default('http://localhost:7070'),
-  /** Sent to the public instance, which rejects requests without a real one. */
-  NOMINATIM_USER_AGENT: z.string().min(1).default('Machiya/0.1 (contact@example.com)'),
+  /**
+   * Sent to every geo service this app calls out to, not just Nominatim.
+   *
+   * The public Nominatim instance rejects requests without a real contact
+   * address, and overpass-api.de answers 406 Not Acceptable without a
+   * descriptive User-Agent (D42) — so on the fallback paths this is load-bearing
+   * rather than decorative. It was called NOMINATIM_USER_AGENT while Overpass
+   * read it too, which meant the knob governing the Overpass fallback was named
+   * after a different service and documented in a different section. The old
+   * name still works; see DECISIONS.md D87.
+   */
+  GEO_USER_AGENT: z
+    .string()
+    .min(1)
+    .default(
+      'MachiyaBot/0.1 (+https://github.com/Kunal-jaiswal972/Machiya; geocoding and POI lookups)',
+    ),
+
+  /**
+   * Shared secret that exempts internal traffic from the per-IP rate limit.
+   *
+   * Empty by default, and empty exempts NOTHING — the safe failure, because the
+   * alternative is a limiter with a hole in it on every checkout that forgot to
+   * set this. Must be at least 32 characters when set, for the same reason
+   * BETTER_AUTH_SECRET is: a guessable exemption is not one.
+   *
+   * This is NOT a credential. It buys a limiter bypass and grants no
+   * authorization whatsoever — every route behind it still resolves a session
+   * and re-checks ownership. See DECISIONS.md D86.
+   */
+  INTERNAL_REQUEST_TOKEN: z
+    .union([z.literal(''), z.string().min(32)])
+    .default('')
+    .describe('at least 32 characters, or empty to exempt nothing'),
 
   // --- Routing (OSRM) ------------------------------------------------------
   OSRM_CAR_URL: z.string().url().default('http://localhost:5100'),
@@ -129,7 +161,17 @@ export type Env = z.infer<typeof envSchema>;
  * otherwise surface as silently forgeable session cookies.
  */
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
-  const parsed = envSchema.safeParse(source);
+  // NOMINATIM_USER_AGENT is the old name for GEO_USER_AGENT and is still
+  // honoured, because silently falling back to the default would send the
+  // placeholder contact address to a public instance that answers 403 to it —
+  // a checkout that had configured this correctly would break on upgrade with
+  // no indication why (D87).
+  const aliased =
+    source.GEO_USER_AGENT === undefined && source.NOMINATIM_USER_AGENT !== undefined
+      ? { ...source, GEO_USER_AGENT: source.NOMINATIM_USER_AGENT }
+      : source;
+
+  const parsed = envSchema.safeParse(aliased);
 
   if (!parsed.success) {
     const details = parsed.error.issues

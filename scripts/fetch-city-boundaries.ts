@@ -29,7 +29,12 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT = join(REPO_ROOT, 'packages', 'shared', 'src', 'cities', 'boundaries.generated.ts');
 
 const NOMINATIM_URL = process.env.NOMINATIM_URL ?? 'http://localhost:7070';
-const USER_AGENT = process.env.NOMINATIM_USER_AGENT ?? 'Machiya/0.1 (contact@example.com)';
+// GEO_USER_AGENT with the old NOMINATIM_USER_AGENT still honoured, matching the
+// API's own alias (D87): this script talks to the same Nominatim.
+const USER_AGENT =
+  process.env.GEO_USER_AGENT ??
+  process.env.NOMINATIM_USER_AGENT ??
+  'MachiyaBot/0.1 (+https://github.com/Kunal-jaiswal972/Machiya; geocoding and POI lookups)';
 
 /**
  * Simplification tolerance in degrees. ~0.0005° is roughly 50 m at these

@@ -298,7 +298,7 @@ export class OverpassPoiProvider implements PoiProvider {
         // local instance does not care, and identifying ourselves costs
         // nothing.
         accept: 'application/json',
-        'user-agent': env.NOMINATIM_USER_AGENT,
+        'user-agent': env.GEO_USER_AGENT,
       },
       body: new URLSearchParams({ data: buildQuery(center, radiusMeters, categories) }),
       // BOTH signals, combined. Passing only the caller's (which is the

@@ -2809,3 +2809,129 @@ this machine showed: three `skip:` lines naming the backfilled source, and
 because it now has two callers — `cities.ts extracts`, which feeds the cut loop,
 and `geo-status.ts`, which reports the row. Two copies of that rule would be two
 answers to "which file should this city come from".
+
+## D86 — POIs are warmed ahead of time; routes cannot be
+
+Of the three derived geo products, exactly one is precomputable.
+
+A **route** is keyed by `('route', profile, from, to)` where `from` is the office
+pin the user drags across a map. That is a continuous two-dimensional input, so
+the key space is unbounded and there is nothing to warm ahead of a request. A
+**reverse geocode** is the same shape — an arbitrary clicked point. A listing's
+**POI set** is centred on the listing itself: `GET /api/listings/:slug/pois`
+takes no coordinates at all, so the complete set of keys is the set of published
+listings, known before anyone visits.
+
+Worth warming because an Overpass miss is the most expensive miss in the app. A
+cold read starts a background warm and waits only a bounded moment for it, so
+the first viewer of a listing sees a thin panel and the honest "could not
+refresh" note. After a rebuild every POI key goes cold at once — precisely when
+somebody is most likely to be clicking around checking the rebuild worked.
+
+**Through the API, not around it.** `warmPois` calls the API's own endpoint
+rather than reaching for Overpass directly, so the cache key, the radius, the
+category list and the epoch prefix are identical to the request path by
+construction rather than by a second implementation kept in step. The warm is
+the request path, run early.
+
+**Epoch-gated in Redis.** `poi-warm:epoch` holds the epoch last fully warmed, so
+almost every tick reads one key and stops. The gate closes only on a pass that
+was both complete and clean: a partial warm that closed it would leave the
+listings it missed cold until the _next_ rebuild, which is worse than running
+again in five minutes.
+
+**Rate limiting.** The API's limiter is 300/minute per IP. Two consequences:
+
+- The delay default is 500ms, not 250ms. At 250ms the warm issues 240/minute —
+  80% of the budget for work nobody is waiting on. The limiter, not Overpass,
+  is the binding constraint, which is not what the first version assumed.
+- A 429 stops the pass rather than counting as a failure. Every remaining
+  request would fail for the same reason, which has nothing to do with the
+  listing; the gate stays open and the next tick continues.
+
+The worker has its own container IP, so the warm spends its own bucket and can
+never exhaust a real visitor's.
+
+**Identifying internal traffic, and why the User-Agent does not grant the
+exemption.** These requests land in the access log beside real page loads, so
+they name themselves — `POI_WARM_USER_AGENT`, `MachiyaBot/…`, the fuel scraper's
+convention pointed inward. Exempting _on that basis_ was considered and
+rejected: a User-Agent is client-supplied and trivially forged, and a rate limit
+any caller can opt out of by setting a header is not a rate limit.
+
+So the exemption rides on `INTERNAL_REQUEST_TOKEN`, an `x-internal-token` header
+compared with `timingSafeEqual`. Empty exempts nobody, which is the safe
+failure — a limiter with a hole in it on every checkout that forgot to configure
+this would be worse than no exemption at all. It is **not a credential**: it buys
+a limiter bypass and no authorization whatsoever, and every route behind it still
+resolves a session and re-checks ownership.
+
+Verified against the running stack, `NODE_ENV=production`:
+
+| request                          | result                                          |
+| -------------------------------- | ----------------------------------------------- |
+| no token                         | `RateLimit: limit=300, remaining=299` — counted |
+| correct token                    | no `RateLimit` headers — skipped                |
+| wrong token                      | `remaining=298` — counted                       |
+| forged warm User-Agent, no token | `remaining=297` — counted                       |
+
+And a full pass: `requested:116, warmed:116, failed:0, rateLimited:false,
+gateClosed:true`.
+
+## D87 — The geo User-Agent is named for every service that reads it
+
+`NOMINATIM_USER_AGENT` was sent to Nominatim, to Overpass, and by
+`scripts/fetch-city-boundaries.ts` — three callers, one of which the name
+described. On the fallback paths it is load-bearing, not decorative: the public
+Nominatim instance answers 403 without a real contact, and overpass-api.de
+answers 406 Not Acceptable without a descriptive agent (D42). So the knob
+governing the Overpass fallback was named after a different service and
+documented under a different heading in `.env.example`.
+
+Renamed to `GEO_USER_AGENT`. `loadEnv` still honours the old name, because
+silently falling back to the default would send a placeholder to a public
+instance that rejects it and the checkout that had configured this _correctly_
+would be the one that broke on upgrade, with no indication why.
+
+The default changed too, from `Machiya/0.1 (contact@example.com)` to
+`MachiyaBot/0.1 (+https://github.com/…; geocoding and POI lookups)`. The old one
+was a placeholder that the public instance 403s — a default nobody could
+usefully ship. A repository URL is a real contact and satisfies Nominatim's
+policy, and it puts all three agents in the codebase into one family.
+
+`FUEL_USER_AGENT` stays a hardcoded constant, deliberately. It is not
+env-overridable because a scraper that can be told to lie about who it is cannot
+honour a `Disallow` addressed to it, and the whole robots contract stops meaning
+anything.
+
+## D88 — bootstrap creates .env and generates the secrets it can
+
+`.env` is the single source of environment truth for the Prisma CLI, compose and
+every app (D5), and `docker compose up` refuses outright on a missing
+`BETTER_AUTH_SECRET`. A fresh clone therefore failed at the first command with an
+error about a variable nobody had been told to set, so `pnpm bootstrap` now
+copies `.env.example` when `.env` is absent and fills the secrets that can be
+generated.
+
+Three rules, and the second is the one that matters:
+
+- `openssl rand -base64 32`, with `head -c 32 /dev/urandom | base64` as the
+  fallback. openssl is present wherever docker is, but the fallback costs a line.
+- **Never overwrite a value somebody chose.** A run that regenerated
+  `BETTER_AUTH_SECRET` would invalidate every session in the local database, and
+  one that overwrote a real key would lose it. Only a missing, empty, or
+  still-placeholder value is filled.
+- **Third-party keys are not touched.** `UNSPLASH_ACCESS_KEY` and friends cannot
+  be generated, and filling them with noise would hide the fact that they need a
+  human.
+
+`awk` to a temp file rather than `sed -i`: BSD and GNU sed disagree about `-i`,
+and a base64 secret contains `/` and `+`, which would break an `s///` script.
+Lines that do not match the key are reprinted as `$0` untouched, so the rest of
+the file survives byte-for-byte.
+
+Verified on a scratch copy before being pointed at a real `.env` — fresh copy
+generates both; a second run reports `skip: … already set` and leaves the values
+identical; a user-chosen value survives; an absent key is appended; and every
+other line of a 193-line file diffs clean. Then on this machine: an existing
+`BETTER_AUTH_SECRET` was kept and only `INTERNAL_REQUEST_TOKEN` was generated.

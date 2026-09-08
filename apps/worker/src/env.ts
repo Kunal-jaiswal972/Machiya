@@ -24,6 +24,53 @@ const envSchema = z.object({
   /** Where notification links point. */
   WEB_APP_URL: z.string().url().default('http://localhost:5173'),
 
+  // --- POI cache warm ------------------------------------------------------
+  /**
+   * The API, from inside the compose network. The POI warm goes through the
+   * API's own endpoint so the cache keys it fills are the ones the request path
+   * reads (D86); this is where it finds it.
+   */
+  API_INTERNAL_URL: z.string().url().default('http://localhost:4000'),
+  /**
+   * How often to check whether the geo epoch has moved. Almost every tick is a
+   * no-op that reads one Redis key, so this is cheap; it only has to be sooner
+   * than a human noticing a rebuild.
+   */
+  POI_WARM_INTERVAL_MS: z.coerce.number().int().min(10_000).default(300_000),
+  /**
+   * Pause between warm requests. Two constraints, and the tighter one is the
+   * API's own per-IP limiter at 300/minute: 250ms is 240/minute, which spends
+   * 80% of the budget on a job nobody is waiting for. 500ms halves that. The
+   * other is Overpass, which answers one query at a time behind fcgiwrap — at
+   * zero the warm competes with real page loads for the only interpreter.
+   */
+  POI_WARM_DELAY_MS: z.coerce.number().int().min(0).default(500),
+  /**
+   * Ceiling on one warm request. Generous because a cold Overpass read is the
+   * slow case this exists to remove, and a timeout here just means the listing
+   * is retried on the next tick.
+   */
+  POI_WARM_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).default(30_000),
+  /**
+   * How the warm names itself to the API. These requests land in the access log
+   * next to real page loads, so anything reading that log needs to be able to
+   * tell machine traffic from a person. `MachiyaBot` is the fuel scraper's
+   * convention (`FUEL_USER_AGENT`) pointed inward.
+   */
+  POI_WARM_USER_AGENT: z
+    .string()
+    .min(1)
+    .default(
+      'MachiyaBot/0.1 (+https://github.com/Kunal-jaiswal972/Machiya; internal POI cache warm)',
+    ),
+  /**
+   * Shared secret that exempts internal traffic from the API's per-IP rate
+   * limit. Empty by default, and an empty value exempts nothing — the warm then
+   * lives inside the same 300/minute budget as anybody else, which is the safe
+   * failure. NOT a credential: it buys a limiter bypass and no authorization.
+   */
+  INTERNAL_REQUEST_TOKEN: z.string().default(''),
+
   // --- Object storage ------------------------------------------------------
   S3_ENDPOINT: z.string().url().default('http://localhost:9000'),
   S3_REGION: z.string().min(1).default('us-east-1'),

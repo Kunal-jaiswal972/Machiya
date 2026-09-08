@@ -2,6 +2,7 @@ import { probeDatabase } from '@machiya/db';
 import { toNodeHandler } from 'better-auth/node';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
+import { timingSafeEqual } from 'node:crypto';
 import express, { type Express } from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
@@ -37,6 +38,31 @@ export interface CreateAppOptions {
   mountAuth?: boolean;
   corsOrigins?: string[];
   requestLogging?: boolean;
+}
+
+/**
+ * Whether a presented `x-internal-token` header matches the configured secret.
+ *
+ * Exempts the caller from the per-IP rate limit and NOTHING else — every route
+ * still resolves its own session and re-checks ownership, so this cannot become
+ * an authorization bypass.
+ *
+ * Deliberately not keyed on User-Agent. A client-supplied name is trivially
+ * forged, and a limiter any caller can opt out of by setting a header is not a
+ * limiter. An unset token exempts nobody, so a checkout that never configures
+ * this has no exemption rather than an open one.
+ *
+ * Constant-time compare: `timingSafeEqual` throws on a length mismatch, and
+ * returning early on length is fine because the length of a secret is not the
+ * secret. See DECISIONS.md D86.
+ */
+export function isInternalToken(presented: string | undefined): boolean {
+  const expected = env.INTERNAL_REQUEST_TOKEN;
+  if (!expected || !presented) return false;
+
+  const a = Buffer.from(presented);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<Express> {
@@ -106,7 +132,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Express
       limit: 300,
       standardHeaders: 'draft-7',
       legacyHeaders: false,
-      skip: () => env.NODE_ENV === 'test',
+      skip: (req) => env.NODE_ENV === 'test' || isInternalToken(req.get('x-internal-token')),
     }),
   );
 
