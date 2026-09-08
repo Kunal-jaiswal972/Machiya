@@ -13,27 +13,33 @@
  * Three kinds of staleness, detected three different ways:
  *
  *  - **files on disk** (city cuts, merged extract) — compared against the
- *    config's padded bboxes and the manifest's checksums;
+ *    config's padded bboxes, the source file the download strategy currently
+ *    resolves to, and the manifest's checksums;
  *  - **the OSRM graphs** — each graph directory holds the sha256 of the extract
  *    it was built from, read out of the named volume through a throwaway
  *    container;
- *  - **the Nominatim and Overpass imports** — each writes a stamp file when
- *    bootstrap confirms it answering, because neither service can be asked
- *    which extract it imported.
+ *  - **the Nominatim and Overpass imports** — bootstrap stamps the extract sha
+ *    when it observes an import actually happen, because neither service can be
+ *    asked which extract it holds.
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CITIES, computeGeoConfigHash, geoManifestSchema } from '@machiya/shared/cities';
+import {
+  CITIES,
+  computeGeoConfigHash,
+  geoManifestSchema,
+  sourceFileFor,
+} from '@machiya/shared/cities';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CACHE_DIR = join(REPO_ROOT, '.osm-cache');
 const OUT_DIR = join(REPO_ROOT, 'osm-data');
 const MERGED = join(OUT_DIR, 'merged.osm.pbf');
 
-/** Written by bootstrap once a service is confirmed answering. */
+/** Written by bootstrap when it observes a service actually import (D84). */
 export function importStampPath(service: string): string {
   return join(OUT_DIR, `.imported-${service}`);
 }
@@ -104,12 +110,43 @@ function cutRows(): Row[] {
     }
 
     const have = readFileSync(stamp, 'utf8').trim();
-    return have === want
-      ? { artifact: `cut: ${city.slug}`, state: 'ok', detail: want, fix: '' }
+    if (have !== want) {
+      return {
+        artifact: `cut: ${city.slug}`,
+        state: 'stale',
+        detail: `cut at ${have}, config says ${want}`,
+        fix: REBUILD,
+      };
+    }
+
+    // Matching bounds are not enough. The download strategy flips to the whole
+    // country on its own at the fourth zone (D51), which changes the file every
+    // city is cut from while leaving every bbox alone — so a cut can sit at the
+    // right bounds and still come from the wrong snapshot (D85).
+    const sourceStamp = join(CACHE_DIR, `${city.slug}.source`);
+    const wantSource = sourceFileFor(city.zone);
+
+    if (!existsSync(sourceStamp)) {
+      return {
+        artifact: `cut: ${city.slug}`,
+        state: 'unknown',
+        detail: 'no source stamp — cut before source stamping existed',
+        fix: REBUILD,
+      };
+    }
+
+    const haveSource = readFileSync(sourceStamp, 'utf8').trim();
+    return haveSource === wantSource
+      ? {
+          artifact: `cut: ${city.slug}`,
+          state: 'ok',
+          detail: `${want} from ${wantSource}`,
+          fix: '',
+        }
       : {
           artifact: `cut: ${city.slug}`,
           state: 'stale',
-          detail: `cut at ${have}, config says ${want}`,
+          detail: `cut from ${haveSource}, strategy says ${wantSource}`,
           fix: REBUILD,
         };
   });

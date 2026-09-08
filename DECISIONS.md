@@ -2712,3 +2712,100 @@ class as docs/ux-audit.md 1.6.
 So there is no satellite toggle. Shipping one that 403s, or one that quietly
 breaks the licence, is worse than not offering it — and the style control has
 two options that work. Recorded in docs/known-issues.md so nobody re-derives it.
+
+## D84 — The import stamp records an import, not an answer
+
+`pnpm bootstrap` step 5 imports the merged extract into Nominatim and Overpass.
+Neither image has a separate import command: both import on **first boot** into
+their own volume and then serve, so "importing" is `up -d` plus waiting. Neither
+can be asked afterwards which extract it holds, which is why bootstrap writes
+`osm-data/.imported-{nominatim,overpass}` and `pnpm geo:status` compares those
+against the current `merged.osm.pbf` sha.
+
+The old test for writing that stamp was **the service answered**:
+
+```bash
+[ "$nominatim_up" -eq 1 ] && printf '%s' "$MERGED_SHA" > "$OUT_DIR/.imported-nominatim"
+```
+
+Answering is not importing. A populated volume comes straight up serving whatever
+it already holds, so after a re-cut with new bounds both services answer
+immediately with the OLD geometry — and that line stamped the NEW sha onto them.
+The one check able to detect a stale import was the thing destroying the
+evidence, and `geo:status` then reported `ok` for the two artifacts most likely
+to be wrong. The comment defended the guard against an import that _failed_; the
+case that actually happens is an import that was _skipped_.
+
+Two changes, both in `scripts/bootstrap.sh`:
+
+- **Detect what is already there.** Each image drops an in-volume sentinel when
+  its import finishes — Nominatim `import-finished` in the cluster directory,
+  Overpass `init_done` at the root of its home. Verified by looking:
+  `docker run --rm -v machiya_nominatim-data:/v:ro busybox:1.37 ls -la /v` shows
+  `import-finished`, and the Nominatim entrypoint's own log line is
+  `'[' '!' -f /var/lib/postgresql/16/main/import-finished ']'`. In-volume, so it
+  cannot drift from the data the way a host-side file can — the same property
+  that makes `osrm-init`'s `source.sha256` receipt trustworthy.
+- **Reset a stale import rather than restamp it.** A populated volume whose
+  stamp does not match the extract is removed (`compose rm -sf` then
+  `docker volume rm`) so the next `up -d` genuinely re-imports. This mirrors
+  step 4, where `osrm-init` does `rm -rf "/graph/$profile"` on a sha mismatch.
+  Automatic rather than advisory because bootstrap's stated job is to reach a
+  consistent state, and it is loud about it.
+
+The stamp is now written only when the service answered **and** held no import
+before this run.
+
+Verified end to end rather than reasoned about. With the stack healthy, the
+overpass stamp was overwritten with 64 zeroes:
+
+- `pnpm geo:status` → `overpass import  stale  imported a different extract`
+- `bash scripts/bootstrap.sh` → `overpass imported a different extract
+(0000…) — re-importing`, then `Overpass is up after 405s`, then
+  `overpass imported 4be9863…`
+- `nominatim` in the same run → `skip: nominatim already held this extract;
+stamp unchanged` — untouched, which is the point
+- afterwards both rows read `ok`, and `/api/listings/:slug/pois` answered 200 in
+  0.035s with real named hospitals
+
+A detail that cost a run: `import_present` needs `MSYS_NO_PATHCONV=1`. Git Bash
+rewrites a bare `/v/import-finished` argument to `V:/import-finished`, so the
+test failed inside the container and every service looked un-imported — which
+stamped every run as a fresh import, a quieter version of the same bug. The
+`osmium` helper in the same file already carried that guard. `geo-status.ts` is
+unaffected because `execFileSync` does not go through a shell.
+
+## D85 — A cut is stamped with its source file, not only its bounds
+
+`.osm-cache/<slug>.bbox` records the padded bbox a city was cut at, so editing a
+bbox re-cuts instead of skipping. It did not record **which file the cut came
+from**, and that is a second, independent way for a cut to go stale.
+
+The download strategy is not a preference — `planDownloads` switches from
+per-zone extracts to one `india-latest.osm.pbf` at the fourth zone (D51),
+automatically. Crossing that threshold changes the source file for **every**
+city while leaving **every** bbox untouched. The bounds stamp still matched, so
+every cut was skipped, and `osm-data/manifest.json` then checksummed
+`india-latest.osm.pbf` as its source while the cuts on disk had been made from
+the three zone files. The epoch would describe provenance the artifacts do not
+have.
+
+So `.osm-cache/<slug>.source` is written next to the bbox stamp, and a cut is
+skipped only when bounds **and** source both match.
+
+An unstamped cut is ambiguous, and the ambiguity is resolved by which strategy
+is in force rather than by re-cutting everything:
+
+- **zone strategy** — the strategy only ever flips upward as cities are added,
+  so an unstamped cut predates any flip and was necessarily made from a zone
+  extract. Backfill the stamp, keep the cut.
+- **country strategy** — cannot be inferred. Re-cut.
+
+That keeps the fix free for every existing checkout, which is what the run on
+this machine showed: three `skip:` lines naming the backfilled source, and
+`Done in 0m23s`.
+
+`sourceFileFor` moved from `scripts/cities.ts` to `@machiya/shared/cities`
+because it now has two callers — `cities.ts extracts`, which feeds the cut loop,
+and `geo-status.ts`, which reports the row. Two copies of that rule would be two
+answers to "which file should this city come from".

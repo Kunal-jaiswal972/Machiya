@@ -18,30 +18,18 @@
  *   tsx scripts/cities.ts zones      -> one Geofabrik zone name per line
  */
 import { basename } from 'node:path';
-import { CITIES, ZONES, planDownloads } from '@machiya/shared/cities';
+import { CITIES, ZONES, planDownloads, sourceFileFor } from '@machiya/shared/cities';
 
 export {
   CITIES,
   ZONES,
   cityBySlug,
   planDownloads,
+  sourceFileFor,
   type CityConfig,
   type GeofabrikZone,
   type Locality,
 } from '@machiya/shared/cities';
-
-/**
- * Which downloaded file each city is cut from.
- *
- * With three zones that is the city's own zone extract; past the whole-country
- * threshold it is `india-latest.osm.pbf` for every city. Resolving it here
- * rather than in the shell means bootstrap.sh does not have to know the two
- * strategies apart.
- */
-function sourceFileFor(zone: string): string {
-  const plan = planDownloads();
-  return plan.strategy === 'country' ? 'india-latest.osm.pbf' : `${zone}-latest.osm.pbf`;
-}
 
 function main(command: string | undefined): void {
   switch (command) {

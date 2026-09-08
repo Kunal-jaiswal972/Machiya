@@ -130,25 +130,56 @@ step "Extracting cities by bounding box"
 # listing or office near an edge needs road network and POIs on every side, and
 # a road route can legitimately leave the box and come back.
 #
-# Each cut is stamped with the bounds it was made with. Without the stamp, "the
-# file exists" meant "skip" — so changing a bbox left every earlier cut in place
-# and the pipeline silently kept serving geometry from the old bounds.
+# Each cut is stamped with the bounds AND the source file it was made from.
+# Without a stamp, "the file exists" meant "skip" — so changing a bbox left every
+# earlier cut in place and the pipeline silently kept serving geometry from the
+# old bounds.
 CITY_FILES=()
 RECUT=0
 while read -r slug source min_lng min_lat max_lng max_lat; do
   [ -n "${slug:-}" ] || continue
   target="$CACHE_DIR/$slug.osm.pbf"
   stamp="$CACHE_DIR/$slug.bbox"
+  src_stamp="$CACHE_DIR/$slug.source"
   want="$min_lng,$min_lat,$max_lng,$max_lat"
   CITY_FILES+=("/cache/$slug.osm.pbf")
 
-  if [ -s "$target" ] && [ "$(cat "$stamp" 2>/dev/null || true)" = "$want" ]; then
-    skip "$slug.osm.pbf already cut at $want ($(file_size "$target"))"
+  # The source stamp is separate from the bounds stamp because the two go stale
+  # for different reasons. Bounds change when the city config is edited; the
+  # source changes when the DOWNLOAD STRATEGY flips, which happens on its own at
+  # the fourth zone (D51) with every bbox untouched. Cutting the same box out of
+  # india-latest.osm.pbf instead of a zone extract is a different snapshot, so
+  # the manifest would otherwise checksum a source that did not produce the
+  # cuts. See DECISIONS.md D85.
+  have_src=$(cat "$src_stamp" 2>/dev/null || true)
+
+  # A cut made before source stamping existed is only ambiguous under the
+  # country strategy: the strategy only ever flips upward as cities are added,
+  # so an unstamped cut on the zone strategy was necessarily made from a zone
+  # extract and is backfilled rather than redone.
+  if [ -s "$target" ] && [ -z "$have_src" ]; then
+    if [ "$source" = 'india-latest.osm.pbf' ]; then
+      info "$slug has no source stamp and the country strategy is in force — re-cutting to be sure"
+    else
+      printf '%s' "$source" > "$src_stamp"
+      have_src="$source"
+    fi
+  fi
+
+  if [ -s "$target" ] \
+    && [ "$(cat "$stamp" 2>/dev/null || true)" = "$want" ] \
+    && [ "$have_src" = "$source" ]; then
+    skip "$slug.osm.pbf already cut at $want from $source ($(file_size "$target"))"
     continue
   fi
 
   if [ -s "$target" ]; then
-    info "$slug bounds changed ($(cat "$stamp" 2>/dev/null || printf 'unstamped') -> $want)"
+    if [ "$(cat "$stamp" 2>/dev/null || true)" != "$want" ]; then
+      info "$slug bounds changed ($(cat "$stamp" 2>/dev/null || printf 'unstamped') -> $want)"
+    fi
+    if [ -n "$have_src" ] && [ "$have_src" != "$source" ]; then
+      info "$slug source changed ($have_src -> $source)"
+    fi
   fi
 
   # `source` is resolved by cities.ts, not here: it is the city's zone extract
@@ -162,6 +193,7 @@ while read -r slug source min_lng min_lat max_lng max_lat; do
     -o "/cache/$slug.osm.pbf" \
     "/cache/$source"
   printf '%s' "$want" > "$stamp"
+  printf '%s' "$source" > "$src_stamp"
   RECUT=1
   info "$slug: $(file_size "$target")"
 done <<< "$EXTRACTS"
@@ -197,6 +229,62 @@ step "Importing into Nominatim and Overpass"
 # start it and wait. A second run finds the volume populated and comes straight
 # up. Both read the same merged extract, which is the point: routing, geocoding
 # and POIs cannot then disagree about what exists (D48).
+MERGED_SHA=$(sha256sum "$MERGED" | cut -d' ' -f1)
+info "extract sha256 $MERGED_SHA"
+
+# Whether a volume already holds a finished import, asked of the volume itself.
+#
+# Each image drops a sentinel when its import completes — Nominatim
+# `import-finished` in the cluster directory, Overpass `init_done` at the root of
+# its home. Both are in-volume, so they cannot disagree with the data the way a
+# host-side file can. A throwaway busybox is the only portable way to look.
+# MSYS_NO_PATHCONV for the same reason the osmium helper above needs it: Git
+# Bash rewrites a bare `/v/...` argument into a Windows path and the test then
+# fails inside the container rather than reporting the file missing — which
+# looked exactly like "no import present" and stamped every run as a fresh
+# import.
+import_present() {
+  MSYS_NO_PATHCONV=1 docker run --rm -v "$1:/v:ro" busybox:1.37 test -f "/v/$2" >/dev/null 2>&1
+}
+
+# Drop a volume whose import no longer matches the extract.
+#
+# `up -d` on a populated volume does NOT re-import — the image's first-boot
+# check finds its sentinel and comes straight up serving whatever it holds. So a
+# re-cut with new bounds leaves Nominatim and Overpass answering from the old
+# geometry, and the only way to re-import is to remove the volume first. This
+# mirrors what osrm-init does with its own sha receipt in step 4; see
+# DECISIONS.md D84.
+stale_import_reset() {
+  local service="$1" volume="$2" sentinel="$3" stamp="$4"
+
+  import_present "$volume" "$sentinel" || return 0
+
+  local have
+  have=$(cat "$stamp" 2>/dev/null || true)
+  [ "$have" = "$MERGED_SHA" ] && return 0
+
+  if [ -n "$have" ]; then
+    info "$service imported a different extract ($have) — re-importing"
+  else
+    info "$service holds an import this run cannot identify — re-importing"
+  fi
+  docker compose --profile geo rm -sf "$service" >/dev/null 2>&1 || true
+  docker volume rm "$volume" >/dev/null 2>&1 || die "could not remove $volume; is a container still using it?"
+  rm -f "$stamp"
+}
+
+stale_import_reset nominatim machiya_nominatim-data import-finished "$OUT_DIR/.imported-nominatim"
+stale_import_reset overpass machiya_overpass-db init_done "$OUT_DIR/.imported-overpass"
+
+# What each service holds BEFORE this run starts it. A service whose volume is
+# already populated will not import, so its stamp must not be rewritten as if it
+# had — that is exactly the bug this replaced (D84).
+nominatim_had_import=0
+overpass_had_import=0
+import_present machiya_nominatim-data import-finished && nominatim_had_import=1
+import_present machiya_overpass-db init_done && overpass_had_import=1
+
 docker compose --profile geo up -d nominatim overpass
 
 NOMINATIM_PORT_LOCAL="${NOMINATIM_PORT:-7070}"
@@ -238,11 +326,28 @@ done
 # Neither can be asked which extract it holds, and both import on FIRST BOOT
 # only — so without a stamp there is no way to tell a Nominatim serving the
 # current extract from one serving last month's, and `pnpm geo:status` would
-# have to shrug at the two artifacts most likely to be stale. Written only
-# after the service answered, so a stamp never claims an import that failed.
-MERGED_SHA=$(sha256sum "$MERGED" | cut -d' ' -f1)
-[ "$nominatim_up" -eq 1 ] && printf '%s' "$MERGED_SHA" > "$OUT_DIR/.imported-nominatim"
-[ "$overpass_up" -eq 1 ] && printf '%s' "$MERGED_SHA" > "$OUT_DIR/.imported-overpass"
+# have to shrug at the two artifacts most likely to be stale.
+#
+# Two conditions, and the second is the one that matters: the service answered,
+# AND it did not already hold an import before this run. Answering alone was the
+# old test, which stamped the CURRENT sha onto a service that had just come
+# straight up serving an OLDER extract — so the one check able to catch a stale
+# import was the thing overwriting the evidence. Anything already populated was
+# either reset above or matches already. See DECISIONS.md D84.
+stamp_import() {
+  local service="$1" up="$2" had_import="$3" stamp="$4"
+
+  [ "$up" -eq 1 ] || return 0
+  if [ "$had_import" -eq 1 ]; then
+    skip "$service already held this extract; stamp unchanged"
+    return 0
+  fi
+  printf '%s' "$MERGED_SHA" > "$stamp"
+  info "$service imported $MERGED_SHA"
+}
+
+stamp_import nominatim "$nominatim_up" "$nominatim_had_import" "$OUT_DIR/.imported-nominatim"
+stamp_import overpass "$overpass_up" "$overpass_had_import" "$OUT_DIR/.imported-overpass"
 
 # --- 6. the artifact manifest ---------------------------------------------
 

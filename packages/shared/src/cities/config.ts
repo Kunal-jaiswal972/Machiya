@@ -239,6 +239,20 @@ export interface DownloadPlan {
  * 200 MB files to one 1.4 GB file is the kind of thing that reads as a bug in
  * a slow-network bug report.
  */
+/**
+ * Which downloaded file a city in `zone` is cut from under the current plan.
+ *
+ * Below the whole-country threshold that is the zone's own extract; at or above
+ * it, `india-latest.osm.pbf` for every city. Lives here rather than in
+ * bootstrap.sh so the shell does not have to know the two strategies apart, and
+ * so `geo-status` and the cut stamps agree on the answer (D85).
+ */
+export function sourceFileFor(zone: string, cities: readonly CityConfig[] = CITIES): string {
+  return planDownloads(cities).strategy === 'country'
+    ? 'india-latest.osm.pbf'
+    : `${zone}-latest.osm.pbf`;
+}
+
 export function planDownloads(cities: readonly CityConfig[] = CITIES): DownloadPlan {
   const zones = [...new Set(cities.map((city) => city.zone))].sort();
 
