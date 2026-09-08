@@ -1,18 +1,19 @@
-import type { ListingDraftView, ListingPatchInput } from '@machiya/shared';
+import {
+  HOUSE_RULE_LABELS,
+  resolveHouseRule,
+  type ListingDraftView,
+  type ListingPatchInput,
+} from '@machiya/shared';
 import { Plus, X } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import { iconFor } from '../../lib/icon-registry';
 import { Field, TextField } from './fields';
 
-const SUGGESTED_RULES = [
-  'No smoking indoors',
-  'Families preferred',
-  'Bachelors welcome',
-  'Pets allowed with a deposit',
-  'No loud music after 10pm',
-  'Vegetarian tenants only',
-];
+// The same catalogue the detail page renders from, so a rule picked here arrives
+// there with its icon rather than as unrecognised text (D90).
+const SUGGESTED_RULES = HOUSE_RULE_LABELS;
 
 const MAX_RULES = 12;
 
@@ -85,44 +86,52 @@ export function AvailabilityStep({
 
       {rules.length > 0 ? (
         <ul className="flex flex-wrap gap-1.5">
-          {rules.map((rule) => (
-            <li
-              key={rule}
-              className="text-label flex items-center gap-1.5 rounded-[var(--radius-chrome)] border border-edge-strong px-2 py-1"
-            >
-              {rule}
-              <button
-                type="button"
-                aria-label={`Remove rule: ${rule}`}
-                className="text-ink-faint hover:text-clay"
-                onClick={() => {
-                  setRules(rules.filter((existing) => existing !== rule));
-                }}
+          {rules.map((rule) => {
+            const Icon = iconFor(resolveHouseRule(rule).icon);
+            return (
+              <li
+                key={rule}
+                className="text-label flex items-center gap-1.5 rounded-[var(--radius-chrome)] border border-edge-strong px-2 py-1"
               >
-                <X className="size-3.5" aria-hidden />
-              </button>
-            </li>
-          ))}
+                <Icon className="size-3 shrink-0 text-ink-faint" aria-hidden />
+                {rule}
+                <button
+                  type="button"
+                  aria-label={`Remove rule: ${rule}`}
+                  className="text-ink-faint hover:text-clay"
+                  onClick={() => {
+                    setRules(rules.filter((existing) => existing !== rule));
+                  }}
+                >
+                  <X className="size-3.5" aria-hidden />
+                </button>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
 
       <div>
         <p className="text-label mb-1.5 text-ink-soft">Common ones</p>
         <div className="flex flex-wrap gap-1.5">
-          {SUGGESTED_RULES.filter((rule) => !rules.includes(rule)).map((rule) => (
-            <Button
-              key={rule}
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="text-ink-soft"
-              onClick={() => {
-                add(rule);
-              }}
-            >
-              + {rule}
-            </Button>
-          ))}
+          {SUGGESTED_RULES.filter((rule) => !rules.includes(rule)).map((rule) => {
+            const Icon = iconFor(resolveHouseRule(rule).icon);
+            return (
+              <Button
+                key={rule}
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="gap-1.5 text-ink-soft"
+                onClick={() => {
+                  add(rule);
+                }}
+              >
+                <Icon className="size-3 shrink-0" aria-hidden />
+                {rule}
+              </Button>
+            );
+          })}
         </div>
       </div>
     </div>

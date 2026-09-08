@@ -56,13 +56,23 @@ survive `down`, so nothing re-imports.
 
 ## Dev accounts
 
-All three use the password `devpass123`.
+All six use the password `devpass123`. Two of each role, because a single
+account per role can only prove that the owner is allowed in — the second one is
+what shows a lister cannot touch the other lister's listing.
 
-| Account            | Role   | Use it for                                        |
-| ------------------ | ------ | ------------------------------------------------- |
-| `seeker@dev.local` | SEEKER | The search, favourites, saved searches, enquiries |
-| `lister@dev.local` | LISTER | The dashboard, the wizard, the enquiry inbox      |
-| `admin@dev.local`  | ADMIN  | Moderation, coverage demand, scrape health, users |
+| Account             | Role   | Use it for                                         |
+| ------------------- | ------ | -------------------------------------------------- |
+| `seeker@dev.local`  | SEEKER | The search, favourites, saved searches, enquiries  |
+| `seeker2@dev.local` | SEEKER | The other side of a seeker-scoped permission check |
+| `lister@dev.local`  | LISTER | The dashboard, the wizard, the enquiry inbox       |
+| `lister2@dev.local` | LISTER | Owns half the seeded stock; the cross-owner checks |
+| `admin@dev.local`   | ADMIN  | Moderation, coverage demand, scrape health, users  |
+| `admin2@dev.local`  | ADMIN  | Admin actions attributed to a second moderator     |
+
+The seed populates **Patna only** — 100 listings, an even rent/sale split, split
+across the two listers. Bengaluru and Pune are still covered (the OSM artifacts
+and the coverage set include them) but have no stock; see
+[D91](DECISIONS.md#d91--the-seed-covers-one-city-with-real-depth).
 
 Outbound mail goes to MailHog at http://localhost:8025.
 

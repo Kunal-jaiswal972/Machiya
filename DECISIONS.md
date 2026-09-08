@@ -2999,3 +2999,99 @@ The documented pair is therefore `docker compose --profile geo up -d` and
 safe. README and docs/setup.md say so, and the earlier advice to name services
 explicitly is kept where it belongs: it exists for `pnpm dev`, which wants
 infrastructure without api/worker/web taking ports 4000, 4100 and 8080.
+
+## D90 — House rules are text with a resolver, not an enum
+
+`Listing.rules` is `String[]`, and the wizard lets a lister type their own —
+`listingInputSchema` bounds length and count and nothing else. So the UI cannot
+hold an icon per rule, and rendering rules as a stack of bare sentences was the
+consequence: a wall of text where amenities beside it were chips.
+
+Three options, and the reason the middle one wins:
+
+- **Enum column.** Would give every rule an icon, and would either reject a rule
+  somebody typed or silently drop it. A house rule the lister considered worth
+  writing is exactly the thing not to discard for a glyph.
+- **A catalogue plus a resolver.** `HOUSE_RULES` in `@machiya/shared` carries a
+  slug, label, lucide icon name and tone for the twenty rules people actually
+  ask about; `resolveHouseRule` matches free text against it, normalising case,
+  padding, inner whitespace and a trailing full stop, and **always** returns
+  something renderable. Unrecognised text comes back with its own words, the
+  neutral mark, and `tone: 'neutral'`.
+- **Icons in the web app only.** Would have worked, and would have put the
+  wizard's suggestion list and the detail page's icon list in two files that
+  drift. They now read the same constant, so a rule offered in the wizard
+  arrives on the detail page with its icon by construction.
+
+The fallback is deliberately **neutral** (`ScrollText`), not a warning or a
+crossed-out glyph. A rule somebody typed is not necessarily a prohibition, and a
+prohibition-shaped icon would editorialise the lister's own words.
+
+`tone` exists because "Pets allowed with a deposit" and "No pets" are opposite
+claims that a single mark would render identically. It only tints the icon —
+`allowed` reads verdant, everything else stays soft — because a strong colour on
+a restriction turns a normal tenancy condition into a warning.
+
+The icon **name** crosses the boundary, not the component: `Amenity.icon` is a
+database column and `HouseRule.icon` a shared constant, both PascalCase lucide
+export names, and `apps/web/src/lib/icon-registry.ts` maps them to components.
+Named imports rather than `lucide-react/dynamicIconImports`, which would turn a
+static list of thirty icons into thirty lazy chunks on the detail page. A name
+the registry does not hold resolves to the neutral mark, which is what makes an
+amenity row from the database safe to render.
+
+Amenity icons were already a column and were already seeded; the detail page
+rendered a generic tick for all of them. They now use their own.
+
+## D91 — The seed covers one city with real depth
+
+The seed populated three cities at 40 listings each. It now populates **Patna
+only**, at 100.
+
+Bengaluru and Pune stay in `CITIES`. That list drives the OSM artifacts, the
+coverage set and `validate-cities`, and removing a city from it means a
+40-minute rebuild and a new geo epoch — so they remain covered, and simply have
+no stock. A city switcher that offers a covered city with no listings is honest
+and lands on a designed empty state; the alternative is developing the ranked
+search against thirteen listings per office radius.
+
+**Prices were wrong, not merely high.** Rent came from a per-bedroom base and
+sale price was then derived as 300-420x the monthly rent. That second step
+compounded: a 4 BHK in Patna priced at roughly fifteen crore, and the buy half
+of the seed was useless for eyeballing a price filter or a sort. Both sides are
+now per-square-foot bands, which is how the market quotes and what keeps a price
+consistent with the area printed next to it. Measured after seeding:
+
+| bedrooms | rent (avg) | sale (avg) |
+| -------- | ---------- | ---------- |
+| 1        | ₹6,768     | ₹30 lakh   |
+| 2        | ₹12,658    | ₹48 lakh   |
+| 3        | ₹18,844    | ₹67 lakh   |
+| 4        | ₹19,500    | ₹79 lakh   |
+
+**An even rent/sale split**, measured at 51/50 across 101 rows. A quarter was
+not enough to notice a regression on the buy side, which has no commute figure
+and therefore a different card and a different sort.
+
+**Variety comes from the seeded PRNG, not from `n % k`.** Bedrooms, furnishing,
+property type, floor counts, deposits, verification and the rule and amenity
+counts were all modulo expressions, which produced a visible grid — every fourth
+listing identical, attributes marching in lockstep. They now draw from
+`createRandom(20260902)`, so the data is lopsided the way real data is and still
+byte-identical on every machine, which is the property D41's fixture reuse and
+every screenshot comparison depend on. Bedrooms are weighted (2 BHK most common)
+rather than uniform.
+
+**Two accounts per role**, and listings dealt round-robin between the two
+listers. One account per role can only ever demonstrate that the owner is
+allowed in; the cross-owner refusals — one lister editing another's listing, one
+seeker reading another's enquiries — had no second party to test against.
+
+**Clearing the old data is not the seed's job.** The seed prunes listings owned
+by the dev listers whose slugs left the plan, which is what makes it idempotent
+across a plan change (D-note in `seedListings`: 51 listings once became 90). It
+does **not** delete rows it did not create. This database already holds a
+listing created through the app by a real account, and an early version of this
+change pruned by city alone — which would have deleted it. One-off cleanup of
+pre-Patna rows belongs in a throwaway script, scoped to `@dev.local` owners and
+dry-run by default, not in a file that runs on every `pnpm db:seed`.

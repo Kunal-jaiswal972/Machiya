@@ -17,6 +17,7 @@ import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { hashPassword } from 'better-auth/crypto';
 import { fixtureVariantBaseKey, validateAndDerive, variantObjectKey } from '@machiya/shared/images';
 import { CITIES, type CityConfig, type Locality } from '@machiya/shared/cities';
+import { HOUSE_RULE_LABELS } from '@machiya/shared';
 import {
   photoFilePath,
   readPhotoManifest,
@@ -27,38 +28,72 @@ import { prisma } from '../src/client.js';
 /** Known dev credentials. Documented in the README; never used in production. */
 const DEV_PASSWORD = 'devpass123';
 
+/**
+ * Two of each role, so every permission boundary has a second party to test
+ * against: one lister cannot edit the other's listing, one seeker cannot read
+ * the other's enquiries. A single account per role can only ever prove that the
+ * owner is allowed in. All in Patna — the seed covers one city (D91).
+ */
 const DEV_USERS = [
   { email: 'seeker@dev.local', name: 'Sana Seeker', role: 'SEEKER' as const, city: 'patna' },
-  { email: 'lister@dev.local', name: 'Lalit Lister', role: 'LISTER' as const, city: 'bengaluru' },
-  { email: 'admin@dev.local', name: 'Asha Admin', role: 'ADMIN' as const, city: 'pune' },
+  { email: 'seeker2@dev.local', name: 'Sameer Seeker', role: 'SEEKER' as const, city: 'patna' },
+  { email: 'lister@dev.local', name: 'Lalit Lister', role: 'LISTER' as const, city: 'patna' },
+  { email: 'lister2@dev.local', name: 'Leena Lister', role: 'LISTER' as const, city: 'patna' },
+  { email: 'admin@dev.local', name: 'Asha Admin', role: 'ADMIN' as const, city: 'patna' },
+  { email: 'admin2@dev.local', name: 'Arun Admin', role: 'ADMIN' as const, city: 'patna' },
 ];
 
+/** The listers that own seeded stock, in the order listings are dealt to them. */
+const SEED_OWNERS = ['lister@dev.local', 'lister2@dev.local'];
+
+/**
+ * `icon` is a lucide export name in PascalCase, not a kebab slug: the web app
+ * resolves it through one registry shared with the house rules, so a name that
+ * is not exported renders the neutral fallback rather than nothing.
+ */
 const AMENITIES = [
-  { slug: 'lift', name: 'Lift', icon: 'arrow-up-down', category: 'building' },
-  { slug: 'parking', name: 'Covered parking', icon: 'car', category: 'building' },
-  { slug: 'power-backup', name: 'Power backup', icon: 'zap', category: 'utility' },
-  { slug: 'water-24x7', name: '24x7 water', icon: 'droplets', category: 'utility' },
-  { slug: 'security', name: 'Gated security', icon: 'shield', category: 'safety' },
-  { slug: 'cctv', name: 'CCTV', icon: 'video', category: 'safety' },
-  { slug: 'gym', name: 'Gym', icon: 'dumbbell', category: 'lifestyle' },
-  { slug: 'pool', name: 'Swimming pool', icon: 'waves', category: 'lifestyle' },
-  { slug: 'park', name: 'Park', icon: 'trees', category: 'lifestyle' },
-  { slug: 'clubhouse', name: 'Clubhouse', icon: 'landmark', category: 'lifestyle' },
-  { slug: 'wifi', name: 'Wi-Fi ready', icon: 'wifi', category: 'utility' },
-  { slug: 'modular-kitchen', name: 'Modular kitchen', icon: 'chef-hat', category: 'interior' },
-  { slug: 'wardrobe', name: 'Fitted wardrobes', icon: 'shirt', category: 'interior' },
-  { slug: 'balcony', name: 'Balcony', icon: 'sun', category: 'interior' },
-  { slug: 'pet-friendly', name: 'Pet friendly', icon: 'paw-print', category: 'rules' },
-  { slug: 'vegetarian-only', name: 'Vegetarian only', icon: 'salad', category: 'rules' },
-];
-
-const HOUSE_RULES = [
-  'No smoking indoors',
-  'Families preferred',
-  'No loud music after 10pm',
-  'Bachelors welcome',
-  'Vegetarian tenants only',
-  'Pets allowed with a deposit',
+  { slug: 'lift', name: 'Lift', icon: 'ArrowUpDown', category: 'building' },
+  { slug: 'parking', name: 'Covered parking', icon: 'SquareParking', category: 'building' },
+  { slug: 'garage', name: 'Garage available', icon: 'Warehouse', category: 'building' },
+  { slug: 'visitor-parking', name: 'Visitor parking', icon: 'CarFront', category: 'building' },
+  { slug: 'bike-parking', name: 'Two-wheeler parking', icon: 'Bike', category: 'building' },
+  { slug: 'step-free', name: 'Step-free access', icon: 'Accessibility', category: 'building' },
+  { slug: 'power-backup', name: 'Power backup', icon: 'Zap', category: 'utility' },
+  { slug: 'water-24x7', name: '24x7 water', icon: 'Droplets', category: 'utility' },
+  { slug: 'borewell', name: 'Borewell supply', icon: 'Container', category: 'utility' },
+  { slug: 'wifi', name: 'Wi-Fi ready', icon: 'Wifi', category: 'utility' },
+  { slug: 'piped-gas', name: 'Piped gas', icon: 'Flame', category: 'utility' },
+  {
+    slug: 'waste-collection',
+    name: 'Daily waste collection',
+    icon: 'Recycle',
+    category: 'utility',
+  },
+  { slug: 'security', name: 'Gated security', icon: 'Shield', category: 'safety' },
+  { slug: 'cctv', name: 'CCTV', icon: 'Video', category: 'safety' },
+  { slug: 'intercom', name: 'Intercom', icon: 'DoorOpen', category: 'safety' },
+  { slug: 'fire-safety', name: 'Fire safety', icon: 'ShieldCheck', category: 'safety' },
+  { slug: 'gym', name: 'Gym', icon: 'Dumbbell', category: 'lifestyle' },
+  { slug: 'pool', name: 'Swimming pool', icon: 'Waves', category: 'lifestyle' },
+  { slug: 'park', name: 'Park', icon: 'Trees', category: 'lifestyle' },
+  { slug: 'clubhouse', name: 'Clubhouse', icon: 'Landmark', category: 'lifestyle' },
+  { slug: 'play-area', name: "Children's play area", icon: 'Baby', category: 'lifestyle' },
+  { slug: 'terrace', name: 'Shared terrace', icon: 'Sun', category: 'lifestyle' },
+  { slug: 'modular-kitchen', name: 'Modular kitchen', icon: 'ChefHat', category: 'interior' },
+  { slug: 'wardrobe', name: 'Fitted wardrobes', icon: 'Shirt', category: 'interior' },
+  { slug: 'balcony', name: 'Balcony', icon: 'Sun', category: 'interior' },
+  { slug: 'air-conditioning', name: 'Air conditioning', icon: 'AirVent', category: 'interior' },
+  { slug: 'geyser', name: 'Geyser', icon: 'Bath', category: 'interior' },
+  {
+    slug: 'washing-machine',
+    name: 'Washing machine',
+    icon: 'WashingMachine',
+    category: 'interior',
+  },
+  { slug: 'refrigerator', name: 'Refrigerator', icon: 'Refrigerator', category: 'interior' },
+  { slug: 'furnished-beds', name: 'Beds provided', icon: 'BedDouble', category: 'interior' },
+  { slug: 'sofa', name: 'Living room seating', icon: 'Sofa', category: 'interior' },
+  { slug: 'tv', name: 'Television', icon: 'Tv', category: 'interior' },
 ];
 
 const PROPERTY_TYPES = [
@@ -75,10 +110,23 @@ const PROPERTY_TYPES = [
 const FURNISHINGS = ['UNFURNISHED', 'SEMI_FURNISHED', 'FULLY_FURNISHED'] as const;
 
 /** Rent per bedroom band, in whole rupees, roughly by city cost of living. */
-const RENT_BASE: Record<string, number> = {
-  patna: 6_500,
-  bengaluru: 14_000,
-  pune: 11_000,
+/**
+ * Local prices, per square foot, because that is how the market quotes them and
+ * how a rent stays consistent with the area printed beside it.
+ *
+ * The previous version priced rent from a per-bedroom base and then derived a
+ * sale price as 300-420x the monthly rent. That second step is what broke: a
+ * 4 BHK came out at roughly fifteen crore in Patna, which is not a number any
+ * listing there carries, and it made the buy half of the seed useless for
+ * eyeballing a price filter. Sale price is now its own per-sqft band.
+ *
+ * Patna bands sanity-checked against the shape of the local market: a ~1,000
+ * sqft 2 BHK lands near ₹9,000-15,000 to rent and ₹32-55 lakh to buy. See D91.
+ */
+const PRICE_PER_SQFT: Record<string, { rent: [number, number]; sale: [number, number] }> = {
+  patna: { rent: [9, 15], sale: [3_200, 5_500] },
+  bengaluru: { rent: [18, 30], sale: [6_500, 11_000] },
+  pune: { rent: [15, 26], sale: [6_000, 9_500] },
 };
 
 /**
@@ -109,6 +157,27 @@ function pickSome<T>(items: readonly T[], count: number): T[] {
 
 function between(min: number, max: number): number {
   return min + random() * (max - min);
+}
+
+function pick<T>(items: readonly T[]): T {
+  return items[Math.floor(random() * items.length)] as T;
+}
+
+/**
+ * One value from `[value, weight]` pairs. Weights need not sum to 1; whatever
+ * they sum to is the denominator, so a pair can be added without rebalancing
+ * the rest.
+ */
+function pickWeighted<T>(choices: readonly [T, number][]): T {
+  const total = choices.reduce((sum, [, weight]) => sum + weight, 0);
+  let threshold = random() * total;
+
+  for (const [value, weight] of choices) {
+    threshold -= weight;
+    if (threshold <= 0) return value;
+  }
+
+  return choices[choices.length - 1]?.[0] as T;
 }
 
 function roundTo(value: number, nearest: number): number {
@@ -418,10 +487,21 @@ interface PlannedListing {
   amenitySlugs: string[];
 }
 
-/** 17 listings per city: 51 in total, spread across every enum value. */
-function planListings(city: CityConfig, index: number): PlannedListing[] {
+/**
+ * The cities the seed populates.
+ *
+ * Patna only. Bengaluru and Pune stay in `CITIES` — the OSM artifacts, the
+ * coverage set and `validate-cities` are all built from that list and removing
+ * a city there means a 40-minute rebuild — but they get no listings, so the
+ * product is developed against one city with real depth rather than three with
+ * a token handful each. See DECISIONS.md D91.
+ */
+const SEEDED_CITY_SLUGS = ['patna'];
+
+/** 100 listings, all in Patna, spread across every enum value. */
+function planListings(city: CityConfig): PlannedListing[] {
   const planned: PlannedListing[] = [];
-  const perCity = 40;
+  const perCity = 100;
 
   // Localities sit 5-20 km apart, so spreading listings evenly across all of
   // them leaves only three or four inside any 3 km office radius — which is the
@@ -449,25 +529,39 @@ function planListings(city: CityConfig, index: number): PlannedListing[] {
 
     const point = jitterWithin(locality, n < nearOffice ? 2_200 : 1_400);
 
-    const bedrooms = 1 + (n % 4);
-    const bathrooms = Math.max(1, bedrooms - (n % 2));
-    const areaSqft = roundTo(320 + bedrooms * between(320, 460), 10);
-    const propertyType = PROPERTY_TYPES[
-      n % PROPERTY_TYPES.length
-    ] as (typeof PROPERTY_TYPES)[number];
-    const furnishing = FURNISHINGS[n % FURNISHINGS.length] as (typeof FURNISHINGS)[number];
+    // Drawn from the seeded PRNG rather than from `n % k`. The modulo version
+    // produced a grid — every fourth listing identical in bedrooms, furnishing
+    // and property type marching in lockstep — which reads as fake and hides
+    // the bugs that only a lopsided distribution finds. `random` is mulberry32
+    // from a fixed seed, so this is varied AND identical on every machine.
+    const bedrooms = pickWeighted([
+      [1, 0.22],
+      [2, 0.38],
+      [3, 0.28],
+      [4, 0.12],
+    ]);
+    const bathrooms = Math.max(1, bedrooms - (random() < 0.6 ? 1 : 0));
+    const areaSqft = roundTo(280 + bedrooms * between(300, 480), 10);
+    const propertyType = pick(PROPERTY_TYPES);
+    const furnishing = pick(FURNISHINGS);
 
-    // Roughly a quarter of the stock is for sale.
-    const listingType = n % 4 === 3 ? 'SALE' : 'RENT';
+    // An even split. The product's argument is total monthly cost, which only
+    // has a rent side — but the buy side has to be populated enough to notice
+    // when a price or a filter regresses on it, and a quarter of the stock was
+    // not (D91).
+    const listingType = n % 2 === 0 ? 'RENT' : 'SALE';
 
-    // One draft per city, one paused and one rented across the whole set.
+    // A handful of non-published rows so the dashboard's filters and the
+    // wizard's resume path have something to act on. Everything else is
+    // PUBLISHED, because the search is what most work touches.
     let status: PlannedListing['status'] = 'PUBLISHED';
-    if (n === perCity - 1) status = 'DRAFT';
-    else if (n === 4 && index === 0) status = 'RENTED';
-    else if (n === 6 && index === 1) status = 'PAUSED';
+    if (n >= perCity - 3) status = 'DRAFT';
+    else if (n % 37 === 4) status = 'RENTED';
+    else if (n % 41 === 6) status = 'PAUSED';
 
-    const base = RENT_BASE[city.slug] ?? 10_000;
-    const rent = roundTo(base * bedrooms * between(0.75, 1.5), 500);
+    const bands = PRICE_PER_SQFT[city.slug] ?? PRICE_PER_SQFT.patna;
+    if (!bands) throw new Error(`no price band for ${city.slug}`);
+    const rent = roundTo(areaSqft * between(bands.rent[0], bands.rent[1]), 500);
     const isSale = listingType === 'SALE';
 
     const title = `${bedrooms} BHK ${propertyType === 'PG' ? 'PG' : propertyType.toLowerCase().replace(/_/g, ' ')} in ${locality.name}`;
@@ -486,18 +580,21 @@ function planListings(city: CityConfig, index: number): PlannedListing[] {
       bedrooms,
       bathrooms,
       areaSqft,
-      floor: 1 + (n % 8),
-      totalFloors: 8 + (n % 5),
+      floor: 1 + Math.floor(between(0, 8)),
+      totalFloors: 6 + Math.floor(between(0, 7)),
       rentAmount: isSale ? null : rent,
-      salePrice: isSale ? roundTo(rent * between(300, 420), 50_000) : null,
-      securityDeposit: isSale ? null : rent * (2 + (n % 2)),
-      maintenanceMonthly: n % 3 === 0 ? roundTo(rent * 0.06, 100) : null,
-      availableFrom: n % 5 === 0 ? null : new Date(Date.now() + (n % 45) * 24 * 60 * 60 * 1000),
-      isVerified: n % 3 === 0,
-      rules: pickSome(HOUSE_RULES, 1 + (n % 3)),
+      salePrice: isSale ? roundTo(areaSqft * between(bands.sale[0], bands.sale[1]), 50_000) : null,
+      securityDeposit: isSale ? null : rent * (random() < 0.65 ? 2 : 3),
+      maintenanceMonthly: random() < 0.45 ? roundTo(rent * between(0.03, 0.08), 100) : null,
+      availableFrom:
+        random() < 0.2
+          ? null
+          : new Date(Date.now() + Math.floor(between(0, 60)) * 24 * 60 * 60 * 1000),
+      isVerified: random() < 0.35,
+      rules: pickSome(HOUSE_RULE_LABELS, Math.floor(between(1, 6.99))),
       amenitySlugs: pickSome(
         AMENITIES.map((amenity) => amenity.slug),
-        3 + (n % 5),
+        Math.floor(between(4, 12.99)),
       ),
     });
   }
@@ -508,17 +605,23 @@ function planListings(city: CityConfig, index: number): PlannedListing[] {
 async function seedListings(
   cityIds: Map<string, string>,
   amenityIds: Map<string, string>,
-  ownerId: string,
+  ownerIds: string[],
   fixtures: SeedFixture[],
 ): Promise<string[]> {
   const listingIds: string[] = [];
   const plannedSlugs: string[] = [];
+  let dealt = 0;
 
-  for (const [index, city] of CITIES.entries()) {
+  for (const city of CITIES.filter((candidate) => SEEDED_CITY_SLUGS.includes(candidate.slug))) {
     const cityId = cityIds.get(city.slug);
     if (!cityId) continue;
 
-    for (const plan of planListings(city, index)) {
+    for (const plan of planListings(city)) {
+      // Dealt round-robin so both listers own real stock: a dashboard with one
+      // owner's listings cannot show that the other's are invisible to them.
+      const ownerId = ownerIds[dealt % ownerIds.length] as string;
+      dealt += 1;
+
       const data = {
         ownerId,
         cityId,
@@ -612,11 +715,11 @@ async function seedListings(
   // Upsert-by-slug alone is not idempotent across a CHANGE to the plan: edit how
   // listings are laid out and the new slugs are inserted while the old rows stay
   // behind as orphans. (Observed: 51 listings became 90.) Everything the seed
-  // creates belongs to the dev lister, so anything of theirs not in the current
+  // creates belongs to a dev lister, so anything of theirs not in the current
   // plan is stale and goes — cascades take its images, amenities, enquiries and
-  // favourites with it.
+  // favourites with it. Rows owned by a REAL account are never in scope.
   const removed = await prisma.listing.deleteMany({
-    where: { ownerId, slug: { notIn: plannedSlugs } },
+    where: { ownerId: { in: ownerIds }, slug: { notIn: plannedSlugs } },
   });
 
   if (removed.count > 0) {
@@ -857,7 +960,7 @@ async function seedFuelPrices(cityIds: Map<string, string>): Promise<number> {
 
 async function main(): Promise<void> {
   const startedAt = Date.now();
-  console.log('seeding three cities…');
+  console.log(`seeding ${SEEDED_CITY_SLUGS.join(', ')}…`);
 
   const fixtures = await loadFixtures();
   for (const fixture of fixtures) {
@@ -876,11 +979,19 @@ async function main(): Promise<void> {
   const users = await seedUsers(cityIds);
   console.log(`  users      ${[...users.keys()].join(', ')} (password: ${DEV_PASSWORD})`);
 
+  const owners = SEED_OWNERS.map((email) => {
+    const owner = users.get(email);
+    if (!owner) throw new Error(`${email} was not created`);
+    return owner.id;
+  });
+
   const lister = users.get('lister@dev.local');
   if (!lister) throw new Error('lister@dev.local was not created');
 
-  const listingIds = await seedListings(cityIds, amenityIds, lister.id, fixtures);
-  console.log(`  listings   ${listingIds.length} across ${cityIds.size} cities`);
+  const listingIds = await seedListings(cityIds, amenityIds, owners, fixtures);
+  console.log(
+    `  listings   ${listingIds.length} in ${SEEDED_CITY_SLUGS.join(', ')}, across ${owners.length} listers`,
+  );
 
   const engagement = await seedEngagement(users, listingIds, lister.id);
   console.log(

@@ -6,7 +6,6 @@ import {
   BedDouble,
   Building,
   CalendarDays,
-  Check,
   Ruler,
   Sofa,
   type LucideIcon,
@@ -17,10 +16,12 @@ import { DetailPanel } from '../components/listing/DetailPanel';
 import { EnquiryForm } from '../components/listing/EnquiryForm';
 import { Gallery } from '../components/listing/Gallery';
 import { CommutePanel } from '../components/listing/CommutePanel';
+import { HouseRuleList } from '../components/listing/HouseRuleList';
 import { PoiPanel } from '../components/listing/PoiPanel';
 import { RingBadge } from '../components/RingBadge';
 import { DetailSkeleton } from '../components/Skeletons';
 import { EmptyState } from '../components/EmptyState';
+import { iconFor } from '../lib/icon-registry';
 import { Button } from '../components/ui/button';
 import {
   useListingDetail,
@@ -311,15 +312,18 @@ export function ListingDetailRoute() {
                 <section>
                   <h3 className="text-title mb-2">Amenities</h3>
                   <ul className="flex flex-wrap gap-1.5">
-                    {listing.amenities.map((amenity) => (
-                      <li
-                        key={amenity.id}
-                        className="flex items-center gap-1.5 rounded-round border border-edge px-2 py-1 text-label"
-                      >
-                        <Check className="size-3 shrink-0 text-verdant" aria-hidden />
-                        {amenity.name}
-                      </li>
-                    ))}
+                    {listing.amenities.map((amenity) => {
+                      const Icon = iconFor(amenity.icon);
+                      return (
+                        <li
+                          key={amenity.id}
+                          className="flex items-center gap-1.5 rounded-round border border-edge px-2 py-1 text-label"
+                        >
+                          <Icon className="size-3 shrink-0 text-verdant" aria-hidden />
+                          {amenity.name}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </section>
               ) : null}
@@ -327,13 +331,7 @@ export function ListingDetailRoute() {
               {listing.rules.length > 0 ? (
                 <section>
                   <h3 className="text-title mb-2">House rules</h3>
-                  <ul className="flex flex-col gap-1">
-                    {listing.rules.map((rule) => (
-                      <li key={rule} className="text-sm text-ink-soft">
-                        {rule}
-                      </li>
-                    ))}
-                  </ul>
+                  <HouseRuleList rules={listing.rules} />
                 </section>
               ) : null}
             </div>
