@@ -85,6 +85,65 @@ info "docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo
 
 mkdir -p "$CACHE_DIR" "$OUT_DIR"
 
+# --- 0. the environment file ----------------------------------------------
+
+step "Preparing .env"
+# .env is the single source of environment truth for the CLI, compose and every
+# app (D5), so bootstrap creates it rather than leaving a fresh clone to discover
+# that `docker compose up` refuses on a missing BETTER_AUTH_SECRET.
+if [ -f .env ]; then
+  skip ".env already exists (left alone; only empty secrets are filled below)"
+else
+  cp .env.example .env
+  info "copied .env.example to .env"
+fi
+
+# 32 bytes of randomness, base64. openssl is the documented way and is present
+# wherever docker is; /dev/urandom covers the case where it is not.
+random_secret() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -base64 32
+  else
+    head -c 32 /dev/urandom | base64 | tr -d '
+'
+  fi
+}
+
+# Fill a secret that is missing, empty, or still the shipped placeholder.
+#
+# Never touches a value somebody chose: a bootstrap that regenerated
+# BETTER_AUTH_SECRET on every run would invalidate every session in the local
+# database, and one that overwrote a real third-party key would lose it. Keys
+# for outside services (UNSPLASH_ACCESS_KEY and friends) are deliberately NOT
+# handled here — nothing can generate those, and pretending to fill them would
+# hide the fact that they need a human. See DECISIONS.md D88.
+ensure_secret() {
+  local key="$1" placeholder="${2:-}" current
+  current=$(sed -n "s/^${key}=//p" .env | head -1)
+
+  if [ -n "$current" ] && [ "$current" != "$placeholder" ]; then
+    skip "$key already set"
+    return 0
+  fi
+
+  local value
+  value=$(random_secret)
+
+  if grep -q "^${key}=" .env; then
+    # A temp file rather than `sed -i`: BSD and GNU sed disagree about -i, and
+    # the generated value can contain / and + which would break an s/// script.
+    awk -v key="$key" -v value="$value"       'BEGIN { FS = "="; OFS = "=" } $1 == key { print key "=" value; next } { print }'       .env > .env.tmp && mv .env.tmp .env
+  else
+    printf '%s=%s
+' "$key" "$value" >> .env
+  fi
+  info "$key generated"
+}
+
+ensure_secret BETTER_AUTH_SECRET 'dev-only-secret-replace-me-with-32-plus-chars'
+ensure_secret INTERNAL_REQUEST_TOKEN
+
+
 # scripts/geo-manifest.ts imports @machiya/shared/cities, and @machiya/shared is
 # consumed as built dist (D9) — so build it before anything reads it.
 info "building @machiya/shared (the manifest schema and epoch hash live there)"
