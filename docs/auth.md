@@ -6,6 +6,10 @@ about to upgrade Better Auth.
 Self-hosted [Better Auth](https://better-auth.com) on the Prisma adapter, mounted
 at `/api/auth/*`. No hosted auth SaaS.
 
+Sessions and an httpOnly cookie, not bearer tokens. Bans and mid-session role
+upgrades both have to take effect on the next request, which a stateless token
+cannot do (D93).
+
 ## Configuration
 
 `apps/api/src/auth/index.ts` is the whole configuration. The pieces worth

@@ -3147,3 +3147,41 @@ knowing:
   entry, so it was running `session.role === 'SEEKER'` against a database whose
   labels had already been renamed. A source-only change is invisible to that
   suite until `pnpm -F @machiya/api build`.
+
+## D93 — Sessions, not JWTs
+
+Recorded after the fact: this was never an explicit choice, which is why it is
+written down now. `grep -niE 'jwt|stateless|bearer'` over `DECISIONS.md` and
+`docs/` returned nothing, so the reasoning existed nowhere. Better Auth's native
+model is the session; its `jwt` plugin is opt-in and was never opted into. The
+plugin list in `apps/api/src/auth/index.ts` is `admin` plus a development-only
+`openAPI`.
+
+It is the right default here for reasons the code makes concrete:
+
+**Revocation is a live requirement, not a hypothetical.** The admin plugin is
+mounted and `requireAuth` rejects `session.user.banned` on every request. A
+stateless token cannot be withdrawn before it expires without a revocation list,
+and a revocation list checked on every request is a session table under another
+name. The exposure here is bounded by the five-minute `cookieCache`.
+
+**Roles change mid-session.** Publishing a listing upgrades `USER` to `EDITOR`
+in the same transaction as the publish, so a token minted moments earlier would
+carry a role the database has already contradicted — the user publishes and is
+then refused their own dashboard until the token refreshes. `resolveSession`
+re-reads the role per request, so the upgrade takes effect on the next one.
+
+**The round-trip JWTs avoid is already paid for.** Redis is a hard dependency
+for BullMQ, the geo caches and the rate-limit counters. A session read is one
+GET on an open connection, and `cookieCache` skips even that for five minutes at
+a stretch. Statelessness would buy no fewer moving parts.
+
+**Every client is a first-party browser.** `apps/` is `api`, `web`, `worker`,
+`e2e` — no mobile app, no third-party consumer, no service-to-service call. A
+bearer token earns its complexity when it crosses a trust boundary you do not
+control. It would also have to be stored somewhere a script can reach, whereas
+the session cookie is `httpOnly` and is not.
+
+Revisit if a mobile client or a public API appears. Better Auth's `jwt` plugin
+runs alongside sessions rather than replacing them, so that would be an
+addition, not a migration.
