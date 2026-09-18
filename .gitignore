@@ -55,3 +55,8 @@ scripts/fixtures/photos/
 
 # merged three-city extract produced by scripts/bootstrap.sh
 osm-data/
+
+# Skill installers fan .claude/skills out to every agent dir they detect; those
+# copies are generated from skills-lock.json, so only .claude/skills is tracked
+.windsurf/
+.agents/
